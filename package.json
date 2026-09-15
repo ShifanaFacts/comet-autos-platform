@@ -1,0 +1,39 @@
+{
+  "name": "comet-autos-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Comet Autos Workshop Management System + Future SaaS Platform (monorepo)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:api": "npm run start:dev --workspace=apps/api",
+    "build:web": "npm run build --workspace=apps/web",
+    "build:api": "npm run build --workspace=apps/api",
+    "lint:web": "npm run lint --workspace=apps/web",
+    "lint:api": "npm run lint --workspace=apps/api",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md}\" --ignore-path .gitignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md}\" --ignore-path .gitignore",
+    "prisma:generate": "prisma generate --schema=./prisma/schema.prisma",
+    "prisma:validate": "prisma validate --schema=./prisma/schema.prisma",
+    "db:start": "node scripts/dev-db.mjs start",
+    "db:stop": "node scripts/dev-db.mjs stop"
+  },
+  "devDependencies": {
+    "dotenv": "^17.4.2",
+    "embedded-postgres": "^18.4.0-beta.17",
+    "prettier": "^3.9.6",
+    "prisma": "^7.10.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "allowScripts": {
+    "prisma@7.10.0": true,
+    "@prisma/engines@7.10.0": true,
+    "unrs-resolver@1.12.2": true,
+    "@embedded-postgres/windows-x64@18.4.0-beta.17": true
+  }
+}

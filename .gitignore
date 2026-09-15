@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Environment files (never commit real secrets)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# Prisma generated client (build artifact, regenerated via `npm run prisma:generate`)
+apps/api/src/generated/
+
+# Local-development-only embedded PostgreSQL data (see scripts/dev-db.mjs)
+.local-postgres-data/
+
+# Logs
+npm-debug.log*
+*.log
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+
+# Testing/coverage
+coverage/
+
+# TypeScript build info
+*.tsbuildinfo
