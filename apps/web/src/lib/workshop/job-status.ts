@@ -3,6 +3,13 @@ import type { JobCardStatus } from '@/generated/prisma/enums';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
+import { WORKFLOW_STAGES, getEffectiveStageStatus, type WorkflowStage } from '@/lib/workshop/stages';
+
+// Re-exported so existing server-side callers can keep importing everything
+// from this module; Client Components must import stages.ts directly (it
+// has no auth/session dependency — see that file's header comment).
+export { WORKFLOW_STAGES, getEffectiveStageStatus };
+export type { WorkflowStage };
 
 // The V1 build instruction describes a finer-grained pipeline (BOOKED →
 // ARRIVED → INSPECTION → DIAGNOSIS → ESTIMATE → WAITING_APPROVAL →
@@ -33,6 +40,18 @@ export class InvalidJobStatusTransitionError extends Error {}
 
 export function getAllowedNextStatuses(status: JobCardStatus): JobCardStatus[] {
   return ALLOWED_TRANSITIONS[status];
+}
+
+const EXCEPTION_STATUSES: JobCardStatus[] = ['ON_HOLD', 'CANCELLED'];
+
+/** The forward-path transition (excludes the ON_HOLD/CANCELLED exceptions), if any. */
+export function getPrimaryNextStatus(status: JobCardStatus): JobCardStatus | null {
+  return ALLOWED_TRANSITIONS[status].find((s) => !EXCEPTION_STATUSES.includes(s)) ?? null;
+}
+
+/** ON_HOLD/CANCELLED, when reachable from this status. */
+export function getSecondaryNextStatuses(status: JobCardStatus): JobCardStatus[] {
+  return ALLOWED_TRANSITIONS[status].filter((s) => EXCEPTION_STATUSES.includes(s));
 }
 
 export async function transitionJobStatus(

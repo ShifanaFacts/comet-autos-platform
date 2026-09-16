@@ -1,4 +1,4 @@
-import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
 import type { JobCardStatus } from '@/generated/prisma/enums';
 
 const STATUS_LABEL: Record<JobCardStatus, string> = {
@@ -15,20 +15,33 @@ const STATUS_LABEL: Record<JobCardStatus, string> = {
   CANCELLED: 'Cancelled',
 };
 
-const STATUS_VARIANT: Record<JobCardStatus, 'default' | 'secondary' | 'outline' | 'destructive'> = {
-  RECEIVED: 'secondary',
-  INSPECTING: 'secondary',
-  DIAGNOSED: 'secondary',
-  ESTIMATE_SENT: 'outline',
-  APPROVED: 'outline',
-  IN_PROGRESS: 'default',
-  ON_HOLD: 'destructive',
-  COMPLETED: 'default',
-  INVOICED: 'default',
-  CLOSED: 'secondary',
-  CANCELLED: 'destructive',
+// Status colors are semantic (success/warning/danger/info/neutral) and
+// deliberately independent of the brand accent — the brand violet is
+// reserved for IN_PROGRESS, the one "work is actively happening" state,
+// matching its role elsewhere as the "active/brand" highlight color.
+const STATUS_CLASSES: Record<JobCardStatus, string> = {
+  RECEIVED: 'bg-muted text-muted-foreground',
+  INSPECTING: 'bg-info/10 text-info',
+  DIAGNOSED: 'bg-info/10 text-info',
+  ESTIMATE_SENT: 'bg-warning/10 text-warning',
+  APPROVED: 'bg-success/10 text-success',
+  IN_PROGRESS: 'bg-primary/10 text-primary',
+  ON_HOLD: 'bg-warning/10 text-warning',
+  COMPLETED: 'bg-success/10 text-success',
+  INVOICED: 'bg-success/10 text-success',
+  CLOSED: 'bg-muted text-muted-foreground',
+  CANCELLED: 'bg-danger/10 text-danger',
 };
 
 export function JobStatusBadge({ status }: { status: JobCardStatus }) {
-  return <Badge variant={STATUS_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>;
+  return (
+    <span
+      className={cn(
+        'inline-flex h-5 w-fit shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap',
+        STATUS_CLASSES[status],
+      )}
+    >
+      {STATUS_LABEL[status]}
+    </span>
+  );
 }

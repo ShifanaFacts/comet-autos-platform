@@ -1,6 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import { useActionState, useEffect, useState } from 'react';
+import { CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -32,6 +34,24 @@ export function CheckInForm() {
     }, 250);
     return () => clearTimeout(timeout);
   }, [trimmedQuery, selected, creatingNew]);
+
+  if (state.success) {
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-lg border border-success/25 bg-success/5 px-6 py-10 text-center">
+        <CheckCircle2 className="size-8 text-success" />
+        <div>
+          <p className="text-xs font-semibold tracking-wide text-success uppercase">Job card created</p>
+          <p className="mt-1 text-2xl font-semibold tracking-tight">{state.success.jobNumber}</p>
+        </div>
+        <div className="mt-2 flex gap-2">
+          <Button render={<Link href={`/job-cards/${state.success.jobCardId}`} />}>Open Job Card</Button>
+          <Button variant="outline" render={<Link href="/check-in" />}>
+            Check in another vehicle
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (selected) {
     return (

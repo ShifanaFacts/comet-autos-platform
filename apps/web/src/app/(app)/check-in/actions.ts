@@ -1,6 +1,5 @@
 'use server';
 
-import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { requireUser, requirePermission } from '@/lib/auth/authorize';
@@ -71,6 +70,7 @@ const checkInSchema = z.discriminatedUnion('mode', [existingSchema, newSchema]);
 
 export interface CheckInState {
   error?: string;
+  success?: { jobCardId: string; jobNumber: string };
 }
 
 export async function checkIn(_prevState: CheckInState, formData: FormData): Promise<CheckInState> {
@@ -89,7 +89,7 @@ export async function checkIn(_prevState: CheckInState, formData: FormData): Pro
   }
   const input = parsed.data;
 
-  const jobCardId = await prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
     let customerId: string;
     let vehicleId: string;
 
@@ -178,8 +178,8 @@ export async function checkIn(_prevState: CheckInState, formData: FormData): Pro
       afterData: { status: 'RECEIVED', vehicleId, customerId },
     });
 
-    return jobCard.id;
+    return { id: jobCard.id, jobNumber: jobCard.jobNumber };
   });
 
-  redirect(`/job-cards/${jobCardId}`);
+  return { success: { jobCardId: created.id, jobNumber: created.jobNumber } };
 }

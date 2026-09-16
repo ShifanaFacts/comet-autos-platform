@@ -1,4 +1,6 @@
+import { Construction } from 'lucide-react';
 import { PageHeader } from '@/components/shell/page-header';
+import { EmptyState } from '@/components/shared/empty-state';
 
 /**
  * Placeholder for a module listed in the V1 build instruction that hasn't
@@ -9,12 +11,11 @@ export function ComingSoon({ title, phase }: { title: string; phase: string }) {
   return (
     <div>
       <PageHeader title={title} />
-      <div className="rounded-lg border border-dashed border-border px-6 py-12 text-center">
-        <p className="text-sm font-medium">Not built yet</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {title} is planned for {phase}. See PROJECT-STATUS.md for the current roadmap.
-        </p>
-      </div>
+      <EmptyState
+        icon={Construction}
+        title={`${title} is coming in ${phase}`}
+        description="See PROJECT-STATUS.md for the current roadmap."
+      />
     </div>
   );
 }

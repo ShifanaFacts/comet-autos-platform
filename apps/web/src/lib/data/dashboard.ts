@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import type { JobCardStatus } from '@/generated/prisma/enums';
+import { WORKFLOW_STAGES } from '@/lib/workshop/stages';
 
 function startOfToday(): Date {
   const now = new Date();
@@ -29,6 +30,8 @@ export async function getDashboardData(organizationId: string) {
     parts,
     outstandingInvoices,
     completedPayments,
+    todaysIssuedInvoices,
+    todaysCompletedPayments,
   ] = await Promise.all([
     prisma.appointment.count({
       where: { organizationId, scheduledAt: { gte: todayStart, lt: tomorrowStart } },
@@ -52,6 +55,18 @@ export async function getDashboardData(organizationId: string) {
     prisma.payment.findMany({
       where: { organizationId, status: 'COMPLETED' },
       select: { amount: true, invoiceId: true, reversals: { select: { id: true } } },
+    }),
+    prisma.invoice.aggregate({
+      where: {
+        organizationId,
+        status: { in: ['ISSUED', 'PARTIALLY_PAID', 'PAID'] },
+        issuedAt: { gte: todayStart, lt: tomorrowStart },
+      },
+      _sum: { totalAmount: true },
+    }),
+    prisma.payment.findMany({
+      where: { organizationId, status: 'COMPLETED', receivedAt: { gte: todayStart, lt: tomorrowStart } },
+      select: { amount: true, reversals: { select: { id: true } } },
     }),
   ]);
 
@@ -83,14 +98,27 @@ export async function getDashboardData(organizationId: string) {
     return sum + Math.max(Number(invoice.totalAmount) - paid, 0);
   }, 0);
 
+  const todaysCollections = todaysCompletedPayments
+    .filter((payment) => payment.reversals.length === 0)
+    .reduce((sum, payment) => sum + Number(payment.amount), 0);
+
   const statusCounts = new Map(jobsByStatus.map((row) => [row.status, row._count._all]));
+
+  const workflowStages = WORKFLOW_STAGES.map((stage) => ({
+    ...stage,
+    count: statusCounts.get(stage.status) ?? 0,
+  }));
 
   return {
     todaysAppointments,
     vehiclesCurrentlyIn,
     statusCounts,
+    workflowStages,
     waitingForApproval: statusCounts.get('ESTIMATE_SENT') ?? 0,
+    onHold: statusCounts.get('ON_HOLD') ?? 0,
     lowStockParts,
     customerOutstanding,
+    todaysSales: Number(todaysIssuedInvoices._sum.totalAmount ?? 0),
+    todaysCollections,
   };
 }

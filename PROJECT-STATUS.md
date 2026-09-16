@@ -1,136 +1,176 @@
 # Project Status
 
-Last updated: 2026-09-16
+Last updated: 2026-09-17
 
-## Stage: Phase 1 — Architecture consolidation + first vertical slice
+## Stage: Phase 1 — Architecture, auth, design system, and the first real vertical slice
 
-This session executed a product-owner-directed architecture reversal
-([ADR-008](docs/11-decisions/ADR-008-single-nextjs-application.md)):
-Comet Autos is a dedicated internal workshop application, not a SaaS
-platform, so the two-app split from ADR-007 (Next.js + NestJS) was replaced
-with a single Next.js application talking to PostgreSQL directly via
-Prisma. On top of that pivot, this session also built the first complete,
-real (not stubbed) vertical slice: login → dashboard → Quick Check-In →
-Job Card.
+This session did two things: (1) a product-owner-directed architecture
+reversal — Comet Autos is a dedicated internal workshop application, not a
+SaaS platform, so the NestJS API split from ADR-007 was replaced with a
+single Next.js application talking to PostgreSQL directly via Prisma
+([ADR-008](docs/11-decisions/ADR-008-single-nextjs-application.md)) — and
+(2) a full premium-UI pass establishing the Comet Autos design system
+(Graphite + Electric Violet + Silver + White) and rebuilding the shell,
+dashboard, Quick Check-In, and Job Card screens on top of it. Everything
+below is real and working against the local database, not a mockup.
 
-## What exists
+## DONE
 
-- **Single Next.js 16 application** (`apps/web`) — Server Components,
-  Server Actions, Route Handlers, Prisma called directly (no separate API).
-  `apps/api` (NestJS) and `packages/shared` have been deleted.
-- **Database**: the frozen-foundation Prisma schema
-  (`prisma/schema.prisma`), covering nearly the full V1 domain
-  (Organization/Branch/User/Role/Permission, Customer/Vehicle, the
-  workshop pipeline, Estimate/Approval, Inventory ledger,
-  Invoice/Payment/Accounting, HR/Payroll, Document/AuditLog/Numbering),
-  plus two additive Phase 1 additions: `Session` (staff auth) and
-  `CustomerAccessToken` (future customer secure-access links).
-- **Auth**: email/password login, `bcryptjs` hashing, DB-backed sessions
-  (`httpOnly` cookie, hashed token), `requireUser()`/`requirePermission()`
-  enforcement in every protected Server Action — see
+### Architecture & foundation
+
+- Single Next.js 16 application (`apps/web`); `apps/api` (NestJS) and the
+  empty `packages/shared` deleted. Prisma called directly from Server
+  Actions/Route Handlers — no separate API layer.
+- Frozen-foundation Prisma schema kept as-is; two additive-only tables
+  added: `Session` (staff auth) and `CustomerAccessToken` (future customer
+  secure-access links).
+- Self-hosted session auth: `bcryptjs` password hashing, DB-backed sessions
+  (`httpOnly` cookie, only the SHA-256 hash stored), `requireUser()`/
+  `requirePermission()` enforced in every protected Server Action — see
   `docs/07-security/authorization.md`.
-- **App shell**: sidebar (grouped per the full V1 module list), topbar,
-  page header — `apps/web/src/components/shell/`.
-- **Dashboard** (`/`): real queries — today's appointments, vehicles
-  currently in, jobs by status, waiting-for-approval count, low-stock
-  parts, customer outstanding. (Numbers are 0 for modules not built yet —
-  no fake data.)
-- **Quick Check-In** (`/check-in`): search existing customer/vehicle by
-  name/phone/plate, or create new inline; creates the Job Card
-  transactionally with a status-history row and audit log entries.
-- **Job Cards** (`/job-cards`, `/job-cards/[id]`): list with pagination,
-  detail page with header, status-change controls (server-enforced state
-  machine — see below), status history, and clearly-labeled "not built
-  yet" placeholders for Inspection/Diagnosis/Estimate/Work/QC/Invoice/
-  Documents tabs.
-- **Every other nav destination** (Appointments, Inspections, Estimates,
-  Approvals, Customers, Vehicles, Inventory, Finance, HR, Reports,
-  Settings) renders an explicit "not built yet" placeholder rather than a
-  404 or fake data — see `apps/web/src/components/shell/coming-soon.tsx`.
-- **Dev seed data** (`prisma/seed.ts`, run via `npm run db:seed`): Comet
-  Autos org, Al Qusais branch, the full V1 permission catalog (section 25
-  of the build instruction), an Owner role with every permission, an Owner
-  user, and 3 sample customers/vehicles.
-- **`docs/integrations.md`**: every external integration boundary from the
-  build instruction, all currently un-configured (none are required yet
-  except self-hosted session auth).
+- Checkpoint commit `064842e` captures the pre-redesign working state.
 
-## Known issue: JobCardStatus granularity
+### Design system
 
-The build instruction describes a finer-grained workshop pipeline (BOOKED →
-ARRIVED → INSPECTION → DIAGNOSIS → ESTIMATE → WAITING_APPROVAL → APPROVED →
-WAITING_PARTS → IN_REPAIR → QUALITY_CHECK → READY → DELIVERED → CLOSED)
-than the frozen `JobCardStatus` enum actually has (`RECEIVED`,
-`INSPECTING`, `DIAGNOSED`, `ESTIMATE_SENT`, `APPROVED`, `IN_PROGRESS`,
-`ON_HOLD`, `COMPLETED`, `INVOICED`, `CLOSED`, `CANCELLED`). Per the
-frozen-foundation rule, this phase did not add new enum values — see the
-mapping and rationale in `apps/web/src/lib/workshop/job-status.ts`. If this
-proves too coarse once Inspection/Diagnosis/QC are built (Phases 2 and 4),
-splitting it out is an additive schema change to flag explicitly at that
-point, not a silent workaround.
+- Official brand tokens in `apps/web/src/app/globals.css`: `--primary`
+  (Electric Violet `#7c3aed`), `--primary-hover` (Deep Violet `#5b21b6`),
+  graphite sidebar (`#111118`), soft-white background (`#f8f8fa`), silver
+  borders (`#cbd5e1`), plus dedicated semantic tokens `--success`/
+  `--warning`/`--danger`/`--info` for status colors — kept independent of
+  the brand accent per the brand direction ("don't use brand purple for
+  every status").
+- Reusable components: `PageHeader`, `EmptyState`, `QuickAction`,
+  `WorkflowStepper`, `WorkshopFlowRow`, `StatusTimeline`, `JobStatusBadge`
+  (semantic colors), `MoneyDisplay`, `ConfirmAction`, `GlobalSearch` — all
+  under `apps/web/src/components/shared/` and `shell/`.
+- shadcn/base-ui primitives in use: Button, Input, Label, Table, Badge,
+  Separator, Dialog, DropdownMenu, Skeleton.
 
-## Known environment issue: Turbopack blocked on this machine
+### App shell
 
-`apps/web`'s `dev`/`build` scripts pass `--webpack`. Next.js 16 defaults to
-Turbopack, but this machine's Windows Application Control policy blocks the
-native `@next/swc-win32-x64-msvc` binary Turbopack needs. Webpack works
-fine and produces the same output; revisit if the policy changes or if
-deploying to a different machine where Turbopack's native binary isn't
-blocked.
+- Dark graphite sidebar, icon-labeled nav (Lucide), active-state accent,
+  collapsible (persisted per-viewer via `localStorage`).
+- Topbar: global search trigger + user menu (dropdown, avatar initials,
+  sign out) + branch chip.
+- Global search (Cmd+K / `/`): searches customers (name/phone), vehicles
+  (plate/VIN), job cards (job number) in one dialog, grouped results,
+  keyboard-triggered from anywhere in the app.
+- Friendly `error.tsx` boundaries (root + app shell) and a route-level
+  `loading.tsx` skeleton — no raw stack traces reach the UI, no bare
+  spinners for page loads.
 
-## Verified working (this session)
+### Dashboard (`/`) — a workshop control center, not a card grid
 
-- `npm run prisma:validate` / `npm run prisma:generate` — pass.
-- `npx prisma migrate dev` — applied cleanly (additive-only migration) against
-  the local embedded PostgreSQL.
-- `npm run db:seed` — pass.
-- `npm run lint --workspace=apps/web` — pass, zero warnings.
-- `npm run build --workspace=apps/web` — pass, every route compiles.
-- Manual dev-server walkthrough — see the session notes; login, dashboard,
-  Quick Check-In (both new and existing customer/vehicle paths), and job
-  status transitions were exercised against the seeded local database.
+- Greeting + date hero with primary quick actions (Check In Vehicle is the
+  most prominent; New Estimate/Create Invoice shown as honestly disabled
+  with a "Phase X" badge, since those modules don't exist yet).
+- Attention Required section (quotations waiting, jobs on hold, low
+  stock) — or a "You're all caught up" empty state when there's nothing.
+- Today's Workshop flow row: live counts per workflow stage
+  (Received → Inspection → Diagnosis → Estimate → Approved → In Repair →
+  Completed → Invoiced), driven by real `JobCard` data.
+- Finance snapshot (today's sales, today's collections, customer
+  outstanding) and Inventory (low-stock list) — both real queries.
+- Team section is an honest "coming in Phase 9" state, not fake
+  present/absent counts (HR/Attendance isn't built — showing zeros there
+  would misrepresent reality, not just be incomplete).
 
-## Roadmap (not built yet — tracked here, not attempted in one pass)
+**Quick Check-In** (`/check-in`): search-first UX (name/phone/plate),
+inline new-customer/vehicle creation, transactional Job Card creation
+(sequential numbering via a row-locked `DocumentNumberSequence`, status
+history, audit log), and a proper success confirmation state ("Job Card
+Created — JC-000123" with Open Job Card / Check in another vehicle) instead
+of an abrupt redirect.
 
-Each of these becomes its own future phase, built the same way Phase 1
-was: fully working end-to-end, not stubbed.
+**Job Cards** (`/job-cards`, `/job-cards/[id]`): searchable, status-filterable,
+paginated list; detail page with a horizontal `WorkflowStepper`, a
+prominent "Next action" panel (primary forward transition as the main
+button, Hold/Cancel as secondary — Cancel is confirm-gated), a vertical
+`StatusTimeline`, and clearly-labeled "coming in Phase N" panels (with
+icons) for Inspection/Diagnosis/Estimate/Work/QC/Invoice/Documents.
 
-- **Phase 2 — Inspection & Diagnosis**: inspection checklist items, photo
-  attachments (needs object storage — see `docs/integrations.md`),
-  diagnosis findings/recommendation, feeding into Estimates.
-- **Phase 3 — Estimates & Customer Approval**: quotation builder (labour +
-  parts + VAT), revisioning, the secure customer-facing approval flow
-  (`/customer/quote/[token]`) using the `CustomerAccessToken` model already
-  added, dev-mock OTP verification.
-- **Phase 4 — Repair Execution & Quality Check**: Work/Labour/Parts tabs on
-  the Job Card, inventory consumption (`PartUsage` → `InventoryTransaction`),
-  QC pass/fail flow.
-- **Phase 5 — Invoicing & Payments**: invoice generation from actuals,
-  payment recording/reversal, customer invoice access
-  (`/customer/invoice/[token]`), PDF/print output.
+**Every other nav destination** renders an explicit, styled "not built
+yet" empty state rather than a 404 or fake data.
+
+**Dev seed data** (`prisma/seed.ts`): Comet Autos org, Al Qusais branch,
+the full V1 permission catalog, an Owner role/user
+(`shifanachennara@gmail.com`), 3 sample customers/vehicles.
+
+## IN PROGRESS
+
+Nothing mid-flight — Phase 1 (architecture + auth + design system +
+dashboard + Quick Check-In + Job Card) is complete and verified end-to-end.
+
+## NEXT
+
+Each becomes its own future phase, built fully working end-to-end (not
+stubbed), in roughly this order:
+
+- **Phase 2 — Inspection & Diagnosis**: checklist items, photo attachments
+  (needs object storage, see `docs/integrations.md`), findings/recommendation.
+- **Phase 3 — Estimates & Customer Approval**: quotation builder, revisioning,
+  the secure customer-facing approval page (`/customer/quote/[token]`,
+  mobile-first, using the `CustomerAccessToken` model already added), mock
+  OTP verification.
+- **Phase 4 — Repair Execution & Quality Check**: Work/Parts/Labour on the
+  Job Card, inventory consumption, QC pass/fail.
+- **Phase 5 — Invoicing & Payments**: invoice generation, payment
+  recording/reversal, customer invoice page, PDF/print.
 - **Phase 6 — Customers/Vehicles Directory**: dedicated browse/search/edit
   screens (creation already works via Quick Check-In).
-- **Phase 7 — Inventory & Purchasing**: Parts/Suppliers/Purchases CRUD,
-  stock receiving, adjustments, low-stock alerts beyond the dashboard tile.
-- **Phase 8 — Finance & Accounting**: Expenses, Chart of Accounts, Journal
-  Entries, VAT reporting, basic P&L.
-- **Phase 9 — HR & Payroll**: Employees, Attendance, Leave, Salary,
-  Payroll calculation/approval/payment.
-- **Phase 10 — Reports**: workshop/sales/collections/outstanding/inventory/
-  technician-performance/attendance reports.
-- **Phase 11 — Settings & RBAC UI**: workshop info, user management,
-  role/permission management UI (permissions already exist and are
-  enforced — this phase adds the UI to manage them), document numbering
-  config, audit history viewer.
-- **Notifications**: `NotificationService` + Email/SMS/WhatsApp provider
-  interfaces (section 39) — needed once Phase 3/5 add "send quotation"/
-  "send invoice" actions. See `docs/integrations.md`.
-- **Import/export**: CSV/Excel import-preview-validate-commit flow, exports
-  — deferred until a module has enough data volume to need it.
+- **Phase 7 — Inventory & Purchasing**, **Phase 8 — Finance & Accounting**,
+  **Phase 9 — HR & Payroll**, **Phase 10 — Reports**, **Phase 11 — Settings
+  & RBAC UI** (role/permission management UI — enforcement already exists).
+- **Notifications** (Email/SMS/WhatsApp) and **import/export** — deferred
+  until the modules that need them exist.
 
-## Manual configuration required
+## BLOCKED
 
-Nothing yet. Every integration boundary that needs real credentials
-(email, SMS/OTP, WhatsApp, payments, object storage, e-invoicing) is
-documented in `docs/integrations.md` with what's needed and when — none of
-Phase 1's features depend on them.
+Nothing is blocked. All Phase 1 work was completable without external
+credentials — see docs/integrations.md for what future phases will need
+from you.
+
+## MANUAL CONFIGURATION REQUIRED
+
+Nothing yet. Every external integration boundary (email, SMS/OTP,
+WhatsApp, payments, object storage, e-invoicing) is documented in
+`docs/integrations.md` with exactly what's needed and when — none of
+Phase 1's features depend on them; self-hosted session auth needs no
+external provider.
+
+## KNOWN LIMITATIONS
+
+- **`JobCardStatus` granularity**: the build instruction's conceptual
+  pipeline (BOOKED → ARRIVED → INSPECTION → DIAGNOSIS → ESTIMATE →
+  WAITING_APPROVAL → APPROVED → WAITING_PARTS → IN_REPAIR → QUALITY_CHECK →
+  READY → DELIVERED → CLOSED) is finer than the frozen `JobCardStatus` enum
+  (11 values). Per the "don't redesign the schema without a genuine
+  blocker" rule, this phase maps the conceptual pipeline onto the existing
+  enum rather than adding new values — see the mapping and rationale in
+  `apps/web/src/lib/workshop/stages.ts` and `job-status.ts`. Flag for
+  revisiting (as an additive schema change) if Phases 2/4 find it too
+  coarse in practice.
+- **Turbopack is disabled on this dev machine**: `apps/web`'s `dev`/`build`
+  scripts pass `--webpack`. This machine's Windows Application Control
+  policy blocks the native `@next/swc-win32-x64-msvc` binary Turbopack
+  needs; webpack produces identical output. Revisit if the policy changes
+  or on a different machine.
+- Dashboard's "Today's sales"/"Collections"/"Customer outstanding" figures
+  are real queries but will show AED 0.00 until Phase 5 (Invoicing) exists
+  — there's simply no invoice/payment data yet, not a bug.
+
+## Verified this session
+
+- `npm run prisma:validate` / `npm run prisma:generate` — pass.
+- `npx prisma migrate dev` — applied cleanly (additive-only) against local
+  embedded PostgreSQL.
+- `npm run db:seed` — pass.
+- `npm run lint --workspace=apps/web` — pass, zero warnings/errors.
+- `npm run build --workspace=apps/web` — pass, every route compiles.
+- Manual dev-server walkthrough over HTTP with a real authenticated
+  session: login redirect, dashboard (all sections render with live seeded
+  data), Quick Check-In transaction logic (job numbering increments
+  correctly across runs, status history + audit rows created), job status
+  state machine (valid transition applied, invalid transition rejected
+  with no partial state change), job-cards list/filter, and the violet
+  brand token confirmed present in the compiled CSS.
