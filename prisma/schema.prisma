@@ -1,17 +1,1740 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
-// Foundation only: datasource + generator configuration.
-// V1 core domain models are NOT defined yet (see docs/03-domain and docs/05-database
-// once approved by the solution architect). Do not add models here without approval.
+// Comet Autos V1 Database Schema
+//
+// Status: FROZEN FOUNDATION SCHEMA — approved across multiple architect
+// review rounds. See docs/11-decisions for the ADRs behind the conventions
+// used here, docs/07-security/authorization.md for the UserRole
+// branch-scope semantics, and PROJECT-STATUS.md for what has and hasn't
+// been implemented.
+//
+// Conventions:
+// - All primary keys are UUIDv7 (time-sortable, tenant-safe — no sequential
+//   volume leakage across organizations).
+// - Every tenant-owned table carries organization_id (rule: backend-enforced
+//   tenant isolation). Deliberate exceptions: Permission (global platform
+//   catalog, not tenant data); AuditLog/Document entity_id references are
+//   polymorphic "soft" pointers, not real FKs (documented on each model).
+// - Organization consistency is enforced at the DATABASE level, not just in
+//   application code: every relation to an organization-scoped parent is a
+//   COMPOSITE foreign key on (organization_id, parent_id) -> parent's
+//   (organization_id, id), instead of a plain (parent_id) -> (id) FK. This
+//   makes it structurally impossible for a child row to reference a parent
+//   belonging to a different organization — Postgres rejects the insert/
+//   update outright. Every org-scoped model therefore also carries a
+//   `@@unique([organizationId, id])` so it can be the target of such a
+//   composite FK.
+// - branch_id appears only on models representing an independently-existing,
+//   branch-located resource/event. Pure line-item/detail children (whose
+//   branch is always identical to their required parent's) omit it.
+// - Money: Decimal(14,2). Quantities: Decimal(12,3) (supports fractional
+//   units, e.g. litres). Hours: Decimal(8,2). Tax rate: Decimal(5,2).
+//   AED is the only V1 currency (Organization.baseCurrency).
+// - Immutable/append-only ledger and history tables have createdAt only (no
+//   updatedAt) — corrections are new rows, never in-place edits (rule 19).
+//   Reversals use a self-relation (`reversalOf...`) pointing back at the
+//   original, which is never itself edited.
+// - The PROFORMA invariant (a proforma invoice must never carry a
+//   journalEntryId) is NOT expressible as a native Prisma attribute in this
+//   version (no @@check support) — it is added as a raw SQL CHECK
+//   constraint in the migration itself. See the migration's up.sql.
 
 generator client {
-  provider = "prisma-client"
-  output   = "../apps/api/src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../apps/web/src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum AssignmentRole {
+  PRIMARY
+  SUPPORT
+}
+
+/// V1 customer secure-access resources (section 13-15 of the V1 build
+/// instruction): a CustomerAccessToken always grants access to exactly one
+/// resource of one of these types, never a general customer login.
+enum CustomerAccessResourceType {
+  ESTIMATE
+  INVOICE
+}
+
+enum InspectionStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum InspectionItemResult {
+  OK
+  ATTENTION_NEEDED
+  FAILED
+}
+
+enum EstimateStatus {
+  DRAFT
+  SENT
+  APPROVED
+  PARTIALLY_APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum EstimateItemType {
+  PART
+  LABOUR
+  OTHER
+}
+
+enum ApprovalStatus {
+  APPROVED
+  PARTIALLY_APPROVED
+  REJECTED
+}
+
+enum ApprovalMethod {
+  IN_PERSON
+  PHONE
+  EMAIL
+  SMS
+  DIGITAL_SIGNATURE
+}
+
+enum ApprovalItemDecision {
+  APPROVED
+  REJECTED
+}
+
+enum JobCardStatus {
+  RECEIVED
+  INSPECTING
+  DIAGNOSED
+  ESTIMATE_SENT
+  APPROVED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  INVOICED
+  CLOSED
+  CANCELLED
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+/// REVERSED (post-receipt correction, requires a reversing journal entry) is
+/// distinct from CANCELLED (pre-receipt abandonment, no financial impact).
+enum PurchaseStatus {
+  DRAFT
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+  REVERSED
+}
+
+enum InventoryTransactionType {
+  PURCHASE_RECEIPT
+  JOB_CONSUMPTION
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+  RETURN_TO_SUPPLIER
+  CUSTOMER_RETURN
+}
+
+/// V1 supports quotations (Estimate) and two invoice concepts only.
+/// Credit/debit notes are explicitly future scope.
+enum InvoiceType {
+  TAX_INVOICE
+  PROFORMA
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  VOID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  CHEQUE
+  ONLINE
+}
+
+/// A reversal is never represented by editing the original row's status —
+/// it is a new row with status REVERSED and reversalOf(Supplier)PaymentId
+/// pointing back at the original, which stays COMPLETED forever.
+enum PaymentStatus {
+  COMPLETED
+  REVERSED
+}
+
+enum ExpenseStatus {
+  RECORDED
+  VOID
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  ON_LEAVE
+  HOLIDAY
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  UNPAID
+  OTHER
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum PayrollStatus {
+  DRAFT
+  CALCULATED
+  APPROVED
+  PAID
+  CANCELLED
+}
+
+/// Mirrors InvoiceType (no CREDIT_NOTE in V1) plus payment/expense voucher
+/// types, so every document category that needs a human-readable number has
+/// one.
+enum DocumentType {
+  JOB_CARD
+  ESTIMATE
+  TAX_INVOICE
+  PROFORMA_INVOICE
+  PURCHASE_ORDER
+  PAYMENT_RECEIPT
+  EXPENSE_VOUCHER
+  SUPPLIER_PAYMENT
+}
+
+enum DocumentCategory {
+  PHOTO
+  INVOICE_PDF
+  INSPECTION_REPORT
+  EMPLOYEE_DOCUMENT
+  OTHER
+}
+
+// =============================================================================
+// TENANT / ACCESS
+// =============================================================================
+
+model Organization {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  name         String
+  legalName    String?  @map("legal_name")
+  taxNumber    String?  @map("tax_number")
+  address      String?
+  phone        String?
+  email        String?
+  baseCurrency String   @default("AED") @map("base_currency")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  branches                Branch[]
+  users                   User[]
+  roles                   Role[]
+  customers               Customer[]
+  vehicles                Vehicle[]
+  appointments            Appointment[]
+  jobCards                JobCard[]
+  parts                   Part[]
+  suppliers               Supplier[]
+  purchases               Purchase[]
+  invoices                Invoice[]
+  payments                Payment[]
+  supplierPayments        SupplierPayment[]
+  expenses                Expense[]
+  chartOfAccounts         ChartOfAccount[]
+  journalEntries          JournalEntry[]
+  employees               Employee[]
+  payrolls                Payroll[]
+  documentNumberSequences DocumentNumberSequence[]
+  userRoles               UserRole[]
+  rolePermissions         RolePermission[]
+  jobStatusHistories      JobStatusHistory[]
+  jobAssignments          JobAssignment[]
+  inspections             Inspection[]
+  inspectionItems         InspectionItem[]
+  diagnoses               Diagnosis[]
+  estimates               Estimate[]
+  estimateItems           EstimateItem[]
+  approvals               Approval[]
+  approvalItems           ApprovalItem[]
+  labours                 Labour[]
+  partUsages              PartUsage[]
+  workRecords             WorkRecord[]
+  purchaseItems           PurchaseItem[]
+  inventoryTransactions   InventoryTransaction[]
+  invoiceItems            InvoiceItem[]
+  journalEntryLines       JournalEntryLine[]
+  attendances             Attendance[]
+  leaves                  Leave[]
+  salaries                Salary[]
+  payrollItems            PayrollItem[]
+  auditLogs               AuditLog[]
+  documents               Document[]
+  sessions                Session[]
+  customerAccessTokens    CustomerAccessToken[]
+
+  @@map("organizations")
+}
+
+model Branch {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  code           String
+  name           String
+  address        String?
+  phone          String?
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  primaryUsers            User[]
+  appointments            Appointment[]
+  jobCards                JobCard[]
+  purchases               Purchase[]
+  invoices                Invoice[]
+  expenses                Expense[]
+  journalEntries          JournalEntry[]
+  employees               Employee[]
+  attendances             Attendance[]
+  inventoryTransactions   InventoryTransaction[]
+  documentNumberSequences DocumentNumberSequence[]
+  userRoles               UserRole[]
+  auditLogs               AuditLog[]
+  documents               Document[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("branches")
+}
+
+model User {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  primaryBranchId String?   @map("primary_branch_id") @db.Uuid
+  email           String
+  passwordHash    String    @map("password_hash")
+  fullName        String    @map("full_name")
+  phone           String?
+  isActive        Boolean   @default(true) @map("is_active")
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  primaryBranch Branch?      @relation(fields: [organizationId, primaryBranchId], references: [organizationId, id], onDelete: Restrict)
+
+  userRoles              UserRole[]             @relation("UserRoleUser")
+  employee               Employee?
+  assignedJobAssignments JobAssignment[]        @relation("JobAssignmentAssignedBy")
+  jobStatusChanges       JobStatusHistory[]
+  createdAppointments    Appointment[]
+  createdJobCards        JobCard[]
+  preparedEstimates      Estimate[]             @relation("EstimatePreparedBy")
+  sentEstimates          Estimate[]             @relation("EstimateSentBy")
+  recordedApprovals      Approval[]
+  createdPurchases       Purchase[]             @relation("PurchaseCreatedBy")
+  receivedPurchases      Purchase[]             @relation("PurchaseReceivedBy")
+  inventoryAdjustments   InventoryTransaction[]
+  createdInvoices        Invoice[]              @relation("InvoiceCreatedBy")
+  issuedInvoices         Invoice[]              @relation("InvoiceIssuedBy")
+  receivedPayments       Payment[]
+  paidSupplierPayments   SupplierPayment[]
+  recordedExpenses       Expense[]
+  createdJournalEntries  JournalEntry[]         @relation("JournalEntryCreatedBy")
+  postedJournalEntries   JournalEntry[]         @relation("JournalEntryPostedBy")
+  approvedLeaves         Leave[]
+  createdPayrolls        Payroll[]              @relation("PayrollCreatedBy")
+  approvedPayrolls       Payroll[]              @relation("PayrollApprovedBy")
+  paidPayrolls           Payroll[]              @relation("PayrollPaidBy")
+  grantedUserRoles       UserRole[]             @relation("UserRoleAssignedBy")
+  revokedUserRoles       UserRole[]             @relation("UserRoleRevokedBy")
+  auditLogs              AuditLog[]
+  uploadedDocuments      Document[]
+  sessions               Session[]
+  issuedCustomerAccessTokens CustomerAccessToken[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@index([organizationId, primaryBranchId])
+  @@map("users")
+}
+
+/// Server-side session store for cookie-based staff auth. Only tokenHash is
+/// stored (the raw token lives solely in the httpOnly cookie) — a DB leak
+/// alone can never yield a usable session. Logout/expiry is a soft-delete
+/// (revokedAt), never a row DELETE, matching the revocation pattern used
+/// everywhere else in this schema (rule 19) and keeping session history
+/// auditable.
+model Session {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User         @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, userId])
+  @@map("sessions")
+}
+
+model Role {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  description    String?
+  isSystem       Boolean  @default(false) @map("is_system")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("roles")
+}
+
+/// Global platform capability catalog. Deliberately has NO organization_id:
+/// permissions are platform-defined code (e.g. "invoice.approve"), not
+/// tenant-owned data. Relations to this model are plain (not composite) FKs.
+model Permission {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  code        String   @unique
+  description String?
+  module      String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+/// branchId is nullable by design:
+///   branchId = NULL     -> organization-wide role grant
+///   branchId = <branch> -> role grant scoped to that branch only
+/// Backend authorization must enforce that a branch-scoped grant cannot
+/// access resources belonging to a different branch — see
+/// docs/07-security/authorization.md.
+///
+/// Revocation is a soft-delete (revokedAt/revokedByUserId), never a hard
+/// DELETE — mirrors the JobAssignment history-preservation pattern (rule
+/// 10) and keeps role-grant history queryable without relying solely on
+/// AuditLog reconstruction.
+model UserRole {
+  id               String    @id @default(uuid(7)) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  roleId           String    @map("role_id") @db.Uuid
+  branchId         String?   @map("branch_id") @db.Uuid
+  assignedByUserId String?   @map("assigned_by_user_id") @db.Uuid
+  assignedAt       DateTime  @default(now()) @map("assigned_at") @db.Timestamptz
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz
+  revokedByUserId  String?   @map("revoked_by_user_id") @db.Uuid
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User         @relation("UserRoleUser", fields: [organizationId, userId], references: [organizationId, id], onDelete: Restrict)
+  role         Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Restrict)
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "user_roles_branch_fkey")
+  assignedBy   User?        @relation("UserRoleAssignedBy", fields: [organizationId, assignedByUserId], references: [organizationId, id], onDelete: Restrict)
+  revokedBy    User?        @relation("UserRoleRevokedBy", fields: [organizationId, revokedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  // Branch-scoped grants: branch_id is non-null so Postgres' NULL-distinctness
+  // quirk doesn't apply. Extended with revoked_at IS NULL so a revoked-then-
+  // regranted role doesn't collide with a still-active one.
+  @@unique([userId, roleId, branchId], map: "user_roles_branch_scoped_unique", where: raw("revoked_at IS NULL"))
+  // Organization-wide grants (branch_id IS NULL), same revoked_at guard.
+  @@unique([userId, roleId], map: "user_roles_orgwide_unique", where: raw("branch_id IS NULL AND revoked_at IS NULL"))
+  @@index([organizationId])
+  @@index([organizationId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  roleId         String   @map("role_id") @db.Uuid
+  permissionId   String   @map("permission_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  role         Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade)
+  permission   Permission   @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@unique([roleId, permissionId])
+  @@index([organizationId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// =============================================================================
+// CUSTOMER / VEHICLE
+// =============================================================================
+
+model Customer {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  customerCode   String?  @map("customer_code")
+  name           String
+  phone          String
+  email          String?
+  address        String?
+  taxNumber      String?  @map("tax_number")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  vehicles     Vehicle[]
+  appointments Appointment[]
+  invoices     Invoice[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, name])
+  @@index([organizationId, phone])
+  @@map("customers")
+}
+
+model Vehicle {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  customerId     String   @map("customer_id") @db.Uuid
+  plateNumber    String   @map("plate_number")
+  plateEmirate   String?  @map("plate_emirate")
+  vin            String?
+  make           String
+  model          String
+  year           Int?
+  color          String?
+  lastMileage    Int?     @map("last_mileage")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  customer     Customer     @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
+
+  appointments Appointment[]
+  jobCards     JobCard[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, plateNumber])
+  @@unique([organizationId, vin])
+  @@index([organizationId])
+  @@index([organizationId, customerId])
+  @@map("vehicles")
+}
+
+model Appointment {
+  id                       String            @id @default(uuid(7)) @db.Uuid
+  organizationId           String            @map("organization_id") @db.Uuid
+  branchId                 String            @map("branch_id") @db.Uuid
+  customerId               String            @map("customer_id") @db.Uuid
+  vehicleId                String?           @map("vehicle_id") @db.Uuid
+  scheduledAt              DateTime          @map("scheduled_at") @db.Timestamptz
+  estimatedDurationMinutes Int?              @map("estimated_duration_minutes")
+  status                   AppointmentStatus @default(SCHEDULED)
+  notes                    String?
+  createdByUserId          String            @map("created_by_user_id") @db.Uuid
+  createdAt                DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  customer     Customer     @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
+  vehicle      Vehicle?     @relation(fields: [organizationId, vehicleId], references: [organizationId, id], onDelete: Restrict)
+  createdBy    User         @relation(fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  jobCards JobCard[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, branchId, scheduledAt])
+  @@index([organizationId, customerId])
+  @@index([organizationId, vehicleId])
+  @@map("appointments")
+}
+
+// =============================================================================
+// WORKSHOP
+// =============================================================================
+
+/// JobCard belongs to Vehicle only. Customer is derived through
+/// vehicle.customer — there is deliberately NO direct customerId here.
+model JobCard {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  organizationId    String        @map("organization_id") @db.Uuid
+  branchId          String        @map("branch_id") @db.Uuid
+  vehicleId         String        @map("vehicle_id") @db.Uuid
+  appointmentId     String?       @map("appointment_id") @db.Uuid
+  jobNumber         String        @map("job_number")
+  status            JobCardStatus @default(RECEIVED)
+  odometerReading   Int?          @map("odometer_reading")
+  customerComplaint String?       @map("customer_complaint")
+  openedAt          DateTime      @default(now()) @map("opened_at") @db.Timestamptz
+  closedAt          DateTime?     @map("closed_at") @db.Timestamptz
+  createdByUserId   String        @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  vehicle      Vehicle      @relation(fields: [organizationId, vehicleId], references: [organizationId, id], onDelete: Restrict)
+  appointment  Appointment? @relation(fields: [organizationId, appointmentId], references: [organizationId, id], onDelete: Restrict)
+  createdBy    User         @relation(fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  statusHistory JobStatusHistory[]
+  assignments   JobAssignment[]
+  inspections   Inspection[]
+  diagnoses     Diagnosis[]
+  estimates     Estimate[]
+  labours       Labour[]
+  partUsages    PartUsage[]
+  workRecords   WorkRecord[]
+  invoices      Invoice[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, jobNumber])
+  @@index([organizationId])
+  @@index([organizationId, branchId])
+  @@index([organizationId, vehicleId])
+  @@index([organizationId, status])
+  @@index([organizationId, branchId, status])
+  @@map("job_cards")
+}
+
+/// Immutable append-only log: rows are never edited after insert (rule 10).
+model JobStatusHistory {
+  id              String         @id @default(uuid(7)) @db.Uuid
+  organizationId  String         @map("organization_id") @db.Uuid
+  jobCardId       String         @map("job_card_id") @db.Uuid
+  fromStatus      JobCardStatus? @map("from_status")
+  toStatus        JobCardStatus  @map("to_status")
+  changedByUserId String         @map("changed_by_user_id") @db.Uuid
+  changedAt       DateTime       @default(now()) @map("changed_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard      JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  changedBy    User         @relation(fields: [organizationId, changedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, jobCardId, changedAt])
+  @@map("job_status_history")
+}
+
+/// Historical rows are never overwritten (rule 10): "unassigning" sets
+/// unassignedAt rather than deleting/editing the row. The partial unique
+/// index below enforces rule 9 (only one active PRIMARY assignment) at the
+/// database level, not just in application code.
+model JobAssignment {
+  id               String         @id @default(uuid(7)) @db.Uuid
+  organizationId   String         @map("organization_id") @db.Uuid
+  jobCardId        String         @map("job_card_id") @db.Uuid
+  employeeId       String         @map("employee_id") @db.Uuid
+  assignedByUserId String         @map("assigned_by_user_id") @db.Uuid
+  assignmentRole   AssignmentRole @default(SUPPORT) @map("assignment_role")
+  assignedAt       DateTime       @default(now()) @map("assigned_at") @db.Timestamptz
+  unassignedAt     DateTime?      @map("unassigned_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard      JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Restrict)
+  assignedBy   User         @relation("JobAssignmentAssignedBy", fields: [organizationId, assignedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([jobCardId], map: "one_active_primary_assignment_per_job_card", where: raw("assignment_role = 'PRIMARY' AND unassigned_at IS NULL"))
+  @@index([organizationId])
+  @@index([organizationId, jobCardId])
+  @@index([organizationId, employeeId])
+  @@map("job_assignments")
+}
+
+model Inspection {
+  id                    String           @id @default(uuid(7)) @db.Uuid
+  organizationId        String           @map("organization_id") @db.Uuid
+  jobCardId             String           @map("job_card_id") @db.Uuid
+  inspectedByEmployeeId String           @map("inspected_by_employee_id") @db.Uuid
+  status                InspectionStatus @default(IN_PROGRESS)
+  summary               String?
+  inspectedAt           DateTime         @default(now()) @map("inspected_at") @db.Timestamptz
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard             JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  inspectedByEmployee Employee     @relation(fields: [organizationId, inspectedByEmployeeId], references: [organizationId, id], onDelete: Restrict)
+
+  items     InspectionItem[]
+  diagnoses Diagnosis[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, jobCardId])
+  @@map("inspections")
+}
+
+model InspectionItem {
+  id             String               @id @default(uuid(7)) @db.Uuid
+  organizationId String               @map("organization_id") @db.Uuid
+  inspectionId   String               @map("inspection_id") @db.Uuid
+  category       String?
+  description    String
+  result         InspectionItemResult
+  notes          String?
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  inspection   Inspection   @relation(fields: [organizationId, inspectionId], references: [organizationId, id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, inspectionId])
+  @@map("inspection_items")
+}
+
+model Diagnosis {
+  id                    String   @id @default(uuid(7)) @db.Uuid
+  organizationId        String   @map("organization_id") @db.Uuid
+  jobCardId             String   @map("job_card_id") @db.Uuid
+  inspectionId          String?  @map("inspection_id") @db.Uuid
+  diagnosedByEmployeeId String   @map("diagnosed_by_employee_id") @db.Uuid
+  findings              String
+  recommendedAction     String?  @map("recommended_action")
+  diagnosedAt           DateTime @default(now()) @map("diagnosed_at") @db.Timestamptz
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard             JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  inspection          Inspection?  @relation(fields: [organizationId, inspectionId], references: [organizationId, id], onDelete: Restrict)
+  diagnosedByEmployee Employee     @relation(fields: [organizationId, diagnosedByEmployeeId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, jobCardId])
+  @@map("diagnoses")
+}
+
+/// Represents PROPOSED work (rule 13). previousVersionId makes the revision
+/// chain explicit (in addition to `version`), so "what did this replace" is
+/// a direct lookup. The original estimate and its Approval history are
+/// never overwritten — a revision is always a new row.
+model Estimate {
+  id                String         @id @default(uuid(7)) @db.Uuid
+  organizationId    String         @map("organization_id") @db.Uuid
+  jobCardId         String         @map("job_card_id") @db.Uuid
+  previousVersionId String?        @map("previous_version_id") @db.Uuid
+  estimateNumber    String         @map("estimate_number")
+  version           Int            @default(1)
+  status            EstimateStatus @default(DRAFT)
+  subtotal          Decimal        @db.Decimal(14, 2)
+  taxAmount         Decimal        @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  totalAmount       Decimal        @map("total_amount") @db.Decimal(14, 2)
+  preparedByUserId  String         @map("prepared_by_user_id") @db.Uuid
+  sentByUserId      String?        @map("sent_by_user_id") @db.Uuid
+  validUntil        DateTime?      @map("valid_until") @db.Date
+  sentAt            DateTime?      @map("sent_at") @db.Timestamptz
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard         JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  previousVersion Estimate?    @relation("EstimateRevision", fields: [organizationId, previousVersionId], references: [organizationId, id], onDelete: Restrict)
+  nextVersions    Estimate[]   @relation("EstimateRevision")
+  preparedBy      User         @relation("EstimatePreparedBy", fields: [organizationId, preparedByUserId], references: [organizationId, id], onDelete: Restrict)
+  sentBy          User?        @relation("EstimateSentBy", fields: [organizationId, sentByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  items     EstimateItem[]
+  approvals Approval[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, estimateNumber])
+  @@index([organizationId])
+  @@index([organizationId, jobCardId])
+  @@index([organizationId, previousVersionId])
+  @@map("estimates")
+}
+
+model EstimateItem {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  estimateId     String           @map("estimate_id") @db.Uuid
+  itemType       EstimateItemType @map("item_type")
+  partId         String?          @map("part_id") @db.Uuid
+  description    String
+  quantity       Decimal          @db.Decimal(12, 3)
+  unitPrice      Decimal          @map("unit_price") @db.Decimal(14, 2)
+  lineTotal      Decimal          @map("line_total") @db.Decimal(14, 2)
+  taxRate        Decimal?         @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount      Decimal?         @map("tax_amount") @db.Decimal(14, 2)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  estimate     Estimate     @relation(fields: [organizationId, estimateId], references: [organizationId, id], onDelete: Cascade)
+  part         Part?        @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
+
+  approvalItems ApprovalItem[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, estimateId])
+  @@index([organizationId, partId])
+  @@map("estimate_items")
+}
+
+/// Represents customer AUTHORIZATION (rule 14) of a specific Estimate.
+/// No dedicated signature field — a captured signature, if ever needed, is
+/// a Document row with entityType = "Approval".
+model Approval {
+  id               String         @id @default(uuid(7)) @db.Uuid
+  organizationId   String         @map("organization_id") @db.Uuid
+  estimateId       String         @map("estimate_id") @db.Uuid
+  status           ApprovalStatus
+  approvalMethod   ApprovalMethod @map("approval_method")
+  approvedAt       DateTime?      @map("approved_at") @db.Timestamptz
+  recordedByUserId String         @map("recorded_by_user_id") @db.Uuid
+  notes            String?
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  estimate     Estimate     @relation(fields: [organizationId, estimateId], references: [organizationId, id], onDelete: Restrict)
+  recordedBy   User         @relation(fields: [organizationId, recordedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  items ApprovalItem[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, estimateId])
+  @@map("approvals")
+}
+
+model ApprovalItem {
+  id             String               @id @default(uuid(7)) @db.Uuid
+  organizationId String               @map("organization_id") @db.Uuid
+  approvalId     String               @map("approval_id") @db.Uuid
+  estimateItemId String               @map("estimate_item_id") @db.Uuid
+  decision       ApprovalItemDecision
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  approval     Approval     @relation(fields: [organizationId, approvalId], references: [organizationId, id], onDelete: Cascade)
+  estimateItem EstimateItem @relation(fields: [organizationId, estimateItemId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([approvalId, estimateItemId])
+  @@index([organizationId])
+  @@index([organizationId, estimateItemId])
+  @@map("approval_items")
+}
+
+/// Represents the BILLABLE labour charge: rate x hours, feeds InvoiceItem.
+/// Always attributable to an Employee (rule 12), never to a User directly.
+/// workRecordId is an optional traceability link back to the operational
+/// time-log entry this charge was derived from.
+model Labour {
+  id                    String   @id @default(uuid(7)) @db.Uuid
+  organizationId        String   @map("organization_id") @db.Uuid
+  jobCardId             String   @map("job_card_id") @db.Uuid
+  performedByEmployeeId String   @map("performed_by_employee_id") @db.Uuid
+  workRecordId          String?  @map("work_record_id") @db.Uuid
+  description           String
+  hours                 Decimal  @db.Decimal(8, 2)
+  rate                  Decimal  @db.Decimal(14, 2)
+  amount                Decimal  @db.Decimal(14, 2)
+  performedAt           DateTime @default(now()) @map("performed_at") @db.Timestamptz
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard             JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  performedByEmployee Employee     @relation(fields: [organizationId, performedByEmployeeId], references: [organizationId, id], onDelete: Restrict)
+  workRecord          WorkRecord?  @relation(fields: [organizationId, workRecordId], references: [organizationId, id], onDelete: Restrict)
+
+  invoiceItems InvoiceItem[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, jobCardId])
+  @@index([organizationId, performedByEmployeeId])
+  @@index([organizationId, workRecordId])
+  @@map("labours")
+}
+
+/// Represents ACTUAL parts consumed (rule 15). unitCost/unitPrice are
+/// snapshotted at time of use, not read live from Part.
+model PartUsage {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  jobCardId        String   @map("job_card_id") @db.Uuid
+  partId           String   @map("part_id") @db.Uuid
+  usedByEmployeeId String   @map("used_by_employee_id") @db.Uuid
+  quantity         Decimal  @db.Decimal(12, 3)
+  unitCost         Decimal  @map("unit_cost") @db.Decimal(14, 2)
+  unitPrice        Decimal  @map("unit_price") @db.Decimal(14, 2)
+  usedAt           DateTime @default(now()) @map("used_at") @db.Timestamptz
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard        JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  part           Part         @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
+  usedByEmployee Employee     @relation(fields: [organizationId, usedByEmployeeId], references: [organizationId, id], onDelete: Restrict)
+
+  invoiceItems          InvoiceItem[]
+  inventoryTransactions InventoryTransaction[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, jobCardId])
+  @@index([organizationId, partId])
+  @@map("part_usages")
+}
+
+/// Operational time-log of ACTUAL technician work sessions — employee
+/// attribution + productivity tracking. Deliberately kept separate from
+/// Labour (the billable charge); Labour optionally references back to the
+/// WorkRecord it was derived from, never the other way around.
+model WorkRecord {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  jobCardId      String    @map("job_card_id") @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  startedAt      DateTime  @map("started_at") @db.Timestamptz
+  endedAt        DateTime? @map("ended_at") @db.Timestamptz
+  notes          String?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard      JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Restrict)
+
+  labours Labour[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, jobCardId])
+  @@index([organizationId, employeeId])
+  @@map("work_records")
+}
+
+// =============================================================================
+// INVENTORY
+// =============================================================================
+
+/// No current_stock field, by design (rules 20-21): stock levels are always
+/// derived at query time from SUM(InventoryTransaction.quantity) grouped by
+/// part + branch, never stored as a single mutable counter.
+model Part {
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  organizationId      String   @map("organization_id") @db.Uuid
+  sku                 String
+  name                String
+  description         String?
+  unitOfMeasure       String   @map("unit_of_measure")
+  defaultCostPrice    Decimal? @map("default_cost_price") @db.Decimal(14, 2)
+  defaultSellingPrice Decimal? @map("default_selling_price") @db.Decimal(14, 2)
+  defaultTaxRate      Decimal? @map("default_tax_rate") @db.Decimal(5, 2)
+  preferredSupplierId String?  @map("preferred_supplier_id") @db.Uuid
+  reorderLevel        Decimal? @map("reorder_level") @db.Decimal(12, 3)
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  preferredSupplier Supplier?    @relation(fields: [organizationId, preferredSupplierId], references: [organizationId, id], onDelete: Restrict)
+
+  estimateItems         EstimateItem[]
+  purchaseItems         PurchaseItem[]
+  partUsages            PartUsage[]
+  inventoryTransactions InventoryTransaction[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, sku])
+  @@index([organizationId])
+  @@index([organizationId, preferredSupplierId])
+  @@map("parts")
+}
+
+model Supplier {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  contactName    String?  @map("contact_name")
+  phone          String?
+  email          String?
+  address        String?
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  parts     Part[]
+  purchases Purchase[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@map("suppliers")
+}
+
+model Purchase {
+  id               String         @id @default(uuid(7)) @db.Uuid
+  organizationId   String         @map("organization_id") @db.Uuid
+  branchId         String         @map("branch_id") @db.Uuid
+  supplierId       String         @map("supplier_id") @db.Uuid
+  purchaseNumber   String         @map("purchase_number")
+  status           PurchaseStatus @default(DRAFT)
+  subtotal         Decimal?       @db.Decimal(14, 2)
+  taxAmount        Decimal?       @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  totalAmount      Decimal?       @map("total_amount") @db.Decimal(14, 2)
+  orderedAt        DateTime       @default(now()) @map("ordered_at") @db.Timestamptz
+  expectedAt       DateTime?      @map("expected_at") @db.Timestamptz
+  receivedAt       DateTime?      @map("received_at") @db.Timestamptz
+  receivedByUserId String?        @map("received_by_user_id") @db.Uuid
+  journalEntryId   String?        @map("journal_entry_id") @db.Uuid
+  createdByUserId  String         @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  supplier     Supplier      @relation(fields: [organizationId, supplierId], references: [organizationId, id], onDelete: Restrict)
+  journalEntry JournalEntry? @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+  createdBy    User          @relation("PurchaseCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+  receivedBy   User?         @relation("PurchaseReceivedBy", fields: [organizationId, receivedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  items            PurchaseItem[]
+  supplierPayments SupplierPayment[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, purchaseNumber])
+  @@index([organizationId])
+  @@index([organizationId, branchId])
+  @@index([organizationId, supplierId])
+  @@index([organizationId, status])
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  purchaseId       String   @map("purchase_id") @db.Uuid
+  partId           String   @map("part_id") @db.Uuid
+  quantityOrdered  Decimal  @map("quantity_ordered") @db.Decimal(12, 3)
+  quantityReceived Decimal  @default(0) @map("quantity_received") @db.Decimal(12, 3)
+  unitCost         Decimal  @map("unit_cost") @db.Decimal(14, 2)
+  taxRate          Decimal? @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount        Decimal? @map("tax_amount") @db.Decimal(14, 2)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  purchase     Purchase     @relation(fields: [organizationId, purchaseId], references: [organizationId, id], onDelete: Cascade)
+  part         Part         @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
+
+  inventoryTransactions InventoryTransaction[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, purchaseId])
+  @@index([organizationId, partId])
+  @@map("purchase_items")
+}
+
+/// Append-only stock ledger (rules 20-21). quantity is signed: positive
+/// increases stock, negative decreases it. Current stock is always
+/// SUM(quantity) grouped by part + branch, never a stored counter.
+/// purchaseItemId/partUsageId are nullable "one of these, or neither for a
+/// manual adjustment" source references (avoids a fragile polymorphic FK).
+///
+/// NOTE: this signed-quantity ledger pattern is deliberately NOT reused for
+/// financial receipts (see Payment) — physical stock movement and cash
+/// receipts are different domains with different audit-friendliness needs.
+model InventoryTransaction {
+  id                String                   @id @default(uuid(7)) @db.Uuid
+  organizationId    String                   @map("organization_id") @db.Uuid
+  branchId          String                   @map("branch_id") @db.Uuid
+  partId            String                   @map("part_id") @db.Uuid
+  transactionType   InventoryTransactionType @map("transaction_type")
+  quantity          Decimal                  @db.Decimal(12, 3)
+  unitCost          Decimal?                 @map("unit_cost") @db.Decimal(14, 2)
+  purchaseItemId    String?                  @map("purchase_item_id") @db.Uuid
+  partUsageId       String?                  @map("part_usage_id") @db.Uuid
+  performedByUserId String?                  @map("performed_by_user_id") @db.Uuid
+  note              String?
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  part         Part          @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
+  purchaseItem PurchaseItem? @relation(fields: [organizationId, purchaseItemId], references: [organizationId, id], onDelete: Restrict)
+  partUsage    PartUsage?    @relation(fields: [organizationId, partUsageId], references: [organizationId, id], onDelete: Restrict)
+  performedBy  User?         @relation(fields: [organizationId, performedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, branchId, partId])
+  @@index([organizationId, partId])
+  @@index([createdAt])
+  @@map("inventory_transactions")
+}
+
+// =============================================================================
+// FINANCE
+// =============================================================================
+
+/// Only TAX_INVOICE and PROFORMA in V1. Quotation remains represented by
+/// Estimate — do not conflate the two. DocumentNumberSequence issues
+/// separate number series per type, so the human-readable numbers never
+/// overlap even though both types share this table.
+///
+/// createdByUserId (who drafted it) is always required; issuedByUserId/
+/// issuedAt are nullable and populated only when the invoice transitions
+/// DRAFT -> ISSUED — requiring an "issuer" at DRAFT-creation time was
+/// semantically wrong and has been corrected.
+///
+/// A PROFORMA must never carry a journalEntryId (it is not a revenue-
+/// recognition event) — enforced via a raw SQL CHECK constraint added in
+/// the migration (see migration.sql), since this Prisma version has no
+/// native @@check attribute. Ordinary Payment against a PROFORMA is
+/// forbidden by application logic (cross-table, not DB-enforceable).
+model Invoice {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  organizationId    String        @map("organization_id") @db.Uuid
+  branchId          String        @map("branch_id") @db.Uuid
+  jobCardId         String?       @map("job_card_id") @db.Uuid
+  customerId        String        @map("customer_id") @db.Uuid
+  invoiceType       InvoiceType   @map("invoice_type")
+  invoiceNumber     String        @map("invoice_number")
+  status            InvoiceStatus @default(DRAFT)
+  issueDate         DateTime      @map("issue_date") @db.Date
+  supplyDate        DateTime?     @map("supply_date") @db.Date
+  dueDate           DateTime?     @map("due_date") @db.Date
+  subtotal          Decimal       @db.Decimal(14, 2)
+  taxAmount         Decimal       @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  totalAmount       Decimal       @map("total_amount") @db.Decimal(14, 2)
+  notes             String?
+  // Historical snapshot fields — copied from Organization/Customer at
+  // issuance time, and never re-derived afterward, so a legally-issued tax
+  // invoice keeps showing exactly what was represented at the time even if
+  // the live Organization/Customer records change later.
+  sellerLegalName   String?       @map("seller_legal_name")
+  sellerTaxNumber   String?       @map("seller_tax_number")
+  sellerAddress     String?       @map("seller_address")
+  customerName      String?       @map("customer_name")
+  customerTaxNumber String?       @map("customer_tax_number")
+  customerAddress   String?       @map("customer_address")
+  journalEntryId    String?       @map("journal_entry_id") @db.Uuid
+  createdByUserId   String        @map("created_by_user_id") @db.Uuid
+  issuedByUserId    String?       @map("issued_by_user_id") @db.Uuid
+  issuedAt          DateTime?     @map("issued_at") @db.Timestamptz
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  jobCard      JobCard?      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Restrict)
+  customer     Customer      @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
+  journalEntry JournalEntry? @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+  createdBy    User          @relation("InvoiceCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+  issuedBy     User?         @relation("InvoiceIssuedBy", fields: [organizationId, issuedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  items    InvoiceItem[]
+  payments Payment[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, invoiceNumber])
+  @@index([organizationId])
+  @@index([organizationId, branchId])
+  @@index([organizationId, jobCardId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, status])
+  @@map("invoices")
+}
+
+/// partUsageId/labourId provide audit traceability from a financial line
+/// back to the exact actual-work record it was billed from.
+model InvoiceItem {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  invoiceId      String   @map("invoice_id") @db.Uuid
+  description    String
+  quantity       Decimal  @db.Decimal(12, 3)
+  unitPrice      Decimal  @map("unit_price") @db.Decimal(14, 2)
+  lineTotal      Decimal  @map("line_total") @db.Decimal(14, 2)
+  taxRate        Decimal? @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount      Decimal? @map("tax_amount") @db.Decimal(14, 2)
+  partUsageId    String?  @map("part_usage_id") @db.Uuid
+  labourId       String?  @map("labour_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  invoice      Invoice      @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Cascade)
+  partUsage    PartUsage?   @relation(fields: [organizationId, partUsageId], references: [organizationId, id], onDelete: Restrict)
+  labour       Labour?      @relation(fields: [organizationId, labourId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, invoiceId])
+  @@map("invoice_items")
+}
+
+/// Represents money ACTUALLY received (rule 17) — never a pending/expected
+/// amount, and the amount is always positive (a reversal is a separate row,
+/// not a negative adjustment — see reversalOfPaymentId below; this is a
+/// deliberate departure from InventoryTransaction's signed-quantity ledger
+/// pattern, which does not fit financial receipts as well).
+///
+/// The original row is NEVER edited. A reversal is a new Payment row with
+/// the SAME (positive) amount, status = REVERSED, and reversalOfPaymentId
+/// pointing back at the original. "Amount actually paid" for an invoice is
+/// computed as: SUM(amount) WHERE status = 'COMPLETED' AND id NOT IN
+/// (SELECT reversalOfPaymentId FROM Payment WHERE reversalOfPaymentId IS
+/// NOT NULL) — i.e. a COMPLETED payment only counts if nothing has reversed
+/// it. See docs for the full invoice-balance/customer-outstanding formulas.
+model Payment {
+  id                  String        @id @default(uuid(7)) @db.Uuid
+  organizationId      String        @map("organization_id") @db.Uuid
+  invoiceId           String        @map("invoice_id") @db.Uuid
+  paymentNumber       String?       @map("payment_number")
+  amount              Decimal       @db.Decimal(14, 2)
+  method              PaymentMethod
+  status              PaymentStatus @default(COMPLETED)
+  referenceNumber     String?       @map("reference_number")
+  reversalOfPaymentId String?       @map("reversal_of_payment_id") @db.Uuid
+  receivedAt          DateTime      @default(now()) @map("received_at") @db.Timestamptz
+  receivedByUserId    String        @map("received_by_user_id") @db.Uuid
+  journalEntryId      String?       @map("journal_entry_id") @db.Uuid
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  invoice      Invoice       @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Restrict)
+  reversalOf   Payment?      @relation("PaymentReversal", fields: [organizationId, reversalOfPaymentId], references: [organizationId, id], onDelete: Restrict)
+  reversals    Payment[]     @relation("PaymentReversal")
+  receivedBy   User          @relation(fields: [organizationId, receivedByUserId], references: [organizationId, id], onDelete: Restrict)
+  journalEntry JournalEntry? @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, paymentNumber])
+  @@unique([reversalOfPaymentId])
+  @@index([organizationId])
+  @@index([organizationId, invoiceId])
+  @@index([receivedAt])
+  @@map("payments")
+}
+
+/// Supplier-side mirror of Payment — money ACTUALLY paid out (accounts
+/// payable settlement). Kept as a separate model rather than overloading
+/// Payment with a direction flag, since Payment's field names/semantics
+/// (receivedAt, receivedByUserId, rule-17 framing) are specifically about
+/// the customer-receipt direction. Same reversal pattern as Payment.
+model SupplierPayment {
+  id                          String        @id @default(uuid(7)) @db.Uuid
+  organizationId              String        @map("organization_id") @db.Uuid
+  purchaseId                  String        @map("purchase_id") @db.Uuid
+  supplierPaymentNumber       String?       @map("supplier_payment_number")
+  amount                      Decimal       @db.Decimal(14, 2)
+  method                      PaymentMethod
+  status                      PaymentStatus @default(COMPLETED)
+  referenceNumber             String?       @map("reference_number")
+  reversalOfSupplierPaymentId String?       @map("reversal_of_supplier_payment_id") @db.Uuid
+  paidAt                      DateTime      @default(now()) @map("paid_at") @db.Timestamptz
+  paidByUserId                String        @map("paid_by_user_id") @db.Uuid
+  journalEntryId              String?       @map("journal_entry_id") @db.Uuid
+  createdAt                   DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                   DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  purchase     Purchase          @relation(fields: [organizationId, purchaseId], references: [organizationId, id], onDelete: Restrict)
+  reversalOf   SupplierPayment?  @relation("SupplierPaymentReversal", fields: [organizationId, reversalOfSupplierPaymentId], references: [organizationId, id], onDelete: Restrict)
+  reversals    SupplierPayment[] @relation("SupplierPaymentReversal")
+  paidBy       User              @relation(fields: [organizationId, paidByUserId], references: [organizationId, id], onDelete: Restrict)
+  journalEntry JournalEntry?     @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, supplierPaymentNumber])
+  @@unique([reversalOfSupplierPaymentId])
+  @@index([organizationId])
+  @@index([organizationId, purchaseId])
+  @@index([paidAt])
+  @@map("supplier_payments")
+}
+
+model Expense {
+  id               String         @id @default(uuid(7)) @db.Uuid
+  organizationId   String         @map("organization_id") @db.Uuid
+  branchId         String         @map("branch_id") @db.Uuid
+  chartOfAccountId String?        @map("chart_of_account_id") @db.Uuid
+  expenseNumber    String?        @map("expense_number")
+  status           ExpenseStatus  @default(RECORDED)
+  description      String
+  amount           Decimal        @db.Decimal(14, 2)
+  taxRate          Decimal?       @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount        Decimal?       @map("tax_amount") @db.Decimal(14, 2)
+  expenseDate      DateTime       @map("expense_date") @db.Date
+  vendorName       String?        @map("vendor_name")
+  // If set, the expense was settled immediately (Cr Cash/Bank in the
+  // journal posting). If null, it's treated as an accrued/unpaid liability
+  // (Cr Accounts Payable) — no further payable-tracking entity in V1.
+  paymentMethod    PaymentMethod? @map("payment_method")
+  recordedByUserId String         @map("recorded_by_user_id") @db.Uuid
+  journalEntryId   String?        @map("journal_entry_id") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch         Branch          @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  chartOfAccount ChartOfAccount? @relation(fields: [organizationId, chartOfAccountId], references: [organizationId, id], onDelete: Restrict)
+  recordedBy     User            @relation(fields: [organizationId, recordedByUserId], references: [organizationId, id], onDelete: Restrict)
+  journalEntry   JournalEntry?   @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, expenseNumber])
+  @@index([organizationId])
+  @@index([organizationId, branchId])
+  @@index([expenseDate])
+  @@map("expenses")
+}
+
+model ChartOfAccount {
+  id              String      @id @default(uuid(7)) @db.Uuid
+  organizationId  String      @map("organization_id") @db.Uuid
+  accountCode     String      @map("account_code")
+  accountName     String      @map("account_name")
+  accountType     AccountType @map("account_type")
+  parentAccountId String?     @map("parent_account_id") @db.Uuid
+  isActive        Boolean     @default(true) @map("is_active")
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization  Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  parentAccount ChartOfAccount?  @relation("ChartOfAccountHierarchy", fields: [organizationId, parentAccountId], references: [organizationId, id], onDelete: Restrict)
+  childAccounts ChartOfAccount[] @relation("ChartOfAccountHierarchy")
+
+  expenses          Expense[]
+  journalEntryLines JournalEntryLine[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, accountCode])
+  @@index([organizationId])
+  @@index([organizationId, parentAccountId])
+  @@map("chart_of_accounts")
+}
+
+/// isPosted marks the entry immutable (rule 19) — a correction is a new
+/// JournalEntry with reversalOfJournalEntryId pointing back at the original,
+/// never an edit to a posted entry.
+model JournalEntry {
+  id                       String    @id @default(uuid(7)) @db.Uuid
+  organizationId           String    @map("organization_id") @db.Uuid
+  branchId                 String?   @map("branch_id") @db.Uuid
+  entryDate                DateTime  @map("entry_date") @db.Date
+  description              String?
+  isPosted                 Boolean   @default(false) @map("is_posted")
+  postedAt                 DateTime? @map("posted_at") @db.Timestamptz
+  postedByUserId           String?   @map("posted_by_user_id") @db.Uuid
+  reversalOfJournalEntryId String?   @map("reversal_of_journal_entry_id") @db.Uuid
+  createdByUserId          String    @map("created_by_user_id") @db.Uuid
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch?        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  reversalOf   JournalEntry?  @relation("JournalEntryReversal", fields: [organizationId, reversalOfJournalEntryId], references: [organizationId, id], onDelete: Restrict)
+  reversals    JournalEntry[] @relation("JournalEntryReversal")
+  createdBy    User           @relation("JournalEntryCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+  postedBy     User?          @relation("JournalEntryPostedBy", fields: [organizationId, postedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  lines            JournalEntryLine[]
+  payments         Payment[]
+  supplierPayments SupplierPayment[]
+  expenses         Expense[]
+  payrolls         Payroll[]
+  purchases        Purchase[]
+  invoices         Invoice[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, branchId])
+  @@index([entryDate])
+  @@map("journal_entries")
+}
+
+/// Debit/credit balance (sum of debits == sum of credits per entry) is a
+/// double-entry-bookkeeping invariant enforced at the application layer —
+/// Postgres CHECK constraints can't easily express a cross-row aggregate
+/// invariant like this without a trigger, which is out of scope for V1.
+model JournalEntryLine {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  journalEntryId   String   @map("journal_entry_id") @db.Uuid
+  chartOfAccountId String   @map("chart_of_account_id") @db.Uuid
+  debitAmount      Decimal  @default(0) @map("debit_amount") @db.Decimal(14, 2)
+  creditAmount     Decimal  @default(0) @map("credit_amount") @db.Decimal(14, 2)
+  description      String?
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  journalEntry   JournalEntry   @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Cascade)
+  chartOfAccount ChartOfAccount @relation(fields: [organizationId, chartOfAccountId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, journalEntryId])
+  @@index([organizationId, chartOfAccountId])
+  @@map("journal_entry_lines")
+}
+
+// =============================================================================
+// HR
+// =============================================================================
+
+model Employee {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  branchId        String    @map("branch_id") @db.Uuid
+  /// Optional: not every employee (e.g. a floor technician) needs a system
+  /// login. This is the link rule 6 relies on to keep JobAssignment pointed
+  /// at Employee rather than User.
+  userId          String?   @map("user_id") @db.Uuid
+  employeeCode    String    @map("employee_code")
+  firstName       String    @map("first_name")
+  lastName        String    @map("last_name")
+  jobTitle        String?   @map("job_title")
+  department      String?
+  hireDate        DateTime  @map("hire_date") @db.Date
+  terminationDate DateTime? @map("termination_date") @db.Date
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  user         User?        @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Restrict)
+
+  jobAssignments JobAssignment[]
+  inspections    Inspection[]
+  diagnoses      Diagnosis[]
+  labours        Labour[]
+  partUsages     PartUsage[]
+  workRecords    WorkRecord[]
+  attendances    Attendance[]
+  leaves         Leave[]
+  salaries       Salary[]
+  payrollItems   PayrollItem[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, employeeCode])
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([organizationId, branchId])
+  @@map("employees")
+}
+
+model Attendance {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  branchId       String           @map("branch_id") @db.Uuid
+  employeeId     String           @map("employee_id") @db.Uuid
+  attendanceDate DateTime         @map("attendance_date") @db.Date
+  clockInAt      DateTime?        @map("clock_in_at") @db.Timestamptz
+  clockOutAt     DateTime?        @map("clock_out_at") @db.Timestamptz
+  status         AttendanceStatus
+  notes          String?
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  employee     Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([employeeId, attendanceDate])
+  @@index([organizationId])
+  @@index([organizationId, branchId, attendanceDate])
+  @@map("attendances")
+}
+
+model Leave {
+  id               String      @id @default(uuid(7)) @db.Uuid
+  organizationId   String      @map("organization_id") @db.Uuid
+  employeeId       String      @map("employee_id") @db.Uuid
+  leaveType        LeaveType   @map("leave_type")
+  startDate        DateTime    @map("start_date") @db.Date
+  endDate          DateTime    @map("end_date") @db.Date
+  status           LeaveStatus @default(PENDING)
+  reason           String?
+  approvedByUserId String?     @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime?   @map("approved_at") @db.Timestamptz
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee     Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Restrict)
+  approvedBy   User?        @relation(fields: [organizationId, approvedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, employeeId])
+  @@index([organizationId, employeeId, startDate, endDate])
+  @@map("leaves")
+}
+
+/// Multiple rows per employee over time = salary history. The "current"
+/// salary is the row with the latest effectiveFrom and a null effectiveTo.
+model Salary {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  basicSalary    Decimal   @map("basic_salary") @db.Decimal(14, 2)
+  allowances     Decimal   @default(0) @db.Decimal(14, 2)
+  effectiveFrom  DateTime  @map("effective_from") @db.Date
+  effectiveTo    DateTime? @map("effective_to") @db.Date
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee     Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, employeeId, effectiveFrom])
+  @@map("salaries")
+}
+
+/// DRAFT -> CALCULATED -> APPROVED -> PAID, with CANCELLED as the terminal
+/// abandonment state at any pre-PAID stage. Each stage has its own nullable
+/// attribution + timestamp pair — none of them are required at creation,
+/// since none of those actions have happened yet for a DRAFT run.
+model Payroll {
+  id               String        @id @default(uuid(7)) @db.Uuid
+  organizationId   String        @map("organization_id") @db.Uuid
+  periodStart      DateTime      @map("period_start") @db.Date
+  periodEnd        DateTime      @map("period_end") @db.Date
+  status           PayrollStatus @default(DRAFT)
+  calculatedAt     DateTime?     @map("calculated_at") @db.Timestamptz
+  approvedByUserId String?       @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime?     @map("approved_at") @db.Timestamptz
+  paidByUserId     String?       @map("paid_by_user_id") @db.Uuid
+  paidAt           DateTime?     @map("paid_at") @db.Timestamptz
+  journalEntryId   String?       @map("journal_entry_id") @db.Uuid
+  createdByUserId  String        @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  journalEntry JournalEntry? @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+  createdBy    User          @relation("PayrollCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+  approvedBy   User?         @relation("PayrollApprovedBy", fields: [organizationId, approvedByUserId], references: [organizationId, id], onDelete: Restrict)
+  paidBy       User?         @relation("PayrollPaidBy", fields: [organizationId, paidByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  items PayrollItem[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, periodStart, periodEnd])
+  @@index([organizationId])
+  @@map("payrolls")
+}
+
+/// basicSalary/allowances are snapshotted from Salary at processing time
+/// (historical accuracy) — payroll must reflect what was actually paid even
+/// if the employee's Salary record changes afterward.
+model PayrollItem {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  payrollId      String   @map("payroll_id") @db.Uuid
+  employeeId     String   @map("employee_id") @db.Uuid
+  basicSalary    Decimal  @map("basic_salary") @db.Decimal(14, 2)
+  allowances     Decimal  @default(0) @db.Decimal(14, 2)
+  deductions     Decimal  @default(0) @db.Decimal(14, 2)
+  netPay         Decimal  @map("net_pay") @db.Decimal(14, 2)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  payroll      Payroll      @relation(fields: [organizationId, payrollId], references: [organizationId, id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([payrollId, employeeId])
+  @@index([organizationId])
+  @@index([organizationId, employeeId])
+  @@map("payroll_items")
+}
+
+// =============================================================================
+// DOCUMENT / NUMBERING FOUNDATION
+// =============================================================================
+
+/// Configuration for concurrency-safe numbering, not the allocation
+/// mechanism itself. The (not-yet-built) allocation service must, at
+/// minimum: allocate inside a transaction with row-level locking (e.g.
+/// `SELECT ... FOR UPDATE` on this row); increment nextNumber atomically in
+/// that same transaction; never reuse a number once allocated, even if the
+/// document referencing it is later voided/cancelled; respect
+/// allowManualOverride before accepting a manually-specified number.
+///
+/// This table alone (no separate allocated-numbers ledger) is sufficient:
+/// "no reuse" falls out of the monotonic counter by construction, and
+/// "cancelled documents retain their number" is already true since
+/// cancelling only changes a document's status, never its number field.
+model DocumentNumberSequence {
+  id                  String       @id @default(uuid(7)) @db.Uuid
+  organizationId      String       @map("organization_id") @db.Uuid
+  branchId            String?      @map("branch_id") @db.Uuid
+  documentType        DocumentType @map("document_type")
+  prefix              String       @default("")
+  padding             Int          @default(6)
+  nextNumber          Int          @default(1) @map("next_number")
+  allowManualOverride Boolean      @default(false) @map("allow_manual_override")
+  isActive            Boolean      @default(true) @map("is_active")
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, branchId, documentType], map: "doc_number_seq_branch_scoped_unique")
+  @@unique([organizationId, documentType], map: "doc_number_seq_orgwide_unique", where: raw("branch_id IS NULL"))
+  @@index([organizationId])
+  @@map("document_number_sequences")
+}
+
+/// Generic, cross-cutting security/compliance audit trail. entityType +
+/// entityId is a polymorphic "soft" reference — NOT a real foreign key,
+/// since the target table varies by entityType. organizationId is still
+/// required and application-validated against the target entity's own
+/// organizationId; this is a deliberate, accepted exception to the
+/// composite-FK isolation pattern used everywhere else (there is no single
+/// fixed parent table to reference). Reads are never audited — only
+/// state-changing actions (see docs for the V1 action list).
+model AuditLog {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  branchId       String?  @map("branch_id") @db.Uuid
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  action         String
+  entityType     String   @map("entity_type")
+  entityId       String   @map("entity_id") @db.Uuid
+  beforeData     Json?    @map("before_data")
+  afterData      Json?    @map("after_data")
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  actorUser    User?        @relation(fields: [organizationId, actorUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, actorUserId])
+  @@index([organizationId, createdAt])
+  @@map("audit_logs")
+}
+
+/// Document/attachment METADATA only — the binary itself lives in external
+/// object storage (not built yet), storageKey is the pointer into it.
+/// entityType/entityId is the same polymorphic soft-reference pattern as
+/// AuditLog, with the same accepted integrity trade-off.
+model Document {
+  id               String           @id @default(uuid(7)) @db.Uuid
+  organizationId   String           @map("organization_id") @db.Uuid
+  branchId         String?          @map("branch_id") @db.Uuid
+  entityType       String           @map("entity_type")
+  entityId         String           @map("entity_id") @db.Uuid
+  documentType     DocumentCategory @map("document_type")
+  fileName         String           @map("file_name")
+  storageKey       String           @map("storage_key")
+  mimeType         String           @map("mime_type")
+  fileSize         Int              @map("file_size")
+  uploadedByUserId String           @map("uploaded_by_user_id") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  deletedAt        DateTime?        @map("deleted_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  uploadedBy   User         @relation(fields: [organizationId, uploadedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, uploadedByUserId])
+  @@map("documents")
+}
+
+/// Scoped, expiring, revocable customer access (section 13-15 of the V1
+/// build instruction): one token = one specific Estimate or Invoice, never a
+/// general customer login/portal session. Only tokenHash is stored — the
+/// raw token exists only in the link sent to the customer. The customer
+/// must additionally identify themselves (vehicle plate + mobile, or an OTP
+/// where connected — see docs/integrations.md) before the resource is
+/// shown; the token alone is necessary but not sufficient.
+model CustomerAccessToken {
+  id               String                      @id @default(uuid(7)) @db.Uuid
+  organizationId   String                      @map("organization_id") @db.Uuid
+  resourceType     CustomerAccessResourceType   @map("resource_type")
+  resourceId       String                      @map("resource_id") @db.Uuid
+  tokenHash        String                      @unique @map("token_hash")
+  expiresAt        DateTime                    @map("expires_at") @db.Timestamptz
+  revokedAt        DateTime?                   @map("revoked_at") @db.Timestamptz
+  lastAccessedAt   DateTime?                   @map("last_accessed_at") @db.Timestamptz
+  createdByUserId  String                      @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime                    @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy    User         @relation(fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, resourceType, resourceId])
+  @@map("customer_access_tokens")
 }

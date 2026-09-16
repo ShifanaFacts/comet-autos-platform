@@ -1,6 +1,11 @@
 # ADR-007: Next.js / NestJS Separation
 
-Status: Accepted
+Status: **Superseded by [ADR-008](./ADR-008-single-nextjs-application.md)**
+on 2026-09-16 — Comet Autos is a single-business internal application, not
+a multi-tenant SaaS platform, so the premise below (a client-agnostic API
+boundary for multiple future clients) no longer applies. Kept as historical
+record of the reasoning at the time; do not follow this ADR for new work.
+
 Date: 2026-09-15
 
 ## Context
