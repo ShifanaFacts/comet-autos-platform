@@ -1,4 +1,5 @@
 import { randomBytes, createHash } from 'node:crypto';
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 
@@ -50,8 +51,14 @@ export async function revokeSession(rawToken: string): Promise<void> {
  * Resolves the current request's session cookie into the authenticated user
  * plus their effective permission grants. Returns null for anonymous/expired/
  * revoked sessions — callers must treat null as "not logged in", never throw.
+ *
+ * Wrapped in React's `cache()`: the app layout, every page, and any nested
+ * component all call requireUser()/getCurrentUser() independently (each
+ * needs to enforce its own auth, not just trust a parent already did) —
+ * without this, that would mean a repeated session+permissions query per
+ * request. `cache()` dedupes those into a single DB round trip per request.
  */
-export async function getCurrentUser(): Promise<AuthenticatedUser | null> {
+export const getCurrentUser = cache(async (): Promise<AuthenticatedUser | null> => {
   const cookieStore = await cookies();
   const rawToken = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   if (!rawToken) return null;
@@ -100,4 +107,4 @@ export async function getCurrentUser(): Promise<AuthenticatedUser | null> {
     orgWidePermissions,
     branchPermissions,
   };
-}
+});

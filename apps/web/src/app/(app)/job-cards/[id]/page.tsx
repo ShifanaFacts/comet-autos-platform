@@ -1,5 +1,6 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ClipboardCheck, Stethoscope, FileText, Wrench, ShieldCheck, Receipt, FileStack } from 'lucide-react';
+import { ArrowLeft, ClipboardCheck, Stethoscope, FileText, Wrench, ShieldCheck, Receipt, FileStack } from 'lucide-react';
 import { requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
 import { JobStatusBadge } from '@/components/shared/job-status-badge';
@@ -43,7 +44,15 @@ export default async function JobCardDetailPage({ params }: { params: Promise<{ 
   const effectiveStatus = getEffectiveStageStatus(jobCard.status, jobCard.statusHistory);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="animate-in fade-in flex flex-col gap-6 duration-300">
+      <Link
+        href="/job-cards"
+        className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ArrowLeft className="size-3.5" />
+        Job Cards
+      </Link>
+
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">

@@ -52,7 +52,7 @@ export default async function JobCardsPage({
   const isFiltered = Boolean(status || query);
 
   return (
-    <div>
+    <div className="animate-in fade-in duration-300">
       <PageHeader
         title="Job Cards"
         description={`${total} of ${unfilteredTotal} total`}
@@ -98,9 +98,12 @@ export default async function JobCardsPage({
             </TableHeader>
             <TableBody>
               {jobCards.map((jobCard) => (
-                <TableRow key={jobCard.id}>
+                <TableRow key={jobCard.id} className="relative cursor-pointer">
                   <TableCell>
-                    <Link href={`/job-cards/${jobCard.id}`} className="font-medium hover:underline">
+                    <Link
+                      href={`/job-cards/${jobCard.id}`}
+                      className="font-medium after:absolute after:inset-0 hover:underline"
+                    >
                       {jobCard.jobNumber}
                     </Link>
                   </TableCell>

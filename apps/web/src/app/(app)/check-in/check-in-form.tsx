@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useActionState, useEffect, useState } from 'react';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Loader2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -37,7 +37,7 @@ export function CheckInForm() {
 
   if (state.success) {
     return (
-      <div className="flex flex-col items-center gap-3 rounded-lg border border-success/25 bg-success/5 px-6 py-10 text-center">
+      <div className="animate-in fade-in zoom-in-95 flex flex-col items-center gap-3 rounded-lg border border-success/25 bg-success/5 px-6 py-10 text-center duration-300">
         <CheckCircle2 className="size-8 text-success" />
         <div>
           <p className="text-xs font-semibold tracking-wide text-success uppercase">Job card created</p>
@@ -78,7 +78,14 @@ export function CheckInForm() {
 
         {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
         <Button type="submit" disabled={isPending}>
-          {isPending ? 'Checking in…' : 'Check In'}
+          {isPending ? (
+            <>
+              <Loader2 className="animate-spin" />
+              Checking in…
+            </>
+          ) : (
+            'Check In'
+          )}
         </Button>
       </form>
     );
@@ -114,7 +121,14 @@ export function CheckInForm() {
 
         {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
         <Button type="submit" disabled={isPending}>
-          {isPending ? 'Checking in…' : 'Check In'}
+          {isPending ? (
+            <>
+              <Loader2 className="animate-spin" />
+              Checking in…
+            </>
+          ) : (
+            'Check In'
+          )}
         </Button>
       </form>
     );
@@ -124,17 +138,21 @@ export function CheckInForm() {
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="search">Vehicle number, mobile number, or customer name</Label>
-        <Input
-          id="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="e.g. A12345 or 050 123 4567"
-          autoFocus
-        />
+        <div className="relative">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            id="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="e.g. A12345 or 050 123 4567"
+            autoFocus
+            className="pl-9"
+          />
+        </div>
       </div>
 
       {results.length > 0 ? (
-        <ul className="flex flex-col gap-1.5">
+        <ul className="animate-in fade-in flex flex-col gap-1.5 duration-200">
           {results.map((customer) =>
             customer.vehicles.length > 0 ? (
               customer.vehicles.map((vehicle) => (
@@ -150,7 +168,7 @@ export function CheckInForm() {
                         makeModel: `${vehicle.make} ${vehicle.model}`,
                       })
                     }
-                    className="w-full rounded-lg border border-border px-4 py-2.5 text-left hover:bg-muted"
+                    className="w-full rounded-lg border border-border px-4 py-2.5 text-left transition-colors hover:border-ring/40 hover:bg-muted"
                   >
                     <p className="text-sm font-medium">{customer.name}</p>
                     <p className="text-sm text-muted-foreground">

@@ -25,7 +25,7 @@ export default async function LoginPage() {
       </div>
 
       <div className="flex flex-1 items-center justify-center bg-background px-4">
-        <div className="w-full max-w-sm">
+        <div className="w-full max-w-sm animate-in fade-in slide-in-from-bottom-2 duration-500">
           <div className="mb-8 lg:hidden">
             <h1 className="text-xl font-semibold tracking-tight">Comet Autos</h1>
             <p className="mt-1 text-sm text-muted-foreground">Workshop Management System</p>
