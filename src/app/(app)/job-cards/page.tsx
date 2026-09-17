@@ -1,10 +1,11 @@
 import Link from 'next/link';
-import { ClipboardList } from 'lucide-react';
+import { ClipboardList, LogIn } from 'lucide-react';
 import { requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
-import { PageHeader } from '@/components/shell/page-header';
+import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { JobStatusBadge } from '@/components/shared/job-status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
+import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import type { JobCardStatus } from '@/generated/prisma/enums';
@@ -52,93 +53,110 @@ export default async function JobCardsPage({
   const isFiltered = Boolean(status || query);
 
   return (
-    <div className="animate-in fade-in duration-300">
+    <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
+        eyebrow="Workshop"
         title="Job Cards"
-        description={`${total} of ${unfilteredTotal} total`}
+        description={
+          isFiltered
+            ? `Showing ${total} of ${unfilteredTotal} job cards.`
+            : `${unfilteredTotal} job card${unfilteredTotal === 1 ? '' : 's'} in total.`
+        }
         actions={
-          <Button size="sm" nativeButton={false} render={<Link href="/check-in" />}>
-            + Check In Vehicle
+          <Button size="lg" nativeButton={false} render={<Link href="/check-in" />}>
+            <LogIn />
+            Check In Vehicle
           </Button>
         }
       />
 
-      <JobCardFilters status={status ?? ''} q={query} />
+      <Stack gap="base">
+        <JobCardFilters status={status ?? ''} q={query} />
 
-      {jobCards.length === 0 ? (
-        isFiltered ? (
-          <EmptyState
-            icon={ClipboardList}
-            title="No job cards match your filters"
-            description="Try a different search or clear the status filter."
-          />
+        {jobCards.length === 0 ? (
+          isFiltered ? (
+            <EmptyState
+              icon={ClipboardList}
+              title="No job cards match your filters"
+              description="Try a different search or clear the status filter."
+            />
+          ) : (
+            <EmptyState
+              icon={ClipboardList}
+              title="No job cards yet"
+              description="Check in a vehicle to create the first one."
+              action={
+                <Button nativeButton={false} render={<Link href="/check-in" />}>
+                  Check In Vehicle
+                </Button>
+              }
+            />
+          )
         ) : (
-          <EmptyState
-            icon={ClipboardList}
-            title="No job cards yet"
-            description="Check in a vehicle to create the first one."
-            action={
-              <Button size="sm" nativeButton={false} render={<Link href="/check-in" />}>
-                Check In Vehicle
-              </Button>
-            }
-          />
-        )
-      ) : (
-        <>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Job #</TableHead>
-                <TableHead>Vehicle</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Opened</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {jobCards.map((jobCard) => (
-                <TableRow key={jobCard.id} className="relative cursor-pointer">
-                  <TableCell>
-                    <Link
-                      href={`/job-cards/${jobCard.id}`}
-                      className="font-medium after:absolute after:inset-0 hover:underline"
-                    >
-                      {jobCard.jobNumber}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{jobCard.vehicle.plateNumber}</TableCell>
-                  <TableCell>{jobCard.vehicle.customer.name}</TableCell>
-                  <TableCell>
-                    <JobStatusBadge status={jobCard.status} />
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {jobCard.openedAt.toLocaleString('en-AE', { dateStyle: 'medium', timeStyle: 'short' })}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <>
+            <Panel padding="none" className="overflow-hidden">
+              <Table>
+                <TableHeader className="bg-muted/40">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Job #</TableHead>
+                    <TableHead>Vehicle</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Opened</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {jobCards.map((jobCard) => (
+                    <TableRow key={jobCard.id} className="relative cursor-pointer">
+                      <TableCell>
+                        <Link
+                          href={`/job-cards/${jobCard.id}`}
+                          className="font-medium after:absolute after:inset-0 hover:underline"
+                        >
+                          {jobCard.jobNumber}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <VehiclePlate plateNumber={jobCard.vehicle.plateNumber} className="px-2 py-0.5 text-xs" />
+                          <span className="text-sm text-muted-foreground">
+                            {jobCard.vehicle.make} {jobCard.vehicle.model}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>{jobCard.vehicle.customer.name}</TableCell>
+                      <TableCell>
+                        <JobStatusBadge status={jobCard.status} />
+                      </TableCell>
+                      <TableCell className="text-muted-foreground tabular-nums">
+                        {jobCard.openedAt.toLocaleString('en-AE', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Panel>
 
-          {totalPages > 1 ? (
-            <div className="mt-4 flex items-center gap-3 text-sm text-muted-foreground">
-              {page > 1 ? (
-                <Link href={`/job-cards?page=${page - 1}`} className="hover:underline">
-                  Previous
-                </Link>
-              ) : null}
-              <span>
-                Page {page} of {totalPages}
-              </span>
-              {page < totalPages ? (
-                <Link href={`/job-cards?page=${page + 1}`} className="hover:underline">
-                  Next
-                </Link>
-              ) : null}
-            </div>
-          ) : null}
-        </>
-      )}
-    </div>
+            {totalPages > 1 ? (
+              <div className="flex items-center justify-end gap-4 text-sm text-muted-foreground">
+                {page > 1 ? (
+                  <Link href={`/job-cards?page=${page - 1}`} className="hover:underline">
+                    Previous
+                  </Link>
+                ) : null}
+                <span>
+                  Page {page} of {totalPages}
+                </span>
+                {page < totalPages ? (
+                  <Link href={`/job-cards?page=${page + 1}`} className="hover:underline">
+                    Next
+                  </Link>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        )}
+      </Stack>
+    </Stack>
   );
 }

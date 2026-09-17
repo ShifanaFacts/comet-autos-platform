@@ -1,53 +1,75 @@
 'use client';
 
 import Link from 'next/link';
-import { useActionState, useEffect, useState } from 'react';
-import { CheckCircle2, Loader2, Search } from 'lucide-react';
+import { useFormAction } from '@/components/forms/use-form-action';
+import { useState } from 'react';
+import { ArrowRight, CalendarDays, CheckCircle2, TriangleAlert, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { checkIn, searchCustomers, type CheckInState, type CustomerSearchResult } from './actions';
+import { Field, FormError, NativeSelect, TextField, TextareaField } from '@/components/forms/fields';
+import { SubmitButton } from '@/components/forms/submit-button';
+import { VehiclePlate } from '@/components/shared/vehicle-plate';
+import { VehiclePicker } from '@/components/workshop/vehicle-picker';
+import type { VehicleSummary } from '@/lib/vehicles/summary';
+import type { ActionResult } from '@/lib/errors';
+import type { CheckInResult } from '@/lib/workshop/check-in';
+import { formatDateTime } from '@/lib/format';
+import { PLATE_EMIRATES } from '@/lib/vehicles/constants';
+import { checkInAction } from './actions';
 
-const initialState: CheckInState = {};
-
-interface SelectedVehicle {
-  customerId: string;
-  customerName: string;
-  vehicleId: string;
-  plateNumber: string;
-  makeModel: string;
+export interface AppointmentContext {
+  id: string;
+  scheduledAt: string;
+  notes: string | null;
 }
 
-export function CheckInForm() {
-  const [state, formAction, isPending] = useActionState(checkIn, initialState);
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<CustomerSearchResult[]>([]);
-  const [selected, setSelected] = useState<SelectedVehicle | null>(null);
+function Step({ number, title, done, children }: { number: number; title: string; done?: boolean; children: React.ReactNode }) {
+  return (
+    <section className="flex gap-4">
+      <span
+        className={
+          done
+            ? 'flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground'
+            : 'flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-card text-sm font-semibold text-muted-foreground'
+        }
+      >
+        {done ? <CheckCircle2 className="size-4" /> : number}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-4 pt-1">
+        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+export function CheckInForm({
+  initialVehicle,
+  initialAppointment,
+}: {
+  initialVehicle: VehicleSummary | null;
+  initialAppointment: AppointmentContext | null;
+}) {
+  const [state, onSubmit, isPending] = useFormAction<ActionResult<CheckInResult>>(checkInAction, { ok: false });
+  const [vehicle, setVehicle] = useState<VehicleSummary | null>(initialVehicle);
   const [creatingNew, setCreatingNew] = useState(false);
+  const [customerConfirmed, setCustomerConfirmed] = useState(Boolean(initialVehicle && initialAppointment));
+  const errors = state.fieldErrors ?? {};
 
-  const trimmedQuery = query.trim();
-
-  useEffect(() => {
-    if (selected || creatingNew || trimmedQuery.length < 2) return;
-    const timeout = setTimeout(() => {
-      searchCustomers(trimmedQuery).then(setResults).catch(() => setResults([]));
-    }, 250);
-    return () => clearTimeout(timeout);
-  }, [trimmedQuery, selected, creatingNew]);
-
-  if (state.success) {
+  if (state.ok && state.data) {
     return (
-      <div className="animate-in fade-in zoom-in-95 flex flex-col items-center gap-3 rounded-lg border border-success/25 bg-success/5 px-6 py-10 text-center duration-300">
-        <CheckCircle2 className="size-8 text-success" />
-        <div>
-          <p className="text-xs font-semibold tracking-wide text-success uppercase">Job card created</p>
-          <p className="mt-1 text-2xl font-semibold tracking-tight">{state.success.jobNumber}</p>
+      <div className="animate-in fade-in zoom-in-95 flex flex-col items-center gap-6 rounded-xl border border-success/25 bg-success/5 px-6 py-12 text-center duration-300">
+        <CheckCircle2 className="size-10 text-success" />
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-semibold tracking-wider text-success uppercase">Vehicle checked in · Job card created</p>
+          <p className="text-4xl font-semibold tracking-tight tabular-nums">{state.data.jobNumber}</p>
+          <p className="text-sm text-muted-foreground">Status: Arrived. Next, assign a technician and start the inspection.</p>
         </div>
-        <div className="mt-2 flex gap-2">
-          <Button nativeButton={false} render={<Link href={`/job-cards/${state.success.jobCardId}`} />}>
+        <div className="flex flex-wrap justify-center gap-3">
+          <Button size="lg" nativeButton={false} render={<Link href={`/job-cards/${state.data.jobCardId}`} />}>
             Open Job Card
+            <ArrowRight />
           </Button>
-          <Button variant="outline" nativeButton={false} render={<Link href="/check-in" />}>
+          <Button size="lg" variant="outline" nativeButton={false} render={<a href="/check-in" />}>
             Check in another vehicle
           </Button>
         </div>
@@ -55,183 +77,205 @@ export function CheckInForm() {
     );
   }
 
-  if (selected) {
-    return (
-      <form action={formAction} className="flex flex-col gap-4">
-        <input type="hidden" name="mode" value="existing" />
-        <input type="hidden" name="customerId" value={selected.customerId} />
-        <input type="hidden" name="vehicleId" value={selected.vehicleId} />
-
-        <div className="rounded-lg border border-border px-4 py-3">
-          <p className="text-sm font-medium">{selected.customerName}</p>
-          <p className="text-sm text-muted-foreground">
-            {selected.plateNumber} — {selected.makeModel}
-          </p>
-          <button
-            type="button"
-            onClick={() => setSelected(null)}
-            className="mt-2 text-xs text-primary underline-offset-4 hover:underline"
-          >
-            Change vehicle
-          </button>
-        </div>
-
-        <CommonFields />
-
-        {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
-        <Button type="submit" disabled={isPending}>
-          {isPending ? (
-            <>
-              <Loader2 className="animate-spin" />
-              Checking in…
-            </>
-          ) : (
-            'Check In'
-          )}
-        </Button>
-      </form>
-    );
-  }
+  // Appointment context applies only to the vehicle it was booked for.
+  const appointment =
+    initialAppointment && vehicle && initialVehicle && vehicle.vehicleId === initialVehicle.vehicleId
+      ? initialAppointment
+      : vehicle?.openAppointment ?? null;
 
   if (creatingNew) {
     return (
-      <form action={formAction} className="flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="flex flex-col gap-10">
         <input type="hidden" name="mode" value="new" />
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Customer name" name="customerName" required />
-          <Field label="Mobile number" name="customerPhone" required />
+        <Step number={1} title="New customer">
+          <div className="grid gap-6 sm:grid-cols-2">
+            <TextField label="Customer name" name="name" required error={errors.name} autoFocus />
+            <TextField label="Mobile number" name="phone" type="tel" required error={errors.phone} placeholder="050 123 4567" />
+            <TextField label="Email" name="email" type="email" error={errors.email} hint="Optional" className="sm:col-span-2" />
+          </div>
+        </Step>
+        <Step number={2} title="Vehicle">
+          <div className="grid gap-6 sm:grid-cols-2">
+            <TextField label="Registration number" name="plateNumber" required error={errors.plateNumber} placeholder="A 12345" />
+            <Field label="Emirate" htmlFor="plateEmirate" hint="Optional">
+              <NativeSelect id="plateEmirate" name="plateEmirate" defaultValue="Dubai">
+                <option value="">—</option>
+                {PLATE_EMIRATES.map((emirate) => (
+                  <option key={emirate} value={emirate}>
+                    {emirate}
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+            <TextField label="Make" name="make" required error={errors.make} placeholder="Toyota" />
+            <TextField label="Model" name="model" required error={errors.model} placeholder="Land Cruiser" />
+            <TextField label="Year" name="year" inputMode="numeric" error={errors.year} hint="Optional" />
+            <TextField label="VIN" name="vin" error={errors.vin} hint="Optional" />
+          </div>
+        </Step>
+        <VisitStep number={3} errors={errors} lastMileage={null} />
+        <FormError message={state.error} />
+        <div className="flex flex-wrap items-center gap-3 border-t border-border pt-6">
+          <SubmitButton pending={isPending} size="lg" pendingLabel="Checking in…">
+            Check in &amp; create job card
+          </SubmitButton>
+          <Button type="button" variant="ghost" size="lg" onClick={() => setCreatingNew(false)}>
+            Search instead
+          </Button>
         </div>
-        <Field label="Email (optional)" name="customerEmail" type="email" />
-
-        <div className="grid grid-cols-3 gap-3">
-          <Field label="Plate number" name="plateNumber" required />
-          <Field label="Make" name="make" required />
-          <Field label="Model" name="model" required />
-        </div>
-        <Field label="Year (optional)" name="year" type="number" />
-
-        <button
-          type="button"
-          onClick={() => setCreatingNew(false)}
-          className="self-start text-xs text-primary underline-offset-4 hover:underline"
-        >
-          Search instead
-        </button>
-
-        <CommonFields />
-
-        {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
-        <Button type="submit" disabled={isPending}>
-          {isPending ? (
-            <>
-              <Loader2 className="animate-spin" />
-              Checking in…
-            </>
-          ) : (
-            'Check In'
-          )}
-        </Button>
       </form>
     );
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="search">Vehicle number, mobile number, or customer name</Label>
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            id="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="e.g. A12345 or 050 123 4567"
+    <form onSubmit={onSubmit} className="flex flex-col gap-10">
+      <input type="hidden" name="mode" value="existing" />
+      <input type="hidden" name="vehicleId" value={vehicle?.vehicleId ?? ''} />
+      <input type="hidden" name="appointmentId" value={appointment?.id ?? ''} />
+
+      <Step number={1} title="Find the vehicle" done={Boolean(vehicle)}>
+        {vehicle ? (
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <VehiclePlate plateNumber={vehicle.plateNumber} />
+              <div className="min-w-0">
+                <p className="truncate font-medium">
+                  {vehicle.make} {vehicle.model} {vehicle.year ?? ''}
+                </p>
+                <p className="truncate text-sm text-muted-foreground">
+                  {vehicle.plateEmirate ?? 'Registration'}
+                  {vehicle.vin ? ` · VIN ${vehicle.vin}` : ''}
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setVehicle(null);
+                setCustomerConfirmed(false);
+              }}
+            >
+              Change vehicle
+            </Button>
+          </div>
+        ) : (
+          <VehiclePicker
             autoFocus
-            className="pl-9"
+            onSelect={(selected) => {
+              setVehicle(selected);
+              setCustomerConfirmed(false);
+            }}
+            footer={
+              <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                <span>New to Comet Autos?</span>
+                <Button type="button" variant="outline" onClick={() => setCreatingNew(true)}>
+                  <UserPlus />
+                  New customer &amp; vehicle
+                </Button>
+              </div>
+            }
           />
-        </div>
-      </div>
+        )}
+      </Step>
 
-      {results.length > 0 ? (
-        <ul className="animate-in fade-in flex flex-col gap-1.5 duration-200">
-          {results.map((customer) =>
-            customer.vehicles.length > 0 ? (
-              customer.vehicles.map((vehicle) => (
-                <li key={vehicle.vehicleId}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSelected({
-                        customerId: customer.customerId,
-                        customerName: customer.name,
-                        vehicleId: vehicle.vehicleId,
-                        plateNumber: vehicle.plateNumber,
-                        makeModel: `${vehicle.make} ${vehicle.model}`,
-                      })
-                    }
-                    className="w-full rounded-lg border border-border px-4 py-2.5 text-left transition-colors hover:border-ring/40 hover:bg-muted"
-                  >
-                    <p className="text-sm font-medium">{customer.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {vehicle.plateNumber} — {vehicle.make} {vehicle.model} · {customer.phone}
-                    </p>
-                  </button>
-                </li>
-              ))
-            ) : (
-              <li key={customer.customerId} className="rounded-lg border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground">
-                {customer.name} ({customer.phone}) has no vehicles on file yet.
-              </li>
-            ),
+      {vehicle ? (
+        <Step number={2} title="Confirm the customer" done={customerConfirmed}>
+          {vehicle.openJob ? (
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-warning/30 bg-warning/5 p-4">
+              <p className="flex items-center gap-2 text-sm text-warning">
+                <TriangleAlert className="size-4 shrink-0" />
+                This vehicle is already in the workshop on job {vehicle.openJob.jobNumber}.
+              </p>
+              <Button variant="outline" nativeButton={false} render={<Link href={`/job-cards/${vehicle.openJob.id}`} />}>
+                Open that job card
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border p-4">
+              <div className="min-w-0">
+                <p className="font-medium">{vehicle.customer.name}</p>
+                <p className="text-sm text-muted-foreground">{vehicle.customer.phone}</p>
+              </div>
+              {customerConfirmed ? (
+                <Link href={`/customers/${vehicle.customer.id}/edit`} className="text-sm font-medium text-primary hover:underline">
+                  Update contact details
+                </Link>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  <Button variant="outline" nativeButton={false} render={<Link href={`/customers/${vehicle.customer.id}/edit`} />}>
+                    Details changed
+                  </Button>
+                  <Button type="button" onClick={() => setCustomerConfirmed(true)}>
+                    Yes, this is the customer
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
-        </ul>
+          {appointment && !vehicle.openJob ? (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <CalendarDays className="size-4 shrink-0" />
+              Arriving for the appointment on {formatDateTime(appointment.scheduledAt)} — it will be marked checked in.
+            </p>
+          ) : null}
+        </Step>
       ) : null}
 
-      {trimmedQuery.length >= 2 && results.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No matches found.</p>
+      {vehicle && customerConfirmed && !vehicle.openJob ? (
+        <>
+          <VisitStep
+            number={3}
+            errors={errors}
+            lastMileage={vehicle.lastMileage}
+            defaultComplaint={appointment?.notes ?? ''}
+          />
+          <FormError message={errors.vehicleId || errors.appointmentId ? undefined : state.error} />
+          {errors.vehicleId || errors.appointmentId ? <FormError message={errors.vehicleId ?? errors.appointmentId} /> : null}
+          <div className="border-t border-border pt-6">
+            <SubmitButton pending={isPending} size="lg" pendingLabel="Checking in…">
+              Check in &amp; create job card
+            </SubmitButton>
+          </div>
+        </>
       ) : null}
-
-      <Button type="button" variant="outline" onClick={() => setCreatingNew(true)} className="self-start">
-        + New customer / vehicle
-      </Button>
-    </div>
+    </form>
   );
 }
 
-function CommonFields() {
-  return (
-    <>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="complaint">Complaint</Label>
-        <textarea
-          id="complaint"
-          name="complaint"
-          required
-          rows={3}
-          className="rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-        />
-      </div>
-      <Field label="Mileage (optional)" name="mileage" type="number" />
-    </>
-  );
-}
-
-function Field({
-  label,
-  name,
-  type = 'text',
-  required,
+function VisitStep({
+  number,
+  errors,
+  lastMileage,
+  defaultComplaint = '',
 }: {
-  label: string;
-  name: string;
-  type?: string;
-  required?: boolean;
+  number: number;
+  errors: Record<string, string>;
+  lastMileage: number | null;
+  defaultComplaint?: string;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={name}>{label}</Label>
-      <Input id={name} name={name} type={type} required={required} />
-    </div>
+    <Step number={number} title="Complaint & mileage">
+      <div className="flex flex-col gap-6">
+        <TextareaField
+          label="Customer complaint"
+          name="complaint"
+          required
+          defaultValue={defaultComplaint}
+          error={errors.complaint}
+          placeholder="In the customer's words — e.g. AC not cooling, noise when braking"
+          className="[&_textarea]:min-h-28 [&_textarea]:text-base md:[&_textarea]:text-sm"
+        />
+        <TextField
+          label="Current mileage (km)"
+          name="mileage"
+          required
+          inputMode="numeric"
+          error={errors.mileage}
+          hint={lastMileage !== null ? `Last recorded: ${lastMileage.toLocaleString('en-AE')} km` : 'Read it from the odometer.'}
+          className="max-w-xs [&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
+        />
+      </div>
+    </Step>
   );
 }

@@ -3,100 +3,199 @@ import type { JobCardStatus } from '@/generated/prisma/enums';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
-import { WORKFLOW_STAGES, getEffectiveStageStatus, type WorkflowStage } from '@/lib/workshop/stages';
+import { DomainError, NotFoundError } from '@/lib/errors';
+import {
+  JOB_STATUS_LABEL,
+  WORKFLOW_STAGES,
+  getEffectiveStageStatus,
+  type WorkflowStage,
+} from '@/lib/workshop/stages';
 
-// Re-exported so existing server-side callers can keep importing everything
-// from this module; Client Components must import stages.ts directly (it
-// has no auth/session dependency — see that file's header comment).
-export { WORKFLOW_STAGES, getEffectiveStageStatus };
+export { WORKFLOW_STAGES, JOB_STATUS_LABEL, getEffectiveStageStatus };
 export type { WorkflowStage };
 
-// The V1 build instruction describes a finer-grained pipeline (BOOKED →
-// ARRIVED → INSPECTION → DIAGNOSIS → ESTIMATE → WAITING_APPROVAL →
-// APPROVED → WAITING_PARTS → IN_REPAIR → QUALITY_CHECK → READY →
-// DELIVERED → CLOSED) than the frozen JobCardStatus enum actually has.
-// Per the schema's frozen-foundation rule, this phase does not add new enum
-// values — it maps the conceptual pipeline onto the 11 states that exist:
-// WAITING_APPROVAL folds into ESTIMATE_SENT; WAITING_PARTS/IN_REPAIR fold
-// into IN_PROGRESS (with ON_HOLD as the generic "blocked" state); QUALITY_
-// CHECK/READY/DELIVERED fold into COMPLETED → INVOICED → CLOSED. A future
-// phase can revisit splitting these out as a real (additive) schema change
-// if the workshop finds this too coarse in practice.
+/**
+ * The job card state machine over the frozen JobCardStatus enum.
+ *
+ * Conceptual workshop stage → enum value:
+ *   ARRIVED            → RECEIVED
+ *   INSPECTION         → INSPECTING
+ *   DIAGNOSIS          → DIAGNOSED
+ *   ESTIMATE / WAITING_APPROVAL → ESTIMATE_SENT (draft estimates exist while DIAGNOSED)
+ *   APPROVED           → APPROVED
+ *   REJECTED           → stays ESTIMATE_SENT; the latest Estimate is REJECTED (revise or cancel)
+ *   REPAIR             → IN_PROGRESS
+ *   QUALITY_CHECK/READY → COMPLETED
+ *   INVOICED           → INVOICED
+ *   PAID / DELIVERED   → CLOSED
+ * No status outside the enum is ever written.
+ */
 const ALLOWED_TRANSITIONS: Record<JobCardStatus, JobCardStatus[]> = {
-  RECEIVED: ['INSPECTING', 'CANCELLED'],
+  RECEIVED: ['INSPECTING', 'ON_HOLD', 'CANCELLED'],
   INSPECTING: ['DIAGNOSED', 'ON_HOLD', 'CANCELLED'],
   DIAGNOSED: ['ESTIMATE_SENT', 'ON_HOLD', 'CANCELLED'],
   ESTIMATE_SENT: ['APPROVED', 'ON_HOLD', 'CANCELLED'],
   APPROVED: ['IN_PROGRESS', 'ON_HOLD', 'CANCELLED'],
   IN_PROGRESS: ['COMPLETED', 'ON_HOLD', 'CANCELLED'],
-  ON_HOLD: ['INSPECTING', 'DIAGNOSED', 'ESTIMATE_SENT', 'APPROVED', 'IN_PROGRESS', 'CANCELLED'],
+  ON_HOLD: ['RECEIVED', 'INSPECTING', 'DIAGNOSED', 'ESTIMATE_SENT', 'APPROVED', 'IN_PROGRESS', 'CANCELLED'],
   COMPLETED: ['INVOICED'],
   INVOICED: ['CLOSED'],
   CLOSED: [],
   CANCELLED: [],
 };
 
-export class InvalidJobStatusTransitionError extends Error {}
+/**
+ * Transitions that are the *result* of recording workflow evidence and must
+ * never be clicked through manually: a job only enters inspection when an
+ * inspection is started, is only diagnosed when a diagnosis is recorded, is
+ * only waiting approval when an estimate is sent, and is only approved when
+ * an approval is recorded.
+ */
+const WORKFLOW_OWNED: Partial<Record<JobCardStatus, string>> = {
+  INSPECTING: 'Start the inspection to move this job into inspection.',
+  DIAGNOSED: 'Record the diagnosis to move this job forward.',
+  ESTIMATE_SENT: 'Send an estimate to the customer to move this job forward.',
+  APPROVED: 'Record the customer approval to move this job forward.',
+};
+
+const EXCEPTION_STATUSES: JobCardStatus[] = ['ON_HOLD', 'CANCELLED'];
+
+export class InvalidJobStatusTransitionError extends DomainError {}
 
 export function getAllowedNextStatuses(status: JobCardStatus): JobCardStatus[] {
   return ALLOWED_TRANSITIONS[status];
 }
 
-const EXCEPTION_STATUSES: JobCardStatus[] = ['ON_HOLD', 'CANCELLED'];
-
-/** The forward-path transition (excludes the ON_HOLD/CANCELLED exceptions), if any. */
-export function getPrimaryNextStatus(status: JobCardStatus): JobCardStatus | null {
-  return ALLOWED_TRANSITIONS[status].find((s) => !EXCEPTION_STATUSES.includes(s)) ?? null;
+export function canTransition(from: JobCardStatus, to: JobCardStatus): boolean {
+  return ALLOWED_TRANSITIONS[from].includes(to);
 }
 
-/** ON_HOLD/CANCELLED, when reachable from this status. */
+/** The forward transition a user may apply manually from this status (post-approval stages only). */
+export function getManualForwardStatus(status: JobCardStatus): JobCardStatus | null {
+  const forward = ALLOWED_TRANSITIONS[status].find((s) => !EXCEPTION_STATUSES.includes(s));
+  if (!forward || WORKFLOW_OWNED[forward]) return null;
+  return forward;
+}
+
 export function getSecondaryNextStatuses(status: JobCardStatus): JobCardStatus[] {
   return ALLOWED_TRANSITIONS[status].filter((s) => EXCEPTION_STATUSES.includes(s));
 }
 
+export type TransitionSource = 'manual' | 'workflow';
+
+/**
+ * Applies a status change with its history row and audit entry, in the
+ * caller's transaction. Locks the job card row first, so two concurrent
+ * changes can't both read the same "from" status.
+ *
+ * `actorUserId` is the user the change is attributed to. For customer
+ * decisions made through a secure link it is the staff member who issued
+ * that link (JobStatusHistory.changedByUserId is required by the schema);
+ * the audit entry's metadata records that the customer made the decision.
+ */
+export async function applyJobStatusChange(
+  tx: Prisma.TransactionClient,
+  params: {
+    organizationId: string;
+    jobCardId: string;
+    toStatus: JobCardStatus;
+    actorUserId: string;
+    source: TransitionSource;
+    auditActorUserId?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<{ fromStatus: JobCardStatus }> {
+  await tx.$executeRaw`SELECT id FROM job_cards WHERE id = ${params.jobCardId}::uuid AND organization_id = ${params.organizationId}::uuid FOR UPDATE`;
+  const jobCard = await tx.jobCard.findFirst({
+    where: { id: params.jobCardId, organizationId: params.organizationId },
+    select: { id: true, status: true, branchId: true },
+  });
+  if (!jobCard) throw new NotFoundError('job card');
+
+  const { toStatus } = params;
+  if (!canTransition(jobCard.status, toStatus)) {
+    throw new InvalidJobStatusTransitionError(
+      `A job that is "${JOB_STATUS_LABEL[jobCard.status]}" can't move to "${JOB_STATUS_LABEL[toStatus]}".`,
+    );
+  }
+  // Resuming from hold is manual but must return to where the job paused.
+  if (params.source === 'manual' && jobCard.status !== 'ON_HOLD' && WORKFLOW_OWNED[toStatus]) {
+    throw new InvalidJobStatusTransitionError(WORKFLOW_OWNED[toStatus]!);
+  }
+  if (params.source === 'manual' && jobCard.status === 'ON_HOLD' && toStatus !== 'CANCELLED') {
+    const history = await tx.jobStatusHistory.findMany({
+      where: { organizationId: params.organizationId, jobCardId: jobCard.id },
+      orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
+      select: { toStatus: true },
+    });
+    const resumeTo = getEffectiveStageStatus('ON_HOLD', history);
+    if (toStatus !== resumeTo) {
+      throw new InvalidJobStatusTransitionError(
+        `This job was paused at "${JOB_STATUS_LABEL[resumeTo]}" and can only resume there.`,
+      );
+    }
+  }
+
+  await tx.jobCard.update({
+    where: { id: jobCard.id },
+    data: { status: toStatus, closedAt: toStatus === 'CLOSED' ? new Date() : undefined },
+  });
+  await tx.jobStatusHistory.create({
+    data: {
+      organizationId: params.organizationId,
+      jobCardId: jobCard.id,
+      fromStatus: jobCard.status,
+      toStatus,
+      changedByUserId: params.actorUserId,
+    },
+  });
+  await writeAuditLog(tx, {
+    organizationId: params.organizationId,
+    branchId: jobCard.branchId,
+    actorUserId: params.auditActorUserId === undefined ? params.actorUserId : params.auditActorUserId,
+    action: 'job_card.status_changed',
+    entityType: 'JobCard',
+    entityId: jobCard.id,
+    beforeData: { status: jobCard.status },
+    afterData: { status: toStatus },
+    metadata: { source: params.source, ...params.metadata },
+  });
+  return { fromStatus: jobCard.status };
+}
+
+/** Staff-initiated status change (hold, resume, cancel, and post-approval stages). */
 export async function transitionJobStatus(
   tx: Prisma.TransactionClient,
   user: AuthenticatedUser,
   jobCardId: string,
   toStatus: JobCardStatus,
 ): Promise<void> {
-  requirePermission(user, 'job_card.edit');
-
-  const jobCard = await tx.jobCard.findFirstOrThrow({
+  const jobCard = await tx.jobCard.findFirst({
     where: { id: jobCardId, organizationId: user.organizationId },
-    select: { id: true, status: true, branchId: true },
+    select: { branchId: true },
   });
-
-  const allowed = ALLOWED_TRANSITIONS[jobCard.status];
-  if (!allowed.includes(toStatus)) {
-    throw new InvalidJobStatusTransitionError(
-      `Cannot move job card from ${jobCard.status} to ${toStatus}.`,
-    );
-  }
-
-  await tx.jobCard.update({
-    where: { id: jobCardId },
-    data: { status: toStatus, closedAt: toStatus === 'CLOSED' ? new Date() : undefined },
-  });
-
-  await tx.jobStatusHistory.create({
-    data: {
-      organizationId: user.organizationId,
-      jobCardId,
-      fromStatus: jobCard.status,
-      toStatus,
-      changedByUserId: user.id,
-    },
-  });
-
-  await writeAuditLog(tx, {
-    organizationId: user.organizationId,
+  if (!jobCard) throw new NotFoundError('job card');
+  requirePermission(user, toStatus === 'CLOSED' ? 'job_card.close' : 'job_card.edit', {
     branchId: jobCard.branchId,
-    actorUserId: user.id,
-    action: 'job_card.status_changed',
-    entityType: 'JobCard',
-    entityId: jobCardId,
-    beforeData: { status: jobCard.status },
-    afterData: { status: toStatus },
   });
+  await applyJobStatusChange(tx, {
+    organizationId: user.organizationId,
+    jobCardId,
+    toStatus,
+    actorUserId: user.id,
+    source: 'manual',
+  });
+}
+
+export async function getResumeStatus(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  jobCardId: string,
+): Promise<JobCardStatus> {
+  const history = await tx.jobStatusHistory.findMany({
+    where: { organizationId, jobCardId },
+    orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
+    select: { toStatus: true },
+  });
+  return getEffectiveStageStatus('ON_HOLD', history);
 }

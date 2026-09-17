@@ -1,26 +1,12 @@
 import { cn } from '@/lib/utils';
 import type { JobCardStatus } from '@/generated/prisma/enums';
-
-const STATUS_LABEL: Record<JobCardStatus, string> = {
-  RECEIVED: 'Received',
-  INSPECTING: 'Inspecting',
-  DIAGNOSED: 'Diagnosed',
-  ESTIMATE_SENT: 'Estimate sent',
-  APPROVED: 'Approved',
-  IN_PROGRESS: 'In progress',
-  ON_HOLD: 'On hold',
-  COMPLETED: 'Completed',
-  INVOICED: 'Invoiced',
-  CLOSED: 'Closed',
-  CANCELLED: 'Cancelled',
-};
+import { JOB_STATUS_LABEL } from '@/lib/workshop/stages';
 
 // Status colors are semantic (success/warning/danger/info/neutral) and
-// deliberately independent of the brand accent — the brand violet is
-// reserved for IN_PROGRESS, the one "work is actively happening" state,
-// matching its role elsewhere as the "active/brand" highlight color.
+// deliberately independent of the brand accent — violet is reserved for
+// IN_PROGRESS, the one "work is actively happening" state.
 const STATUS_CLASSES: Record<JobCardStatus, string> = {
-  RECEIVED: 'bg-muted text-muted-foreground',
+  RECEIVED: 'bg-muted text-foreground/70',
   INSPECTING: 'bg-info/10 text-info',
   DIAGNOSED: 'bg-info/10 text-info',
   ESTIMATE_SENT: 'bg-warning/10 text-warning',
@@ -33,15 +19,16 @@ const STATUS_CLASSES: Record<JobCardStatus, string> = {
   CANCELLED: 'bg-danger/10 text-danger',
 };
 
-export function JobStatusBadge({ status }: { status: JobCardStatus }) {
+export function JobStatusBadge({ status, className }: { status: JobCardStatus; className?: string }) {
   return (
     <span
       className={cn(
-        'inline-flex h-5 w-fit shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap',
+        'inline-flex h-6 w-fit shrink-0 items-center rounded-full px-2.5 text-xs font-medium whitespace-nowrap',
         STATUS_CLASSES[status],
+        className,
       )}
     >
-      {STATUS_LABEL[status]}
+      {JOB_STATUS_LABEL[status]}
     </span>
   );
 }

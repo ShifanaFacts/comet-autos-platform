@@ -69,7 +69,7 @@ const trimmed = query.trim();
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex w-full max-w-sm items-center gap-2 rounded-md border border-border bg-secondary px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-ring/50"
+        className="flex h-9 w-full max-w-md items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm text-muted-foreground shadow-xs transition-colors hover:border-ring/50"
       >
         <Search className="size-4 shrink-0" />
         <span className="truncate">Search customers, vehicles, jobs…</span>

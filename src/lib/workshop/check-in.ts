@@ -1,0 +1,186 @@
+import { z } from 'zod';
+import type { JobCardStatus } from '@/generated/prisma/enums';
+import { prisma } from '@/lib/prisma';
+import type { AuthenticatedUser } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/authorize';
+import { writeAuditLog } from '@/lib/audit';
+import { allocateDocumentNumber } from '@/lib/numbering';
+import { DomainError } from '@/lib/errors';
+import { parseInput } from '@/lib/form-data';
+import { createCustomer, type CustomerInput } from '@/lib/customers/service';
+import { createVehicle, MAX_MILEAGE, type VehicleInput } from '@/lib/vehicles/service';
+import { OPEN_APPOINTMENT_STATUSES } from '@/lib/appointments/service';
+
+/** A job is "in the workshop" until it is closed or cancelled. */
+export const OPEN_JOB_STATUSES: JobCardStatus[] = [
+  'RECEIVED',
+  'INSPECTING',
+  'DIAGNOSED',
+  'ESTIMATE_SENT',
+  'APPROVED',
+  'IN_PROGRESS',
+  'ON_HOLD',
+  'COMPLETED',
+  'INVOICED',
+];
+
+const visitSchema = z.object({
+  complaint: z
+    .string({ error: "Enter the customer's complaint." })
+    .trim()
+    .min(3, "Enter the customer's complaint."),
+  mileage: z
+    .string({ error: 'Enter the current mileage.' })
+    .trim()
+    .min(1, 'Enter the current mileage.')
+    .refine((value) => /^\d+$/.test(value.replace(/,/g, '')), 'Mileage must be a whole number of km.')
+    .transform((value) => Number(value.replace(/,/g, '')))
+    .refine((value) => value <= MAX_MILEAGE, 'That mileage is not realistic — check the odometer.'),
+  appointmentId: z.union([z.literal(''), z.uuid()]).optional(),
+});
+
+export interface CheckInResult {
+  jobCardId: string;
+  jobNumber: string;
+}
+
+/**
+ * Checks a vehicle in and opens its Job Card (status RECEIVED, shown as
+ * "Arrived"). Either an existing vehicle is chosen, or a new customer and
+ * vehicle are created in the same transaction — never a half-created
+ * customer without a job.
+ */
+export async function checkInVehicle(
+  user: AuthenticatedUser,
+  input:
+    | { mode: 'existing'; vehicleId: string; visit: Record<string, string | undefined> }
+    | {
+        mode: 'new';
+        customer: CustomerInput;
+        vehicle: VehicleInput;
+        visit: Record<string, string | undefined>;
+      },
+): Promise<CheckInResult> {
+  if (!user.primaryBranchId) {
+    throw new DomainError('Your account has no branch assigned. Contact an administrator.');
+  }
+  const branchId = user.primaryBranchId;
+  requirePermission(user, 'job_card.create', { branchId });
+  const visit = parseInput(visitSchema, input.visit);
+
+  return prisma.$transaction(async (tx) => {
+    let vehicleId: string;
+    if (input.mode === 'existing') {
+      vehicleId = input.vehicleId;
+    } else {
+      const customer = await createCustomer(tx, user, input.customer);
+      const vehicle = await createVehicle(tx, user, customer.id, input.vehicle);
+      vehicleId = vehicle.id;
+    }
+
+    // Lock the vehicle row: two desks checking the same car in at once must not both succeed.
+    const locked = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM vehicles
+      WHERE id = ${vehicleId}::uuid AND organization_id = ${user.organizationId}::uuid AND is_active
+      FOR UPDATE`;
+    if (locked.length === 0) throw new DomainError('Choose the vehicle to check in.', 'vehicleId');
+
+    const vehicle = await tx.vehicle.findUniqueOrThrow({
+      where: { id: vehicleId },
+      select: { id: true, customerId: true, lastMileage: true, plateNumber: true },
+    });
+
+    const openJob = await tx.jobCard.findFirst({
+      where: { organizationId: user.organizationId, vehicleId, status: { in: OPEN_JOB_STATUSES } },
+      select: { jobNumber: true },
+    });
+    if (openJob) {
+      throw new DomainError(
+        `${vehicle.plateNumber} is already in the workshop on job ${openJob.jobNumber}.`,
+        'vehicleId',
+      );
+    }
+
+    if (vehicle.lastMileage !== null && visit.mileage < vehicle.lastMileage) {
+      throw new DomainError(
+        `Mileage can't be lower than the last recorded reading (${vehicle.lastMileage.toLocaleString('en-AE')} km).`,
+        'mileage',
+      );
+    }
+
+    let appointmentId: string | null = null;
+    if (visit.appointmentId) {
+      const appointment = await tx.appointment.findFirst({
+        where: {
+          id: visit.appointmentId,
+          organizationId: user.organizationId,
+          status: { in: OPEN_APPOINTMENT_STATUSES },
+        },
+      });
+      if (!appointment) {
+        throw new DomainError('That appointment is no longer open for check-in.', 'appointmentId');
+      }
+      if (appointment.vehicleId && appointment.vehicleId !== vehicle.id) {
+        throw new DomainError('The appointment was booked for a different vehicle.', 'appointmentId');
+      }
+      await tx.appointment.update({ where: { id: appointment.id }, data: { status: 'CHECKED_IN' } });
+      await writeAuditLog(tx, {
+        organizationId: user.organizationId,
+        branchId: appointment.branchId,
+        actorUserId: user.id,
+        action: 'appointment.status_changed',
+        entityType: 'Appointment',
+        entityId: appointment.id,
+        beforeData: { status: appointment.status },
+        afterData: { status: 'CHECKED_IN' },
+      });
+      appointmentId = appointment.id;
+    }
+
+    const jobNumber = await allocateDocumentNumber(tx, user.organizationId, branchId, 'JOB_CARD');
+    const jobCard = await tx.jobCard.create({
+      data: {
+        organizationId: user.organizationId,
+        branchId,
+        vehicleId: vehicle.id,
+        appointmentId,
+        jobNumber,
+        status: 'RECEIVED',
+        odometerReading: visit.mileage,
+        customerComplaint: visit.complaint,
+        createdByUserId: user.id,
+      },
+    });
+
+    await tx.vehicle.update({ where: { id: vehicle.id }, data: { lastMileage: visit.mileage } });
+
+    await tx.jobStatusHistory.create({
+      data: {
+        organizationId: user.organizationId,
+        jobCardId: jobCard.id,
+        fromStatus: null,
+        toStatus: 'RECEIVED',
+        changedByUserId: user.id,
+      },
+    });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId,
+      actorUserId: user.id,
+      action: 'job_card.created',
+      entityType: 'JobCard',
+      entityId: jobCard.id,
+      afterData: {
+        jobNumber,
+        status: 'RECEIVED',
+        vehicleId: vehicle.id,
+        customerId: vehicle.customerId,
+        appointmentId,
+        odometerReading: visit.mileage,
+        entry: appointmentId ? 'appointment' : 'walk_in',
+      },
+    });
+
+    return { jobCardId: jobCard.id, jobNumber };
+  });
+}

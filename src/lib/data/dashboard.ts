@@ -128,3 +128,19 @@ export async function getFinanceSnapshot(organizationId: string) {
     customerOutstanding,
   };
 }
+
+/** Most recently opened job cards that are still in the workshop — the dashboard's live activity list. */
+export async function getRecentJobCards(organizationId: string, take = 6) {
+  return prisma.jobCard.findMany({
+    where: { organizationId, status: { notIn: NOT_IN_WORKSHOP } },
+    orderBy: { openedAt: 'desc' },
+    take,
+    select: {
+      id: true,
+      jobNumber: true,
+      status: true,
+      openedAt: true,
+      vehicle: { select: { plateNumber: true, make: true, model: true, customer: { select: { name: true } } } },
+    },
+  });
+}

@@ -1,9 +1,10 @@
-import { ChevronRight } from 'lucide-react';
+import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
 export interface FlowStage {
   key: string;
   label: string;
+  status: string;
   count: number;
 }
 
@@ -12,45 +13,59 @@ export interface FlowStage {
 // checkpoints, blue = under assessment, amber = active work, green = done) —
 // per the design system's "violet for workflow progress" rule, rather than
 // an arbitrary gradient.
-const STAGE_TONE: Record<string, { bar: string; bg: string; text: string }> = {
-  received: { bar: 'bg-foreground/30', bg: 'bg-secondary', text: 'text-foreground' },
-  inspecting: { bar: 'bg-info', bg: 'bg-info/10', text: 'text-info' },
-  diagnosed: { bar: 'bg-info', bg: 'bg-info/10', text: 'text-info' },
-  estimate: { bar: 'bg-primary', bg: 'bg-primary/10', text: 'text-primary' },
-  approved: { bar: 'bg-primary', bg: 'bg-primary/10', text: 'text-primary' },
-  repair: { bar: 'bg-warning', bg: 'bg-warning/10', text: 'text-warning' },
-  completed: { bar: 'bg-success', bg: 'bg-success/10', text: 'text-success' },
-  invoiced: { bar: 'bg-primary', bg: 'bg-primary/10', text: 'text-primary' },
-  closed: { bar: 'bg-foreground/30', bg: 'bg-secondary', text: 'text-foreground' },
+const STAGE_TONE: Record<string, { bar: string; text: string }> = {
+  received: { bar: 'bg-foreground/40', text: 'text-foreground' },
+  inspecting: { bar: 'bg-info', text: 'text-info' },
+  diagnosed: { bar: 'bg-info', text: 'text-info' },
+  estimate: { bar: 'bg-primary', text: 'text-primary' },
+  approved: { bar: 'bg-primary', text: 'text-primary' },
+  repair: { bar: 'bg-warning', text: 'text-warning' },
+  completed: { bar: 'bg-success', text: 'text-success' },
+  invoiced: { bar: 'bg-primary', text: 'text-primary' },
+  closed: { bar: 'bg-foreground/40', text: 'text-foreground' },
 };
 
-/** Dashboard's "Today's Workshop" strip: BOOKED → ARRIVED → ... as stage chips with live counts. */
+/**
+ * The workshop pipeline: one column per workflow stage, each with a live
+ * count and a progress rule. Laid out as an even grid (not a row of cards)
+ * so it reads as a single continuous process across the available width.
+ */
 export function WorkshopFlowRow({ stages }: { stages: FlowStage[] }) {
   return (
-    <div className="flex items-stretch gap-1.5 overflow-x-auto pb-1">
-      {stages.map((stage, index) => {
+    <ol className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-5 lg:grid-cols-9 lg:gap-x-2">
+      {stages.map((stage) => {
         const tone = STAGE_TONE[stage.key];
         const active = stage.count > 0;
         return (
-          <div key={stage.key} className="flex items-center">
-            <div
-              className={cn(
-                'relative flex min-w-[96px] flex-col items-center gap-0.5 overflow-hidden rounded-lg border px-3 py-2.5 text-center transition-colors',
-                active ? cn(tone.bg, 'border-transparent shadow-sm') : 'border-border/60 bg-card',
-              )}
+          <li key={stage.key} className="min-w-0">
+            <Link
+              href={`/job-cards?status=${stage.status}`}
+              className="group flex flex-col gap-3 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              <span className={cn('absolute inset-x-0 top-0 h-0.5', active ? tone.bar : 'bg-transparent')} />
-              <span className={cn('text-xl font-semibold tabular-nums', active ? tone.text : 'text-foreground')}>
-                {stage.count}
+              <span
+                className={cn('h-1 rounded-full', active ? tone.bar : 'bg-border')}
+                aria-hidden
+              />
+              <span className="flex flex-col gap-1">
+                <span
+                  className={cn(
+                    'text-2xl leading-none font-semibold tabular-nums',
+                    active ? tone.text : 'text-foreground/25',
+                  )}
+                >
+                  {stage.count}
+                </span>
+                <span
+                  className="truncate text-xs text-muted-foreground group-hover:text-foreground"
+                  title={stage.label}
+                >
+                  {stage.label}
+                </span>
               </span>
-              <span className="text-[11px] whitespace-nowrap text-muted-foreground">{stage.label}</span>
-            </div>
-            {index < stages.length - 1 ? (
-              <ChevronRight className="size-4 shrink-0 text-border" aria-hidden />
-            ) : null}
-          </div>
+            </Link>
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }

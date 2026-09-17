@@ -1,5 +1,5 @@
 import { Construction } from 'lucide-react';
-import { PageHeader } from '@/components/shell/page-header';
+import { PageHeader, Stack } from '@/components/layout/primitives';
 import { EmptyState } from '@/components/shared/empty-state';
 
 /**
@@ -9,13 +9,13 @@ import { EmptyState } from '@/components/shared/empty-state';
  */
 export function ComingSoon({ title, phase }: { title: string; phase: string }) {
   return (
-    <div className="animate-in fade-in duration-300">
-      <PageHeader title={title} />
+    <Stack gap="2xl" className="animate-in fade-in duration-300">
+      <PageHeader title={title} description={`This module is planned for ${phase}.`} />
       <EmptyState
         icon={Construction}
         title={`${title} is coming in ${phase}`}
         description="See PROJECT-STATUS.md for the current roadmap."
       />
-    </div>
+    </Stack>
   );
 }

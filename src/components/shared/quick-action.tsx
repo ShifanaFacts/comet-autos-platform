@@ -18,10 +18,10 @@ export function QuickAction({
 }) {
   const content = (
     <>
-      <Icon className={cn('size-4', primary && 'text-primary-foreground')} />
+      <Icon className="size-4 shrink-0" />
       <span>{label}</span>
       {comingIn ? (
-        <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
           {comingIn}
         </span>
       ) : null}
@@ -29,11 +29,11 @@ export function QuickAction({
   );
 
   const classes = cn(
-    'flex items-center gap-2 rounded-md border px-3.5 py-2 text-sm font-medium transition-all',
+    'inline-flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
     primary
-      ? 'border-primary bg-primary text-primary-foreground shadow-sm shadow-primary/30 hover:bg-primary-hover hover:shadow-md hover:shadow-primary/30'
-      : 'border-border bg-card hover:bg-muted',
-    comingIn && 'pointer-events-none border-dashed text-muted-foreground opacity-70 shadow-none',
+      ? 'border-primary bg-primary text-primary-foreground shadow-sm shadow-primary/25 hover:bg-primary-hover'
+      : 'border-border bg-card text-foreground shadow-xs hover:bg-muted',
+    comingIn && 'pointer-events-none border-dashed bg-transparent text-muted-foreground shadow-none',
   );
 
   if (comingIn || !href) {

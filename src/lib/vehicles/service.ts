@@ -1,0 +1,193 @@
+import { z } from 'zod';
+import type { Prisma } from '@/generated/prisma/client';
+import { prisma } from '@/lib/prisma';
+import type { AuthenticatedUser } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/authorize';
+import { writeAuditLog } from '@/lib/audit';
+import { DomainError, NotFoundError } from '@/lib/errors';
+import { parseInput } from '@/lib/form-data';
+import { emptyToNull, normalizePlate, normalizeVin } from '@/lib/normalize';
+import { searchVehicles, vehiclePlateExists } from '@/lib/customers/search';
+
+export { PLATE_EMIRATES } from '@/lib/vehicles/constants';
+
+/** Upper sanity bound for an odometer reading, in km. */
+export const MAX_MILEAGE = 2_000_000;
+
+export const vehicleSchema = z.object({
+  plateNumber: z
+    .string({ error: 'Registration number is required.' })
+    .trim()
+    .min(1, 'Registration number is required.')
+    .max(20, 'Registration number is too long.')
+    .refine((value) => /^[A-Za-z0-9\s-]+$/.test(value), 'Use letters, numbers and spaces only.'),
+  plateEmirate: z.string().trim().optional(),
+  vin: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || /^[A-Za-z0-9]{1,17}$/.test(value.replace(/\s+/g, '')),
+      'VIN must be up to 17 letters and numbers.',
+    ),
+  make: z.string({ error: 'Make is required.' }).trim().min(1, 'Make is required.').max(60),
+  model: z.string({ error: 'Model is required.' }).trim().min(1, 'Model is required.').max(60),
+  year: z
+    .string()
+    .trim()
+    .optional()
+    .refine((value) => !value || /^\d{4}$/.test(value), 'Year must be four digits.')
+    .refine(
+      (value) => !value || (Number(value) >= 1950 && Number(value) <= new Date().getFullYear() + 1),
+      'Enter a realistic model year.',
+    )
+    .transform((value) => (value ? Number(value) : null)),
+  color: z.string().trim().max(40).optional(),
+});
+
+export type VehicleInput = z.input<typeof vehicleSchema>;
+
+async function assertUniqueIdentifiers(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  plateNumber: string,
+  vin: string | null,
+  excludeVehicleId?: string,
+) {
+  if (await vehiclePlateExists(tx, organizationId, plateNumber, excludeVehicleId)) {
+    throw new DomainError('A vehicle with this registration is already on file.', 'plateNumber');
+  }
+  if (vin) {
+    const clash = await tx.vehicle.findFirst({
+      where: {
+        organizationId,
+        vin,
+        ...(excludeVehicleId ? { id: { not: excludeVehicleId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (clash) throw new DomainError('A vehicle with this VIN is already on file.', 'vin');
+  }
+}
+
+function toVehicleData(input: z.infer<typeof vehicleSchema>) {
+  return {
+    plateNumber: normalizePlate(input.plateNumber),
+    plateEmirate: emptyToNull(input.plateEmirate),
+    vin: normalizeVin(input.vin),
+    make: input.make,
+    model: input.model,
+    year: input.year,
+    color: emptyToNull(input.color),
+  };
+}
+
+export async function createVehicle(
+  tx: Prisma.TransactionClient,
+  user: AuthenticatedUser,
+  customerId: string | undefined,
+  rawInput: VehicleInput,
+) {
+  requirePermission(user, 'vehicle.create');
+  const data = toVehicleData(parseInput(vehicleSchema, rawInput));
+  const customer = customerId
+    ? await tx.customer.findFirst({
+        where: { id: customerId, organizationId: user.organizationId, isActive: true },
+        select: { id: true },
+      })
+    : null;
+  if (!customer) throw new DomainError('Choose the customer who owns this vehicle.', 'customerId');
+  await assertUniqueIdentifiers(tx, user.organizationId, data.plateNumber, data.vin);
+
+  const vehicle = await tx.vehicle.create({
+    data: { organizationId: user.organizationId, customerId: customer.id, ...data },
+  });
+  await writeAuditLog(tx, {
+    organizationId: user.organizationId,
+    branchId: user.primaryBranchId,
+    actorUserId: user.id,
+    action: 'vehicle.created',
+    entityType: 'Vehicle',
+    entityId: vehicle.id,
+    afterData: { ...data, customerId: customer.id },
+  });
+  return vehicle;
+}
+
+export async function updateVehicle(
+  user: AuthenticatedUser,
+  vehicleId: string,
+  rawInput: VehicleInput,
+) {
+  requirePermission(user, 'vehicle.edit');
+  const data = toVehicleData(parseInput(vehicleSchema, rawInput));
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.vehicle.findFirst({
+      where: { id: vehicleId, organizationId: user.organizationId },
+    });
+    if (!before) throw new NotFoundError('vehicle');
+    await assertUniqueIdentifiers(tx, user.organizationId, data.plateNumber, data.vin, before.id);
+    const vehicle = await tx.vehicle.update({ where: { id: before.id }, data });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: user.primaryBranchId,
+      actorUserId: user.id,
+      action: 'vehicle.updated',
+      entityType: 'Vehicle',
+      entityId: vehicle.id,
+      beforeData: {
+        plateNumber: before.plateNumber,
+        plateEmirate: before.plateEmirate,
+        vin: before.vin,
+        make: before.make,
+        model: before.model,
+        year: before.year,
+        color: before.color,
+      },
+      afterData: data,
+    });
+    return vehicle;
+  });
+}
+
+export async function listVehicles(user: AuthenticatedUser, query: string, take = 50) {
+  requirePermission(user, 'vehicle.view');
+  if (query.trim().length >= 2) return searchVehicles(user.organizationId, query, take);
+  return prisma.vehicle.findMany({
+    where: { organizationId: user.organizationId, isActive: true },
+    orderBy: { updatedAt: 'desc' },
+    take,
+    include: { customer: { select: { id: true, name: true, phone: true } } },
+  });
+}
+
+export async function getVehicleDetail(user: AuthenticatedUser, vehicleId: string) {
+  requirePermission(user, 'vehicle.view');
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: vehicleId, organizationId: user.organizationId },
+    include: {
+      customer: true,
+      jobCards: {
+        orderBy: { openedAt: 'desc' },
+        include: {
+          diagnoses: { orderBy: { diagnosedAt: 'desc' }, take: 1, select: { findings: true } },
+          estimates: {
+            orderBy: [{ version: 'desc' }],
+            take: 1,
+            select: { estimateNumber: true, status: true, totalAmount: true },
+          },
+        },
+      },
+      appointments: {
+        where: {
+          scheduledAt: { gte: new Date(Date.now() - 1000 * 60 * 60 * 24) },
+          status: { in: ['SCHEDULED', 'CONFIRMED'] },
+        },
+        orderBy: { scheduledAt: 'asc' },
+        take: 5,
+      },
+    },
+  });
+  if (!vehicle) throw new NotFoundError('vehicle');
+  return vehicle;
+}

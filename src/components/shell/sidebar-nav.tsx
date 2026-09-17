@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NavList } from '@/components/shell/nav-list';
+import { BrandMark } from '@/components/shell/brand-mark';
 
 const COLLAPSE_STORAGE_KEY = 'comet:sidebar-collapsed';
 
@@ -39,27 +40,30 @@ export function SidebarNav() {
   return (
     <aside
       className={cn(
-        'hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex',
-        collapsed ? 'w-16' : 'w-60',
+        'sticky top-0 hidden h-screen shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex',
+        collapsed ? 'w-[72px]' : 'w-64',
       )}
     >
-      <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-4">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-xs font-bold text-sidebar-primary-foreground">
-          C
-        </span>
-        {!collapsed ? <span className="truncate text-sm font-semibold tracking-tight">Comet Autos</span> : null}
+      <div className={cn('flex h-16 shrink-0 items-center border-b border-sidebar-border', collapsed ? 'justify-center' : 'px-6')}>
+        <BrandMark collapsed={collapsed} />
       </div>
 
       <NavList collapsed={collapsed} />
 
-      <button
-        type="button"
-        onClick={toggle}
-        className="flex items-center gap-2 border-t border-sidebar-border px-4 py-3 text-xs text-sidebar-foreground/60 hover:text-sidebar-foreground"
-      >
-        {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-        {!collapsed ? 'Collapse' : null}
-      </button>
+      <div className={cn('shrink-0 border-t border-sidebar-border py-3', collapsed ? 'px-3' : 'px-4')}>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className={cn(
+            'flex h-9 w-full items-center gap-3 rounded-md px-3 text-sm text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
+            collapsed && 'justify-center px-0',
+          )}
+        >
+          {collapsed ? <PanelLeftOpen className="size-[18px]" /> : <PanelLeftClose className="size-[18px]" />}
+          {!collapsed ? 'Collapse' : null}
+        </button>
+      </div>
     </aside>
   );
 }

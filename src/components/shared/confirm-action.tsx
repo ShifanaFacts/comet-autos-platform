@@ -18,12 +18,14 @@ export function ConfirmAction({
   description,
   confirmLabel,
   onConfirm,
+  tone = 'destructive',
 }: {
   trigger: ReactElement;
   title: string;
   description: string;
   confirmLabel: string;
   onConfirm: () => Promise<void>;
+  tone?: 'destructive' | 'default';
 }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -41,7 +43,7 @@ export function ConfirmAction({
             Never mind
           </Button>
           <Button
-            variant="destructive"
+            variant={tone}
             disabled={isPending}
             onClick={() =>
               startTransition(async () => {

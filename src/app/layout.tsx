@@ -21,10 +21,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      {/* suppressHydrationWarning: browser extensions (Grammarly, etc.) inject
-          data-gr-* attributes into <body> before React hydrates, which is a
-          false-positive mismatch — not a real bug in this app. */}
-      <body suppressHydrationWarning>
+      <body>
         {children}
         <Toaster position="top-right" />
       </body>

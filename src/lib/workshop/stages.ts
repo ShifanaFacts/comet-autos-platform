@@ -1,9 +1,8 @@
 import type { JobCardStatus } from '@/generated/prisma/enums';
 
 // Pure data/helpers only — no auth/session imports — so Client Components
-// (e.g. job-cards/job-card-filters.tsx) can import this without pulling
-// server-only code (next/headers via lib/auth/session.ts) into the client
-// bundle. lib/workshop/job-status.ts re-exports these for server-side callers.
+// can import this without pulling server-only code into the client bundle.
+// lib/workshop/job-status.ts re-exports these for server-side callers.
 
 const EXCEPTION_STATUSES: JobCardStatus[] = ['ON_HOLD', 'CANCELLED'];
 
@@ -13,13 +12,16 @@ export interface WorkflowStage {
   status: JobCardStatus;
 }
 
-// The single source of truth for the "flow visual" (dashboard's Today's
-// Workshop row and the Job Card page's WorkflowStepper) — the ordered,
-// non-exception path through the coarse JobCardStatus enum (see the
-// mapping note in job-status.ts). ON_HOLD/CANCELLED are exceptions, not
-// stages, and are surfaced separately rather than as a step in this list.
+/**
+ * The ordered, non-exception path through the frozen JobCardStatus enum.
+ *
+ * Labels follow the workshop's vocabulary, not the enum names: the enum value
+ * RECEIVED is shown as "Arrived" everywhere in the UI. The frozen schema has
+ * no ARRIVED value, and adding one would be a schema change — see
+ * PROJECT-STATUS.md "Decisions awaiting approval".
+ */
 export const WORKFLOW_STAGES: WorkflowStage[] = [
-  { key: 'received', label: 'Received', status: 'RECEIVED' },
+  { key: 'received', label: 'Arrived', status: 'RECEIVED' },
   { key: 'inspecting', label: 'Inspection', status: 'INSPECTING' },
   { key: 'diagnosed', label: 'Diagnosis', status: 'DIAGNOSED' },
   { key: 'estimate', label: 'Estimate', status: 'ESTIMATE_SENT' },
@@ -29,6 +31,20 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
   { key: 'invoiced', label: 'Invoiced', status: 'INVOICED' },
   { key: 'closed', label: 'Closed', status: 'CLOSED' },
 ];
+
+export const JOB_STATUS_LABEL: Record<JobCardStatus, string> = {
+  RECEIVED: 'Arrived',
+  INSPECTING: 'In inspection',
+  DIAGNOSED: 'Diagnosed',
+  ESTIMATE_SENT: 'Waiting approval',
+  APPROVED: 'Approved',
+  IN_PROGRESS: 'In repair',
+  ON_HOLD: 'On hold',
+  COMPLETED: 'Completed',
+  INVOICED: 'Invoiced',
+  CLOSED: 'Closed',
+  CANCELLED: 'Cancelled',
+};
 
 /**
  * The stage a job "is at" for the stepper, even while ON_HOLD/CANCELLED —

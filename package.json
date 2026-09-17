@@ -17,7 +17,8 @@
     "prisma:studio": "prisma studio --schema=./prisma/schema.prisma",
     "db:start": "node scripts/dev-db.mjs start",
     "db:stop": "node scripts/dev-db.mjs stop",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "test:integration": "tsx --test tests/workshop-flow.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

@@ -4,40 +4,23 @@
 
 @custom-variant dark (&:is(.dark *));
 
-html {
-  height: 100%;
-}
+/*
+ * No global element resets here. Tailwind's preflight (in @layer base)
+ * already zeroes margins/padding and sets box-sizing. Any *unlayered* rule
+ * like `* { padding: 0 }` beats every layered utility regardless of
+ * specificity, which silently disables all p-*, m-* and space utilities —
+ * that is exactly what made the whole app look cramped before.
+ */
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
-}
-
-body {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-* {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
-}
+/*
+ * Spacing rhythm (Tailwind's 4px scale — use only these steps):
+ *   small    1 (4px)   2 (8px)
+ *   normal   3 (12px)  4 (16px)
+ *   section  6 (24px)  8 (32px)
+ *   major    10 (40px) 12 (48px)
+ * Layout primitives in components/layout encode these so pages don't
+ * pick values ad hoc.
+ */
 
 @theme inline {
   --font-sans: var(--font-geist-sans);
@@ -117,7 +100,7 @@ a {
   --secondary: #f1f1f5;
   --secondary-foreground: #18181b;
   --muted: #f1f1f5;
-  --muted-foreground: #94a3b8;
+  --muted-foreground: #64748b;
   --accent: #ede9fe;
   --accent-foreground: #5b21b6;
   --destructive: #dc2626;
@@ -129,7 +112,7 @@ a {
   --warning-foreground: #ffffff;
   --info: #2563eb;
   --info-foreground: #ffffff;
-  --border: #cbd5e1;
+  --border: #e4e4e9;
   --input: #cbd5e1;
   --ring: rgb(124 58 237 / 0.55);
   --chart-1: #7c3aed;
@@ -197,7 +180,7 @@ a {
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
   }
   html {
     @apply font-sans;
