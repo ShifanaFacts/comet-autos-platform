@@ -18,9 +18,10 @@ below is real and working against the local database, not a mockup.
 
 ### Architecture & foundation
 
-- Single Next.js 16 application (`apps/web`); `apps/api` (NestJS) and the
-  empty `packages/shared` deleted. Prisma called directly from Server
-  Actions/Route Handlers — no separate API layer.
+- Single root-level Next.js 16 application; `apps/api` (NestJS), the empty
+  `packages/shared`, and the now-pointless `apps/web` monorepo wrapper have
+  all been deleted. Prisma called directly from Server Actions/Route
+  Handlers — no separate API layer.
 - Frozen-foundation Prisma schema kept as-is; two additive-only tables
   added: `Session` (staff auth) and `CustomerAccessToken` (future customer
   secure-access links).
@@ -32,7 +33,7 @@ below is real and working against the local database, not a mockup.
 
 ### Design system
 
-- Official brand tokens in `apps/web/src/app/globals.css`: `--primary`
+- Official brand tokens in `src/app/globals.css`: `--primary`
   (Electric Violet `#7c3aed`), `--primary-hover` (Deep Violet `#5b21b6`),
   graphite sidebar (`#111118`), soft-white background (`#f8f8fa`), silver
   borders (`#cbd5e1`), plus dedicated semantic tokens `--success`/
@@ -42,7 +43,7 @@ below is real and working against the local database, not a mockup.
 - Reusable components: `PageHeader`, `EmptyState`, `QuickAction`,
   `WorkflowStepper`, `WorkshopFlowRow`, `StatusTimeline`, `JobStatusBadge`
   (semantic colors), `MoneyDisplay`, `ConfirmAction`, `GlobalSearch` — all
-  under `apps/web/src/components/shared/` and `shell/`.
+  under `src/components/shared/` and `shell/`.
 - shadcn/base-ui primitives in use: Button, Input, Label, Table, Badge,
   Separator, Dialog, DropdownMenu, Skeleton.
 
@@ -147,10 +148,10 @@ external provider.
   (11 values). Per the "don't redesign the schema without a genuine
   blocker" rule, this phase maps the conceptual pipeline onto the existing
   enum rather than adding new values — see the mapping and rationale in
-  `apps/web/src/lib/workshop/stages.ts` and `job-status.ts`. Flag for
+  `src/lib/workshop/stages.ts` and `job-status.ts`. Flag for
   revisiting (as an additive schema change) if Phases 2/4 find it too
   coarse in practice.
-- **Turbopack is disabled on this dev machine**: `apps/web`'s `dev`/`build`
+- **Turbopack is disabled on this dev machine**: the app's `dev`/`build`
   scripts pass `--webpack`. This machine's Windows Application Control
   policy blocks the native `@next/swc-win32-x64-msvc` binary Turbopack
   needs; webpack produces identical output. Revisit if the policy changes
@@ -165,8 +166,8 @@ external provider.
 - `npx prisma migrate dev` — applied cleanly (additive-only) against local
   embedded PostgreSQL.
 - `npm run db:seed` — pass.
-- `npm run lint --workspace=apps/web` — pass, zero warnings/errors.
-- `npm run build --workspace=apps/web` — pass, every route compiles.
+- `npm run lint` — pass, zero warnings/errors.
+- `npm run build` — pass, every route compiles.
 - Manual dev-server walkthrough over HTTP with a real authenticated
   session: login redirect, dashboard (all sections render with live seeded
   data), Quick Check-In transaction logic (job numbering increments

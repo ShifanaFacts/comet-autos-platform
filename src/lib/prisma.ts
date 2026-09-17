@@ -13,7 +13,7 @@ function createPrismaClient() {
 }
 
 function throwMissingDatabaseUrl(): never {
-  throw new Error('DATABASE_URL is not set. Copy apps/web/.env.local.example to .env.local.');
+  throw new Error('DATABASE_URL is not set. Copy .env.example to .env and fill in real values.');
 }
 
 export const prisma = globalForPrisma.prisma ?? createPrismaClient();

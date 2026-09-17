@@ -14,12 +14,17 @@ import EmbeddedPostgres from 'embedded-postgres';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const databaseDir = path.join(__dirname, '..', '.local-postgres-data');
 const DEV_DATABASE_NAME = 'comet_autos_dev';
+// 5433, not the Postgres default 5432 — some dev machines already have a
+// system-wide PostgreSQL service bound to 5432, and freeing that requires
+// admin rights this script shouldn't assume. 5433 avoids the conflict
+// without touching anything outside this project.
+const PORT = 5433;
 
 const pg = new EmbeddedPostgres({
   databaseDir,
   user: 'postgres',
   password: 'postgres',
-  port: 5432,
+  port: PORT,
   persistent: true,
 });
 
@@ -33,7 +38,7 @@ if (command === 'start') {
   }
 
   await pg.start();
-  console.log('Local PostgreSQL is running on port 5432.');
+  console.log(`Local PostgreSQL is running on port ${PORT}.`);
 
   await pg.createDatabase(DEV_DATABASE_NAME).catch((error) => {
     if (!String(error?.message ?? error).includes('already exists')) {

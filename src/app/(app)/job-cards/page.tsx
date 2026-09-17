@@ -57,7 +57,7 @@ export default async function JobCardsPage({
         title="Job Cards"
         description={`${total} of ${unfilteredTotal} total`}
         actions={
-          <Button size="sm" render={<Link href="/check-in" />}>
+          <Button size="sm" nativeButton={false} render={<Link href="/check-in" />}>
             + Check In Vehicle
           </Button>
         }
@@ -78,7 +78,7 @@ export default async function JobCardsPage({
             title="No job cards yet"
             description="Check in a vehicle to create the first one."
             action={
-              <Button size="sm" render={<Link href="/check-in" />}>
+              <Button size="sm" nativeButton={false} render={<Link href="/check-in" />}>
                 Check In Vehicle
               </Button>
             }

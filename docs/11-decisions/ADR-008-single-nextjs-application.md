@@ -24,7 +24,7 @@ course cost nothing beyond documentation and wiring.
 
 ## Decision
 
-- **One deployable application**: Next.js (`apps/web`), using Server
+- **One deployable application**: Next.js (repo root), using Server
   Components, Server Actions, and Route Handlers for both UI and business
   logic.
 - Prisma is called directly from Server Actions/Route Handlers/Server
@@ -35,9 +35,9 @@ course cost nothing beyond documentation and wiring.
 - `apps/api` (NestJS) and `packages/shared` have been deleted. The Prisma
   schema (`prisma/schema.prisma`, unchanged in location and content except
   for additive-only changes — see PROJECT-STATUS.md) now generates its
-  client into `apps/web/src/generated/prisma`.
+  client into `src/generated/prisma`.
 - Business logic that would previously have lived in a NestJS service/module
-  now lives in plain TypeScript modules under `apps/web/src/lib/` (e.g.
+  now lives in plain TypeScript modules under `src/lib/` (e.g.
   `lib/auth/`, `lib/workshop/`), called directly from Server Actions —
   still centralized, still not duplicated per-caller, just without an HTTP
   hop in between.
@@ -60,7 +60,7 @@ course cost nothing beyond documentation and wiring.
   every Server Action/protected Server Component, mirroring what a NestJS
   guard would have enforced — see `docs/07-security/authorization.md`.
 - **If a real second client ever appears** (a native mobile app, a genuine
-  third-party integration), Route Handlers under `apps/web/src/app/api/`
+  third-party integration), Route Handlers under `src/app/api/`
   can expose exactly the endpoints that client needs at that time, reusing
   the same `lib/` business-service functions Server Actions already call —
   this decision does not foreclose that path, it just stops building for it

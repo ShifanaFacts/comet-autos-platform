@@ -3,7 +3,7 @@
 // local dev database — there is no production/CI wiring for this script.
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '../apps/web/src/generated/prisma/client.js';
+import { PrismaClient } from '../src/generated/prisma/client.js';
 import bcrypt from 'bcryptjs';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });

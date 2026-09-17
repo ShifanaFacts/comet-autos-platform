@@ -8,6 +8,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { GlobalSearch } from '@/components/shell/global-search';
+import { MobileNav } from '@/components/shell/mobile-nav';
 import { logout } from '@/lib/auth/logout-action';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 
@@ -22,8 +23,9 @@ function initials(fullName: string): string {
 
 export function Topbar({ user, branchName }: { user: AuthenticatedUser; branchName: string | null }) {
   return (
-    <header className="flex h-16 items-center gap-4 border-b border-border bg-background px-6">
-      <div className="flex-1">
+    <header className="relative z-10 flex h-16 items-center gap-3 border-b border-border bg-background px-4 shadow-sm sm:px-6">
+      <MobileNav />
+      <div className="min-w-0 flex-1">
         <GlobalSearch />
       </div>
 

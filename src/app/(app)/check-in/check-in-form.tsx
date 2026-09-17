@@ -44,8 +44,10 @@ export function CheckInForm() {
           <p className="mt-1 text-2xl font-semibold tracking-tight">{state.success.jobNumber}</p>
         </div>
         <div className="mt-2 flex gap-2">
-          <Button render={<Link href={`/job-cards/${state.success.jobCardId}`} />}>Open Job Card</Button>
-          <Button variant="outline" render={<Link href="/check-in" />}>
+          <Button nativeButton={false} render={<Link href={`/job-cards/${state.success.jobCardId}`} />}>
+            Open Job Card
+          </Button>
+          <Button variant="outline" nativeButton={false} render={<Link href="/check-in" />}>
             Check in another vehicle
           </Button>
         </div>

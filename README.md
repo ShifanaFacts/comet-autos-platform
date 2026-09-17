@@ -1,35 +1,32 @@
 # Comet Autos
 
-Workshop Management System for Comet Autos (Al Qusais, Dubai), built as the first
-tenant of a future multi-tenant SaaS platform.
+Workshop Management System for Comet Autos (Al Qusais, Dubai) — a dedicated
+internal application for one workshop, not a multi-tenant SaaS platform.
 
-This repository is currently at the **foundation stage**: monorepo scaffolding,
-tooling, and a health-checked connection between the web app and the API. No
-business modules (customers, vehicles, job cards, invoicing, etc.) exist yet.
-
-See [PROJECT-STATUS.md](./PROJECT-STATUS.md) for what has been built so far and
-[docs/08-architecture/architecture-principles.md](./docs/08-architecture/architecture-principles.md)
+See [PROJECT-STATUS.md](./PROJECT-STATUS.md) for what has been built so far
+and [docs/08-architecture/architecture-principles.md](./docs/08-architecture/architecture-principles.md)
 for the architectural rules this codebase follows.
 
 ## Architecture
 
 ```
-Browser → Next.js (apps/web) → NestJS REST API (apps/api) → Prisma → PostgreSQL
+Browser → Next.js (Server Components / Server Actions / Route Handlers) → Prisma → PostgreSQL
 ```
 
-- **apps/web** — Next.js + TypeScript presentation layer.
-- **apps/api** — NestJS + TypeScript application/API layer. Owns all database access.
-- **packages/shared** — TypeScript types/utilities shared between web and api.
-- **prisma/** — Prisma schema (source of truth for the database), owned by apps/api.
-- **docs/** — Business, architecture, and decision documentation.
+One deployable application. Prisma is called directly from Server
+Actions/Route Handlers — there is no separate API layer. See
+[ADR-008](./docs/11-decisions/ADR-008-single-nextjs-application.md).
 
-The Next.js app never talks to PostgreSQL or Prisma directly. See
-[ADR-007](./docs/11-decisions/ADR-007-nextjs-nestjs-separation.md) for why.
+- **src/** — the Next.js application: UI, Server Actions, Route Handlers,
+  and business logic (`src/lib/`).
+- **prisma/** — Prisma schema (source of truth for the database) and
+  migrations.
+- **docs/** — business, architecture, and decision documentation.
 
 ## Prerequisites
 
 - Node.js >= 20
-- npm >= 10 (this repo uses npm workspaces)
+- npm >= 10
 - A PostgreSQL database (local or cloud) — see below for a local option
 
 ## Getting started
@@ -38,13 +35,14 @@ The Next.js app never talks to PostgreSQL or Prisma directly. See
 npm install
 ```
 
-Copy the environment templates and fill in real values:
+Copy the environment template and fill in real values:
 
 ```bash
-cp .env.example .env                       # used by the Prisma CLI (root)
-cp apps/api/.env.example apps/api/.env      # used by the running API
-cp apps/web/.env.local.example apps/web/.env.local  # used by the running web app
+cp .env.example .env
 ```
+
+`.env` is read by both the Next.js server runtime and the Prisma CLI. Never
+commit it.
 
 ### Local PostgreSQL
 
@@ -55,63 +53,45 @@ development instance (a real native Postgres binary, not a system install):
 npm run db:start
 ```
 
-Leave this running in its own terminal. It listens on `localhost:5432` and
+Leave this running in its own terminal. It listens on `localhost:5433` and
 creates the `comet_autos_dev` database automatically. Data persists under
 `.local-postgres-data/` (gitignored) between restarts. Stop it with
 `npm run db:stop` (or Ctrl+C in its terminal). This is local-development-only
 tooling — production environments use a real managed PostgreSQL instance.
 
 If you have your own PostgreSQL (local install, Docker, or cloud), just point
-`DATABASE_URL` in `.env` and `apps/api/.env` at it instead and skip this step.
+`DATABASE_URL` in `.env` at it instead and skip this step.
 
-Generate the Prisma Client (no database models exist yet, but the client/config
-are already wired up):
+Generate the Prisma Client:
 
 ```bash
 npm run prisma:generate
 ```
 
-### Run the API (NestJS)
+### Run the app
 
 ```bash
-npm run dev:api
+npm run dev
 ```
 
-Runs on `http://localhost:3001` by default. Verify it's up:
-
-```bash
-curl http://localhost:3001/health
-```
-
-### Run the web app (Next.js)
-
-```bash
-npm run dev:web
-```
-
-Runs on `http://localhost:3000`. The home page performs a server-side fetch to
-the API's `/health` endpoint and shows whether the connection succeeded.
-
-## How Next.js talks to NestJS
-
-`apps/web/src/lib/api-client.ts` is a server-only HTTP client that reads the API's
-base URL from the `API_BASE_URL` environment variable (not exposed to the
-browser). Server Components and Server Actions call functions from this module
-to reach the NestJS REST API. Next.js does not import Prisma or connect to
-PostgreSQL directly — see
-[ADR-007](./docs/11-decisions/ADR-007-nextjs-nestjs-separation.md).
+Runs on `http://localhost:3000`. This starts the local Postgres instance (if
+nothing is already listening on port 5433) and the Next.js dev server
+together; use `npm run dev:web` to start only the Next.js dev server.
 
 ## Other scripts
 
-| Script                            | Description                          |
-| --------------------------------- | ------------------------------------ |
-| `npm run build:web` / `build:api` | Production build for each app        |
-| `npm run lint:web` / `lint:api`   | Lint each app                        |
-| `npm run format` / `format:check` | Prettier across the whole repo       |
-| `npm run prisma:validate`         | Validate `prisma/schema.prisma`      |
-| `npm run db:start` / `db:stop`    | Local embedded PostgreSQL (dev only) |
+| Script                     | Description                                  |
+| -------------------------- | --------------------------------------------- |
+| `npm run build`            | Production build                              |
+| `npm run start`            | Run the production build                      |
+| `npm run lint`              | Lint the app                                  |
+| `npm run format` / `format:check` | Prettier across the whole repo         |
+| `npm run prisma:validate`  | Validate `prisma/schema.prisma`               |
+| `npm run prisma:migrate`   | Run Prisma migrations in dev                  |
+| `npm run db:seed`          | Seed the database (`prisma/seed.ts`)          |
+| `npm run db:start` / `db:stop` | Local embedded PostgreSQL (dev only)      |
 
 ## Environment variables
 
-See `.env.example`, `apps/api/.env.example`, and `apps/web/.env.local.example`.
-Never commit `.env`, `.env.local`, or any file containing real credentials.
+See `.env.example`. Never commit `.env` or any file containing real
+credentials.

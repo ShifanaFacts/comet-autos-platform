@@ -1,6 +1,19 @@
 import Link from 'next/link';
 import { Suspense } from 'react';
-import { LogIn, ClipboardList, FileText, Receipt, ChevronRight, CheckCircle2, PackageCheck, Users2 } from 'lucide-react';
+import {
+  LogIn,
+  ClipboardList,
+  FileText,
+  Receipt,
+  ChevronRight,
+  CheckCircle2,
+  PackageCheck,
+  Users2,
+  Wallet,
+  HandCoins,
+  CircleAlert,
+  type LucideIcon,
+} from 'lucide-react';
 import { requireUser } from '@/lib/auth/authorize';
 import { getWorkshopFlow, getFinanceSnapshot, getLowStockParts } from '@/lib/data/dashboard';
 import { MoneyDisplay } from '@/components/shared/money-display';
@@ -29,11 +42,32 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-function StatTile({ label, value }: { label: string; value: ReactNode }) {
+const STAT_TONE = {
+  success: 'bg-success/10 text-success',
+  warning: 'bg-warning/10 text-warning',
+  neutral: 'bg-secondary text-muted-foreground',
+} as const;
+
+function StatTile({
+  label,
+  value,
+  icon: Icon,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: ReactNode;
+  icon: LucideIcon;
+  tone?: keyof typeof STAT_TONE;
+}) {
   return (
-    <div className="rounded-lg border border-border bg-card px-4 py-3">
-      <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{label}</p>
-      <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
+    <div className="min-w-0 rounded-lg border border-border bg-card px-4 py-3 shadow-sm">
+      <div className="flex items-center gap-2">
+        <span className={`flex size-7 shrink-0 items-center justify-center rounded-md ${STAT_TONE[tone]}`}>
+          <Icon className="size-4" />
+        </span>
+        <p className="truncate text-xs font-medium tracking-wide text-muted-foreground uppercase">{label}</p>
+      </div>
+      <p className="mt-2 truncate text-2xl font-semibold tabular-nums">{value}</p>
     </div>
   );
 }
@@ -64,7 +98,7 @@ export default async function DashboardPage() {
         <WorkshopOverview organizationId={user.organizationId} />
       </Suspense>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-2">
         <Suspense fallback={<FinanceSnapshotSkeleton />}>
           <FinanceSnapshotSection organizationId={user.organizationId} />
         </Suspense>
@@ -152,9 +186,24 @@ async function FinanceSnapshotSection({ organizationId }: { organizationId: stri
   return (
     <Section title="Finance snapshot">
       <div className="grid grid-cols-3 gap-3">
-        <StatTile label="Today's sales" value={<MoneyDisplay amount={finance.todaysSales} />} />
-        <StatTile label="Collections" value={<MoneyDisplay amount={finance.todaysCollections} />} />
-        <StatTile label="Outstanding" value={<MoneyDisplay amount={finance.customerOutstanding} />} />
+        <StatTile
+          label="Today's sales"
+          value={<MoneyDisplay amount={finance.todaysSales} />}
+          icon={Wallet}
+          tone="success"
+        />
+        <StatTile
+          label="Collections"
+          value={<MoneyDisplay amount={finance.todaysCollections} />}
+          icon={HandCoins}
+          tone="success"
+        />
+        <StatTile
+          label="Outstanding"
+          value={<MoneyDisplay amount={finance.customerOutstanding} />}
+          icon={CircleAlert}
+          tone="warning"
+        />
       </div>
     </Section>
   );

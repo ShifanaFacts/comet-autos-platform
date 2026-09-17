@@ -29,11 +29,11 @@ export function QuickAction({
   );
 
   const classes = cn(
-    'flex items-center gap-2 rounded-md border px-3.5 py-2 text-sm font-medium transition-colors',
+    'flex items-center gap-2 rounded-md border px-3.5 py-2 text-sm font-medium transition-all',
     primary
-      ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
+      ? 'border-primary bg-primary text-primary-foreground shadow-sm shadow-primary/30 hover:bg-primary-hover hover:shadow-md hover:shadow-primary/30'
       : 'border-border bg-card hover:bg-muted',
-    comingIn && 'pointer-events-none border-dashed text-muted-foreground opacity-70',
+    comingIn && 'pointer-events-none border-dashed text-muted-foreground opacity-70 shadow-none',
   );
 
   if (comingIn || !href) {

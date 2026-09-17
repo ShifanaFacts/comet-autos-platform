@@ -14,8 +14,8 @@ what you (the product owner) need to configure and when.
 | Provider | None — self-hosted. Passwords hashed with `bcryptjs`; sessions are random 256-bit tokens, only their SHA-256 hash stored in the `Session` table, delivered via an `httpOnly` cookie. |
 | Credentials | None to configure |
 | Environment variables | `DATABASE_URL` only (already required for everything) |
-| Where configured | `apps/web/.env.local` |
-| What's implemented | Login, logout, session validation, permission loading — see `apps/web/src/lib/auth/`. |
+| Where configured | `.env` |
+| What's implemented | Login, logout, session validation, permission loading — see `src/lib/auth/`. |
 | What you must configure | Nothing for V1. If a future phase adds SSO/2FA, that would be a new integration documented here first. |
 | Dev/mock behavior | Fully functional locally — no mocking needed, it's the real implementation. |
 | Production considerations | Set `NODE_ENV=production` so the session cookie gets `Secure`; serve over HTTPS. |
@@ -29,7 +29,7 @@ what you (the product owner) need to configure and when.
 | Provider options | Any SMTP-compatible provider, or a transactional API (e.g. Resend, SendGrid, AWS SES) |
 | Required credentials | API key or SMTP credentials, once a provider is chosen |
 | Environment variables | Not yet defined — will be added (e.g. `EMAIL_PROVIDER_API_KEY`) when this phase starts |
-| Where configured | `apps/web/.env.local` (dev), your hosting platform's env config (prod) |
+| Where configured | `.env` (dev), your hosting platform's env config (prod) |
 | What's implemented | Nothing yet. The eventual `NotificationService` (section 39) will define an `EmailNotificationProvider` interface so this can be swapped without touching call sites. |
 | What you must configure | Choose a provider and supply an API key when this phase starts — you'll be asked then. |
 | Dev/mock behavior | A dev provider that logs to the console instead of sending, so the flow is testable without real credentials. |
@@ -44,7 +44,7 @@ what you (the product owner) need to configure and when.
 | Provider options | Twilio, AWS SNS, or a UAE-local SMS gateway |
 | Required credentials | API key/account SID, once a provider is chosen |
 | Environment variables | Not yet defined |
-| Where configured | `apps/web/.env.local` (dev), hosting platform (prod) |
+| Where configured | `.env` (dev), hosting platform (prod) |
 | What's implemented | Nothing yet. |
 | What you must configure | Choose a provider and supply credentials when this phase starts. |
 | Dev/mock behavior | A fixed dev OTP (e.g. always `000000`, logged to the console) so the customer-facing flow is fully testable without a real SMS provider — the build instruction explicitly requires this. |
@@ -59,7 +59,7 @@ what you (the product owner) need to configure and when.
 | Provider options | WhatsApp Business Platform (Meta), or a BSP (e.g. Twilio, 360dialog) |
 | Required credentials | Business API access token, phone number ID |
 | Environment variables | Not yet defined |
-| Where configured | `apps/web/.env.local` (dev), hosting platform (prod) |
+| Where configured | `.env` (dev), hosting platform (prod) |
 | What's implemented | Nothing yet — `NotificationService`'s `WhatsAppNotificationProvider` interface (section 39) will make this a drop-in addition. |
 | What you must configure | Choose a provider and complete WhatsApp Business verification when you want this. |
 | Dev/mock behavior | Console-logging dev provider, same pattern as email. |
@@ -74,7 +74,7 @@ what you (the product owner) need to configure and when.
 | Provider options | Stripe, Telr, PayTabs, Network International (all common in the UAE) |
 | Required credentials | API keys, once a provider is chosen |
 | Environment variables | Not yet defined |
-| Where configured | `apps/web/.env.local` (dev), hosting platform (prod) |
+| Where configured | `.env` (dev), hosting platform (prod) |
 | What's implemented | Nothing. Invoices/payments are recorded manually by staff (cash/card/bank transfer/cheque) in V1. |
 | What you must configure | Nothing until you decide to add online payment. |
 | Dev/mock behavior | N/A |
@@ -89,7 +89,7 @@ what you (the product owner) need to configure and when.
 | Provider options | AWS S3, Cloudflare R2, Supabase Storage, Vercel Blob |
 | Required credentials | Access key/secret or API token, bucket name |
 | Environment variables | Not yet defined |
-| Where configured | `apps/web/.env.local` (dev), hosting platform (prod) |
+| Where configured | `.env` (dev), hosting platform (prod) |
 | What's implemented | Nothing yet — the `Document` model (metadata only) already exists in the schema, ready for this. |
 | What you must configure | Choose a provider and create a bucket when this phase starts. |
 | Dev/mock behavior | Local filesystem storage under a gitignored directory, for local development only. |

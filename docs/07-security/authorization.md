@@ -2,8 +2,8 @@
 
 Status: Phase 1 — describes schema-level guarantees and the backend
 enforcement layer that implements them. Enforcement lives in
-`apps/web/src/lib/auth/authorize.ts` (`requirePermission()`/
-`hasPermission()`), fed by `apps/web/src/lib/auth/session.ts`
+`src/lib/auth/authorize.ts` (`requirePermission()`/
+`hasPermission()`), fed by `src/lib/auth/session.ts`
 (`getCurrentUser()`), called from Server Actions and Server Components
 directly (there is no separate API service — see
 [ADR-008](../11-decisions/ADR-008-single-nextjs-application.md)). Every
@@ -76,7 +76,7 @@ branch-specific resource (e.g. a `JobCard`, `Appointment`, `Purchase`,
    as a genuinely nonexistent resource.
 
 This check is implemented once, in `requirePermission()`
-(`apps/web/src/lib/auth/authorize.ts`), not duplicated per Server Action.
+(`src/lib/auth/authorize.ts`), not duplicated per Server Action.
 `getCurrentUser()` (`lib/auth/session.ts`) loads the caller's effective
 grants — split into org-wide permission codes and a `Map<branchId, Set<code>>`
 of branch-scoped ones — once per request, and `requirePermission(user, code,
