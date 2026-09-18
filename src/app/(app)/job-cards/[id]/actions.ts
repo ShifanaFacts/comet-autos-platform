@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import type { JobCardStatus } from '@/generated/prisma/enums';
+import type { WorkflowStatus } from '@/lib/workshop/stages';
 import { prisma } from '@/lib/prisma';
 import { requireUser } from '@/lib/auth/authorize';
 import { runAction, toClientResult } from '@/lib/action';
@@ -19,7 +19,11 @@ import {
   reissueEstimateLink,
   reviseEstimate,
   recordCustomerDecision,
+  createAdditionalEstimate,
 } from '@/lib/workshop/estimates';
+import { recordLabour, recordPartUsage, startRepair } from '@/lib/workshop/repair';
+import { recordQualityCheck } from '@/lib/workshop/quality-check';
+import { createInvoice, deliverVehicle, recordPayment } from '@/lib/billing/invoice';
 import { customerQuotePath, getRequestOrigin } from '@/lib/request-origin';
 
 function refreshJob(jobCardId: string) {
@@ -28,7 +32,7 @@ function refreshJob(jobCardId: string) {
   revalidatePath('/');
 }
 
-export async function changeJobStatusAction(jobCardId: string, toStatus: JobCardStatus): Promise<ActionResult> {
+export async function changeJobStatusAction(jobCardId: string, toStatus: WorkflowStatus): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(async () => {
     await prisma.$transaction((tx) => transitionJobStatus(tx, user, jobCardId, toStatus));
@@ -150,5 +154,75 @@ export async function recordDecisionAction(
   const user = await requireUser();
   const result = await runAction(() => recordCustomerDecision(user, estimateId, formDataToObject(formData)));
   if (result.ok) refreshJob(jobCardId);
+  return toClientResult(result);
+}
+
+// ---------------------------------------------------------------------------
+// Repair → quality check
+// ---------------------------------------------------------------------------
+
+export async function startRepairAction(jobCardId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => startRepair(user, jobCardId));
+  if (result.ok) refreshJob(jobCardId);
+  return toClientResult(result);
+}
+
+export async function recordPartUsageAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => recordPartUsage(user, jobCardId, formDataToObject(formData)));
+  if (result.ok) refreshJob(jobCardId);
+  return toClientResult(result);
+}
+
+export async function recordLabourAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => recordLabour(user, jobCardId, formDataToObject(formData)));
+  if (result.ok) refreshJob(jobCardId);
+  return toClientResult(result);
+}
+
+export async function recordQualityCheckAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => recordQualityCheck(user, jobCardId, formDataToObject(formData)));
+  if (result.ok) refreshJob(jobCardId);
+  return toClientResult(result);
+}
+
+export async function createAdditionalEstimateAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => createAdditionalEstimate(user, jobCardId, formDataToObject(formData)));
+  if (!result.ok || !result.data) return toClientResult(result);
+  refreshJob(jobCardId);
+  redirect(`/job-cards/${jobCardId}/additional/${result.data.id}`);
+}
+
+// ---------------------------------------------------------------------------
+// Invoice → payment → delivery
+// ---------------------------------------------------------------------------
+
+function refreshFinance(jobCardId: string) {
+  refreshJob(jobCardId);
+  revalidatePath('/customers', 'layout');
+}
+
+export async function createInvoiceAction(jobCardId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => createInvoice(user, jobCardId));
+  if (result.ok) refreshFinance(jobCardId);
+  return toClientResult(result);
+}
+
+export async function recordPaymentAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => recordPayment(user, jobCardId, formDataToObject(formData)));
+  if (result.ok) refreshFinance(jobCardId);
+  return toClientResult(result);
+}
+
+export async function deliverVehicleAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => deliverVehicle(user, jobCardId, formDataToObject(formData)));
+  if (result.ok) refreshFinance(jobCardId);
   return toClientResult(result);
 }

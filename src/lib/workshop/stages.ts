@@ -4,58 +4,112 @@ import type { JobCardStatus } from '@/generated/prisma/enums';
 // can import this without pulling server-only code into the client bundle.
 // lib/workshop/job-status.ts re-exports these for server-side callers.
 
-const EXCEPTION_STATUSES: JobCardStatus[] = ['ON_HOLD', 'CANCELLED'];
+/** Statuses the application writes today. */
+export type WorkflowStatus = Exclude<
+  JobCardStatus,
+  'RECEIVED' | 'INSPECTING' | 'DIAGNOSED' | 'ESTIMATE_SENT' | 'IN_PROGRESS' | 'COMPLETED' | 'CLOSED'
+>;
+
+/**
+ * Legacy V1 statuses → their workflow equivalent. Live job cards were
+ * migrated off these; they only still appear in the append-only
+ * JobStatusHistory, which is read through this map.
+ */
+export const LEGACY_STATUS_MAP: Partial<Record<JobCardStatus, WorkflowStatus>> = {
+  RECEIVED: 'ARRIVED',
+  INSPECTING: 'INSPECTION',
+  DIAGNOSED: 'DIAGNOSIS',
+  ESTIMATE_SENT: 'WAITING_APPROVAL',
+  IN_PROGRESS: 'REPAIR',
+  COMPLETED: 'READY',
+  CLOSED: 'DELIVERED',
+};
+
+export function normalizeStatus(status: JobCardStatus): WorkflowStatus {
+  return LEGACY_STATUS_MAP[status] ?? (status as WorkflowStatus);
+}
 
 export interface WorkflowStage {
   key: string;
   label: string;
-  status: JobCardStatus;
+  status: WorkflowStatus;
 }
 
 /**
- * The ordered, non-exception path through the frozen JobCardStatus enum.
- *
- * Labels follow the workshop's vocabulary, not the enum names: the enum value
- * RECEIVED is shown as "Arrived" everywhere in the UI. The frozen schema has
- * no ARRIVED value, and adding one would be a schema change — see
- * PROJECT-STATUS.md "Decisions awaiting approval".
+ * The forward path shown by the stepper and the dashboard pipeline.
+ * REJECTED, ON_HOLD and CANCELLED are branches off this path, not steps on it.
  */
 export const WORKFLOW_STAGES: WorkflowStage[] = [
-  { key: 'received', label: 'Arrived', status: 'RECEIVED' },
-  { key: 'inspecting', label: 'Inspection', status: 'INSPECTING' },
-  { key: 'diagnosed', label: 'Diagnosis', status: 'DIAGNOSED' },
-  { key: 'estimate', label: 'Estimate', status: 'ESTIMATE_SENT' },
+  { key: 'arrived', label: 'Arrived', status: 'ARRIVED' },
+  { key: 'inspection', label: 'Inspection', status: 'INSPECTION' },
+  { key: 'diagnosis', label: 'Diagnosis', status: 'DIAGNOSIS' },
+  { key: 'estimate', label: 'Estimate', status: 'ESTIMATE' },
+  { key: 'waiting', label: 'Waiting approval', status: 'WAITING_APPROVAL' },
   { key: 'approved', label: 'Approved', status: 'APPROVED' },
-  { key: 'repair', label: 'In Repair', status: 'IN_PROGRESS' },
-  { key: 'completed', label: 'Completed', status: 'COMPLETED' },
+  { key: 'repair', label: 'Repair', status: 'REPAIR' },
+  { key: 'qc', label: 'Quality check', status: 'QUALITY_CHECK' },
+  { key: 'ready', label: 'Ready', status: 'READY' },
   { key: 'invoiced', label: 'Invoiced', status: 'INVOICED' },
-  { key: 'closed', label: 'Closed', status: 'CLOSED' },
+  { key: 'paid', label: 'Paid', status: 'PAID' },
+  { key: 'delivered', label: 'Delivered', status: 'DELIVERED' },
 ];
 
-export const JOB_STATUS_LABEL: Record<JobCardStatus, string> = {
-  RECEIVED: 'Arrived',
-  INSPECTING: 'In inspection',
-  DIAGNOSED: 'Diagnosed',
-  ESTIMATE_SENT: 'Waiting approval',
+const WORKFLOW_LABEL: Record<WorkflowStatus, string> = {
+  ARRIVED: 'Arrived',
+  INSPECTION: 'In inspection',
+  DIAGNOSIS: 'Diagnosed',
+  ESTIMATE: 'Estimate in progress',
+  WAITING_APPROVAL: 'Waiting approval',
   APPROVED: 'Approved',
-  IN_PROGRESS: 'In repair',
-  ON_HOLD: 'On hold',
-  COMPLETED: 'Completed',
+  REJECTED: 'Estimate rejected',
+  REPAIR: 'In repair',
+  QUALITY_CHECK: 'Quality check',
+  READY: 'Ready for collection',
   INVOICED: 'Invoiced',
-  CLOSED: 'Closed',
+  PAID: 'Paid',
+  DELIVERED: 'Delivered',
+  ON_HOLD: 'On hold',
   CANCELLED: 'Cancelled',
 };
 
+/** Labels for every enum value, legacy ones shown as their workflow equivalent. */
+export const JOB_STATUS_LABEL: Record<JobCardStatus, string> = {
+  ...WORKFLOW_LABEL,
+  RECEIVED: WORKFLOW_LABEL.ARRIVED,
+  INSPECTING: WORKFLOW_LABEL.INSPECTION,
+  DIAGNOSED: WORKFLOW_LABEL.DIAGNOSIS,
+  ESTIMATE_SENT: WORKFLOW_LABEL.WAITING_APPROVAL,
+  IN_PROGRESS: WORKFLOW_LABEL.REPAIR,
+  COMPLETED: WORKFLOW_LABEL.READY,
+  CLOSED: WORKFLOW_LABEL.DELIVERED,
+};
+
+/** A job is "in the workshop" until it is delivered or cancelled. */
+export const CLOSED_JOB_STATUSES: JobCardStatus[] = ['DELIVERED', 'CANCELLED', 'CLOSED'];
+
+const OFF_PATH: JobCardStatus[] = ['ON_HOLD', 'CANCELLED', 'REJECTED'];
+
 /**
- * The stage a job "is at" for the stepper, even while ON_HOLD/CANCELLED —
- * those don't have their own stepper position, so this walks the status
- * history (most-recent first) to find the last real stage it was in.
+ * The forward-path stage a job "is at" for the stepper. ON_HOLD, CANCELLED
+ * and REJECTED have no stepper position, so this walks the status history
+ * (most-recent first) to the last on-path stage. Legacy history values are
+ * normalized.
  */
 export function getEffectiveStageStatus(
   currentStatus: JobCardStatus,
   history: { toStatus: JobCardStatus }[],
-): JobCardStatus {
-  if (!EXCEPTION_STATUSES.includes(currentStatus)) return currentStatus;
-  const lastRealStage = history.find((entry) => !EXCEPTION_STATUSES.includes(entry.toStatus));
-  return lastRealStage?.toStatus ?? 'RECEIVED';
+): WorkflowStatus {
+  const current = normalizeStatus(currentStatus);
+  if (current === 'REJECTED') return 'WAITING_APPROVAL';
+  if (!OFF_PATH.includes(current)) return current;
+  const lastOnPath = history.map((entry) => normalizeStatus(entry.toStatus)).find((s) => !OFF_PATH.includes(s));
+  return lastOnPath ?? 'ARRIVED';
+}
+
+/** Where an ON_HOLD job resumes: the last status it held before the hold (REJECTED included). */
+export function getResumeTarget(history: { toStatus: JobCardStatus }[]): WorkflowStatus {
+  const last = history
+    .map((entry) => normalizeStatus(entry.toStatus))
+    .find((s) => s !== 'ON_HOLD' && s !== 'CANCELLED');
+  return last ?? 'ARRIVED';
 }

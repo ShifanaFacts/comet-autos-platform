@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Field, FormError } from '@/components/forms/fields';
 import { ConfirmAction } from '@/components/shared/confirm-action';
-import { calculateLine, calculateTotals, DEFAULT_VAT_RATE, type LineAmounts } from '@/lib/money';
+import { calculateLine, calculateTotals, type LineAmounts } from '@/lib/money';
 import { formatMoney } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { saveAndSendEstimateAction, saveEstimateDraftAction } from '../actions';
@@ -23,22 +23,25 @@ export interface DraftLine {
   taxRate: string;
 }
 
-function tryLine(line: DraftLine): LineAmounts | null {
+function tryLine(line: DraftLine, defaultVatRate: string): LineAmounts | null {
   try {
-    return calculateLine({ quantity: line.quantity, unitPrice: line.unitPrice, taxRate: line.taxRate || DEFAULT_VAT_RATE });
+    return calculateLine({ quantity: line.quantity, unitPrice: line.unitPrice, taxRate: line.taxRate || defaultVatRate });
   } catch {
     return null;
   }
 }
 
+/** "5.00" → "5" for display in the rate input. */
+const trimRate = (rate: string) => (rate.includes('.') ? rate.replace(/\.?0+$/, '') : rate);
+
 let counter = 0;
-const newLine = (itemType: DraftLine['itemType']): DraftLine => ({
+const newLine = (itemType: DraftLine['itemType'], defaultVatRate: string): DraftLine => ({
   key: `new-${Date.now()}-${counter++}`,
   itemType,
   description: '',
   quantity: '1',
   unitPrice: '',
-  taxRate: '5',
+  taxRate: trimRate(defaultVatRate),
 });
 
 export function EstimateBuilder({
@@ -49,6 +52,7 @@ export function EstimateBuilder({
   minValidUntil,
   recommendation,
   customerName,
+  defaultVatRate,
 }: {
   jobCardId: string;
   estimateId: string;
@@ -57,16 +61,18 @@ export function EstimateBuilder({
   minValidUntil: string;
   recommendation: string | null;
   customerName: string;
+  /** Organization default VAT rate, from lib/tax.ts on the server. */
+  defaultVatRate: string;
 }) {
   const router = useRouter();
-  const [lines, setLines] = useState<DraftLine[]>(initialLines.length > 0 ? initialLines : [newLine('LABOUR')]);
+  const [lines, setLines] = useState<DraftLine[]>(initialLines.length > 0 ? initialLines : [newLine('LABOUR', defaultVatRate)]);
   const [validUntil, setValidUntil] = useState(initialValidUntil);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
   const [pending, setPending] = useState<'save' | 'send' | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const priced = useMemo(() => lines.map((line) => ({ line, amounts: tryLine(line) })), [lines]);
+  const priced = useMemo(() => lines.map((line) => ({ line, amounts: tryLine(line, defaultVatRate) })), [lines, defaultVatRate]);
   const totals = useMemo(
     () => calculateTotals(priced.flatMap((p) => (p.amounts ? [p.amounts] : []))),
     [priced],
@@ -136,7 +142,7 @@ export function EstimateBuilder({
               <group.icon className="size-4 text-muted-foreground" />
               {group.title}
             </h2>
-            <Button type="button" variant="outline" onClick={() => setLines((current) => [...current, newLine(group.type)])}>
+            <Button type="button" variant="outline" onClick={() => setLines((current) => [...current, newLine(group.type, defaultVatRate)])}>
               <Plus />
               Add {group.type === 'LABOUR' ? 'labour' : 'part'}
             </Button>

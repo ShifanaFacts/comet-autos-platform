@@ -12,6 +12,8 @@ import { EstimateStatusPill } from '@/components/workshop/status-pills';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LinkButton } from '@/components/shared/link-button';
 import { cn } from '@/lib/utils';
+import { resolveDefaultVatRate } from '@/lib/tax';
+import { EstimateLines, trimQuantity } from '@/components/workshop/estimate-lines';
 import { EstimateBuilder } from './estimate-builder';
 import { CreateEstimateButton, NewLinkButton, RecordDecisionForm, ReviseEstimateButton } from './estimate-controls';
 
@@ -20,7 +22,8 @@ const METHOD_LABEL: Record<ApprovalMethod, string> = {
   PHONE: 'by phone',
   EMAIL: 'by email',
   SMS: 'by SMS / WhatsApp',
-  DIGITAL_SIGNATURE: 'through the secure online link',
+  DIGITAL_SIGNATURE: 'by signature',
+  ONLINE: 'online, on the secure quotation link',
 };
 
 export default async function EstimatePage({
@@ -40,9 +43,10 @@ export default async function EstimatePage({
     if (error instanceof NotFoundError) notFound();
     throw error;
   }
-  const { jobCard, diagnosis, estimate: latest } = workspace;
+  const { jobCard, status, diagnosis, estimate: latest } = workspace;
   const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
   const customer = jobCard.vehicle.customer;
+  const defaultVatRate = resolveDefaultVatRate(user.organizationId);
 
   const shown = version ? (jobCard.estimates.find((e) => String(e.version) === version) ?? latest) : latest;
   const isLatest = shown?.id === latest?.id;
@@ -56,7 +60,7 @@ export default async function EstimatePage({
       <JobContextHeader jobCard={jobCard} section="Estimate" />
 
       {!shown ? (
-        jobCard.status === 'DIAGNOSED' && canEdit ? (
+        status === 'DIAGNOSIS' && canEdit ? (
           <Section title="Create the estimate" description="Price the recommended work with labour and parts. VAT is calculated per line.">
             <Panel className="flex flex-col gap-6 sm:p-8">
               {diagnosis ? (
@@ -111,6 +115,7 @@ export default async function EstimatePage({
                   recommendation={diagnosis?.recommendedAction ?? null}
                   initialValidUntil={shown.validUntil ? shown.validUntil.toISOString().slice(0, 10) : localDateString()}
                   minValidUntil={localDateString()}
+                  defaultVatRate={defaultVatRate}
                   initialLines={shown.items
                     .filter((item) => item.itemType !== 'OTHER')
                     .map((item) => ({
@@ -119,7 +124,7 @@ export default async function EstimatePage({
                       description: item.description,
                       quantity: trimQuantity(item.quantity.toString()),
                       unitPrice: item.unitPrice.toString(),
-                      taxRate: trimQuantity(item.taxRate?.toString() ?? '5'),
+                      taxRate: trimQuantity(item.taxRate?.toString() ?? defaultVatRate),
                     }))}
                 />
               </Panel>
@@ -139,16 +144,26 @@ export default async function EstimatePage({
                   <p className={cn('text-lg font-semibold', shown.approvals[0].status === 'APPROVED' ? 'text-success' : 'text-danger')}>
                     {shown.approvals[0].status === 'APPROVED' ? 'Approved' : 'Rejected'}
                   </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {formatDateTime(shown.approvals[0].createdAt)}, {METHOD_LABEL[shown.approvals[0].approvalMethod]}
-                    {shown.approvals[0].approvalMethod === 'DIGITAL_SIGNATURE'
-                      ? ` (link issued by ${shown.approvals[0].recordedBy.fullName})`
-                      : ` · recorded by ${shown.approvals[0].recordedBy.fullName}`}
-                  </p>
+                  <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2 text-sm">
+                    <dt className="text-muted-foreground">Decided by</dt>
+                    <dd>{shown.approvals[0].customer.name} (customer)</dd>
+                    <dt className="text-muted-foreground">How</dt>
+                    <dd>{METHOD_LABEL[shown.approvals[0].approvalMethod]}</dd>
+                    <dt className="text-muted-foreground">When</dt>
+                    <dd>{formatDateTime(shown.approvals[0].decidedAt)}</dd>
+                    <dt className="text-muted-foreground">Quotation sent by</dt>
+                    <dd>{shown.sentBy?.fullName ?? '—'}</dd>
+                    {shown.approvals[0].recordedBy ? (
+                      <>
+                        <dt className="text-muted-foreground">Recorded by</dt>
+                        <dd>{shown.approvals[0].recordedBy.fullName}</dd>
+                      </>
+                    ) : null}
+                  </dl>
                   {shown.approvals[0].notes ? (
                     <p className="mt-4 border-t border-border pt-4 text-sm whitespace-pre-wrap">“{shown.approvals[0].notes}”</p>
                   ) : null}
-                  {shown.status === 'REJECTED' && isLatest && canEdit && jobCard.status === 'ESTIMATE_SENT' ? (
+                  {shown.status === 'REJECTED' && isLatest && canEdit && status === 'REJECTED' ? (
                     <div className="mt-6">
                       <ReviseEstimateButton jobCardId={jobCard.id} estimateId={shown.id} variant="default" />
                     </div>
@@ -169,7 +184,7 @@ export default async function EstimatePage({
                 >
                   <Panel className="flex flex-col gap-4">
                     {!expired ? <NewLinkButton jobCardId={jobCard.id} estimateId={shown.id} customerName={customer.name} /> : null}
-                    {jobCard.status === 'ESTIMATE_SENT' ? <ReviseEstimateButton jobCardId={jobCard.id} estimateId={shown.id} /> : null}
+                    {status === 'WAITING_APPROVAL' ? <ReviseEstimateButton jobCardId={jobCard.id} estimateId={shown.id} /> : null}
                   </Panel>
                 </Section>
                 {!expired ? (
@@ -214,59 +229,5 @@ export default async function EstimatePage({
         </Grid>
       )}
     </Stack>
-  );
-}
-
-function trimQuantity(value: string): string {
-  return value.includes('.') ? value.replace(/\.?0+$/, '') : value;
-}
-
-function EstimateLines({ estimate }: { estimate: NonNullable<JobWorkspace['estimate']> }) {
-  const groups = [
-    { title: 'Labour', items: estimate.items.filter((i) => i.itemType === 'LABOUR'), qty: 'Hours' },
-    { title: 'Parts', items: estimate.items.filter((i) => i.itemType !== 'LABOUR'), qty: 'Qty' },
-  ].filter((group) => group.items.length > 0);
-
-  return (
-    <Panel padding="none" className="overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] text-sm">
-          {groups.map((group) => (
-            <tbody key={group.title} className="border-b border-border">
-              <tr className="bg-muted/40 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                <th className="px-4 py-3 pl-6">{group.title}</th>
-                <th className="w-20 px-2 py-3 text-right">{group.qty}</th>
-                <th className="w-32 px-2 py-3 text-right">Price</th>
-                <th className="w-20 px-2 py-3 text-right">VAT</th>
-                <th className="w-32 px-4 py-3 pr-6 text-right">Amount</th>
-              </tr>
-              {group.items.map((item) => (
-                <tr key={item.id} className="border-t border-border">
-                  <td className="px-4 py-3 pl-6">{item.description}</td>
-                  <td className="px-2 py-3 text-right tabular-nums">{trimQuantity(item.quantity.toString())}</td>
-                  <td className="px-2 py-3 text-right tabular-nums">{formatMoney(item.unitPrice)}</td>
-                  <td className="px-2 py-3 text-right text-muted-foreground tabular-nums">{trimQuantity(item.taxRate?.toString() ?? '0')}%</td>
-                  <td className="px-4 py-3 pr-6 text-right font-medium tabular-nums">{formatMoney(item.lineTotal)}</td>
-                </tr>
-              ))}
-            </tbody>
-          ))}
-        </table>
-      </div>
-      <dl className="ml-auto flex w-full flex-col gap-3 px-4 py-6 text-sm sm:w-96 sm:px-6">
-        <div className="flex justify-between">
-          <dt className="text-muted-foreground">Subtotal</dt>
-          <dd className="tabular-nums">{formatMoney(estimate.subtotal)}</dd>
-        </div>
-        <div className="flex justify-between">
-          <dt className="text-muted-foreground">VAT</dt>
-          <dd className="tabular-nums">{formatMoney(estimate.taxAmount)}</dd>
-        </div>
-        <div className="flex justify-between border-t border-border pt-3 text-base font-semibold">
-          <dt>Total</dt>
-          <dd className="tabular-nums">{formatMoney(estimate.totalAmount)}</dd>
-        </div>
-      </dl>
-    </Panel>
   );
 }

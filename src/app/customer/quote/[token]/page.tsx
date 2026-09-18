@@ -83,12 +83,15 @@ export default async function CustomerQuotePage({ params }: { params: Promise<{ 
       <div className="flex flex-col gap-10">
         <header className="flex flex-col gap-4">
           <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-            Quotation {quote.estimateNumber}
+            {quote.kind === 'ADDITIONAL' ? 'Additional work ' : 'Quotation '}
+            {quote.estimateNumber}
             {quote.sentAt ? ` · ${formatCalendarDate(quote.sentAt)}` : ''}
           </p>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Hello {vehicle.customer.name},</h1>
           <p className="text-muted-foreground">
-            Here is the work we recommend for your vehicle. Please review it and let us know if we can go ahead.
+            {quote.kind === 'ADDITIONAL'
+              ? 'While repairing your vehicle we found more work that needs doing. It is not included in the work you already approved — please review it and let us know if we should go ahead.'
+              : 'Here is the work we recommend for your vehicle. Please review it and let us know if we can go ahead.'}
           </p>
           <div className="flex items-center gap-4 rounded-xl border border-border bg-card p-4">
             <VehiclePlate plateNumber={vehicle.plateNumber} />
@@ -121,7 +124,7 @@ export default async function CustomerQuotePage({ params }: { params: Promise<{ 
                 {decision.status === 'APPROVED' ? 'You approved this quotation' : 'You declined this quotation'}
               </p>
               <p className="text-sm text-muted-foreground">
-                {formatDateTime(decision.createdAt)}.{' '}
+                {formatDateTime(decision.decidedAt)}.{' '}
                 {decision.status === 'APPROVED'
                   ? "Thank you — we'll get started and keep you updated."
                   : "We've let the workshop know. They may contact you with other options."}
@@ -130,11 +133,17 @@ export default async function CustomerQuotePage({ params }: { params: Promise<{ 
           </div>
         ) : null}
 
-        <QuoteSection title="Work requested">
-          <p className="whitespace-pre-wrap">{jobCard.customerComplaint ?? '—'}</p>
-        </QuoteSection>
+        {quote.kind === 'ADDITIONAL' ? (
+          <QuoteSection title="What we found during the repair">
+            <p className="whitespace-pre-wrap">{quote.notes}</p>
+          </QuoteSection>
+        ) : (
+          <QuoteSection title="Work requested">
+            <p className="whitespace-pre-wrap">{jobCard.customerComplaint ?? '—'}</p>
+          </QuoteSection>
+        )}
 
-        {inspection && (inspection.items.length > 0 || inspection.summary) ? (
+        {quote.kind === 'ORIGINAL' && inspection && (inspection.items.length > 0 || inspection.summary) ? (
           <QuoteSection title="What our technician found">
             <div className="flex flex-col gap-4">
               {inspection.summary ? <p className="whitespace-pre-wrap">{inspection.summary}</p> : null}
@@ -162,7 +171,7 @@ export default async function CustomerQuotePage({ params }: { params: Promise<{ 
           </QuoteSection>
         ) : null}
 
-        {jobCard.diagnoses[0]?.recommendedAction ? (
+        {quote.kind === 'ORIGINAL' && jobCard.diagnoses[0]?.recommendedAction ? (
           <QuoteSection title="Our recommendation">
             <p className="whitespace-pre-wrap">{jobCard.diagnoses[0].recommendedAction}</p>
           </QuoteSection>

@@ -5,8 +5,7 @@
  * strings, which it stores in Decimal(14,2) / Decimal(12,3) columns exactly.
  */
 
-/** UAE standard VAT rate, applied as the default per line. */
-export const DEFAULT_VAT_RATE = '5.00';
+// No default VAT rate lives here: callers always pass the rate (see lib/tax.ts).
 
 function parseScaled(value: string | number, scale: number, label: string): number {
   const text = String(value).trim();
@@ -83,4 +82,42 @@ export function calculateTotals(lines: LineAmounts[]) {
     taxAmount: filsToString(tax),
     totalAmount: filsToString(subtotal + tax),
   };
+}
+
+/**
+ * Billable labour: hours (2 decimals) × hourly rate, rounded half-up to the
+ * fil. Always computed on the server — a total sent from the browser is
+ * never trusted.
+ */
+export function calculateLabour(input: { hours: string; rate: string }) {
+  const hundredthHours = parseScaled(input.hours, 2, 'Hours');
+  const rateFils = toFils(input.rate, 'Rate');
+  if (hundredthHours === 0) throw new Error('Hours must be greater than zero.');
+  const amountFils = divRound(hundredthHours * rateFils, 100);
+  return {
+    hours: filsToString(hundredthHours),
+    rate: filsToString(rateFils),
+    amount: filsToString(amountFils),
+    amountFils,
+  };
+}
+
+/** Quantity (3 decimals) × unit price, rounded half-up to the fil. */
+export function multiplyQuantity(quantity: string, unitPrice: string): number {
+  return divRound(toMilli(quantity) * toFils(unitPrice, 'Price'), 1000);
+}
+
+/** A signed decimal string ("-2.500", "12") → integer thousandths. */
+export function signedToMilli(value: { toString(): string } | null | undefined): number {
+  const text = (value ?? '0').toString().trim();
+  const negative = text.startsWith('-');
+  const milli = toMilli(negative ? text.slice(1) : text);
+  return negative ? -milli : milli;
+}
+
+/** Integer thousandths → a trimmed decimal string for display ("2.5", "12"). */
+export function formatMilli(milli: number): string {
+  const sign = milli < 0 ? '-' : '';
+  const text = milliToString(Math.abs(milli));
+  return sign + (text.includes('.') ? text.replace(/\.?0+$/, '') : text);
 }

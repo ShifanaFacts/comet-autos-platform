@@ -5,103 +5,115 @@ import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import {
+  CLOSED_JOB_STATUSES,
   JOB_STATUS_LABEL,
   WORKFLOW_STAGES,
   getEffectiveStageStatus,
+  getResumeTarget,
+  normalizeStatus,
   type WorkflowStage,
+  type WorkflowStatus,
 } from '@/lib/workshop/stages';
 
-export { WORKFLOW_STAGES, JOB_STATUS_LABEL, getEffectiveStageStatus };
-export type { WorkflowStage };
+export { WORKFLOW_STAGES, JOB_STATUS_LABEL, CLOSED_JOB_STATUSES, getEffectiveStageStatus, normalizeStatus };
+export type { WorkflowStage, WorkflowStatus };
 
 /**
- * The job card state machine over the frozen JobCardStatus enum.
+ * The job card state machine.
  *
- * Conceptual workshop stage → enum value:
- *   ARRIVED            → RECEIVED
- *   INSPECTION         → INSPECTING
- *   DIAGNOSIS          → DIAGNOSED
- *   ESTIMATE / WAITING_APPROVAL → ESTIMATE_SENT (draft estimates exist while DIAGNOSED)
- *   APPROVED           → APPROVED
- *   REJECTED           → stays ESTIMATE_SENT; the latest Estimate is REJECTED (revise or cancel)
- *   REPAIR             → IN_PROGRESS
- *   QUALITY_CHECK/READY → COMPLETED
- *   INVOICED           → INVOICED
- *   PAID / DELIVERED   → CLOSED
- * No status outside the enum is ever written.
+ *   ARRIVED → INSPECTION → DIAGNOSIS → ESTIMATE → WAITING_APPROVAL
+ *     → APPROVED → REPAIR → QUALITY_CHECK → READY → INVOICED → PAID → DELIVERED
+ *     → REJECTED → ESTIMATE (revise) …
+ *   QUALITY_CHECK → REPAIR (failed check)
+ *   WAITING_APPROVAL → ESTIMATE (revise before the customer answers)
+ *   any open stage → ON_HOLD → back to where it paused; → CANCELLED
+ *
+ * Legacy statuses (RECEIVED, INSPECTING, …) are never written; a job still
+ * carrying one is treated as its workflow equivalent.
  */
-const ALLOWED_TRANSITIONS: Record<JobCardStatus, JobCardStatus[]> = {
-  RECEIVED: ['INSPECTING', 'ON_HOLD', 'CANCELLED'],
-  INSPECTING: ['DIAGNOSED', 'ON_HOLD', 'CANCELLED'],
-  DIAGNOSED: ['ESTIMATE_SENT', 'ON_HOLD', 'CANCELLED'],
-  ESTIMATE_SENT: ['APPROVED', 'ON_HOLD', 'CANCELLED'],
-  APPROVED: ['IN_PROGRESS', 'ON_HOLD', 'CANCELLED'],
-  IN_PROGRESS: ['COMPLETED', 'ON_HOLD', 'CANCELLED'],
-  ON_HOLD: ['RECEIVED', 'INSPECTING', 'DIAGNOSED', 'ESTIMATE_SENT', 'APPROVED', 'IN_PROGRESS', 'CANCELLED'],
-  COMPLETED: ['INVOICED'],
-  INVOICED: ['CLOSED'],
-  CLOSED: [],
+const ALLOWED_TRANSITIONS: Record<WorkflowStatus, WorkflowStatus[]> = {
+  ARRIVED: ['INSPECTION', 'ON_HOLD', 'CANCELLED'],
+  INSPECTION: ['DIAGNOSIS', 'ON_HOLD', 'CANCELLED'],
+  DIAGNOSIS: ['ESTIMATE', 'ON_HOLD', 'CANCELLED'],
+  ESTIMATE: ['WAITING_APPROVAL', 'ON_HOLD', 'CANCELLED'],
+  WAITING_APPROVAL: ['APPROVED', 'REJECTED', 'ESTIMATE', 'ON_HOLD', 'CANCELLED'],
+  REJECTED: ['ESTIMATE', 'ON_HOLD', 'CANCELLED'],
+  APPROVED: ['REPAIR', 'ON_HOLD', 'CANCELLED'],
+  REPAIR: ['QUALITY_CHECK', 'ON_HOLD', 'CANCELLED'],
+  QUALITY_CHECK: ['READY', 'REPAIR', 'ON_HOLD', 'CANCELLED'],
+  READY: ['INVOICED', 'ON_HOLD'],
+  INVOICED: ['PAID'],
+  PAID: ['DELIVERED'],
+  DELIVERED: [],
+  ON_HOLD: ['ARRIVED', 'INSPECTION', 'DIAGNOSIS', 'ESTIMATE', 'WAITING_APPROVAL', 'REJECTED', 'APPROVED', 'REPAIR', 'QUALITY_CHECK', 'READY', 'CANCELLED'],
   CANCELLED: [],
 };
 
 /**
- * Transitions that are the *result* of recording workflow evidence and must
- * never be clicked through manually: a job only enters inspection when an
- * inspection is started, is only diagnosed when a diagnosis is recorded, is
- * only waiting approval when an estimate is sent, and is only approved when
- * an approval is recorded.
+ * Transitions that only happen as the result of recording workflow evidence
+ * — never by clicking a status button: the job enters inspection when an
+ * inspection is started, diagnosis when a diagnosis is recorded, and so on.
  */
-const WORKFLOW_OWNED: Partial<Record<JobCardStatus, string>> = {
-  INSPECTING: 'Start the inspection to move this job into inspection.',
-  DIAGNOSED: 'Record the diagnosis to move this job forward.',
-  ESTIMATE_SENT: 'Send an estimate to the customer to move this job forward.',
+const WORKFLOW_OWNED: Partial<Record<WorkflowStatus, string>> = {
+  INSPECTION: 'Start the inspection to move this job into inspection.',
+  DIAGNOSIS: 'Record the diagnosis to move this job forward.',
+  ESTIMATE: 'Create or revise the estimate to move this job forward.',
+  WAITING_APPROVAL: 'Send the estimate to the customer to move this job forward.',
   APPROVED: 'Record the customer approval to move this job forward.',
+  REJECTED: "Record the customer's rejection to move this job forward.",
+  REPAIR: 'Start the repair from the approved work.',
+  QUALITY_CHECK: 'Record the quality check to move this job forward.',
+  READY: 'A job is only ready once it passes the quality check.',
+  INVOICED: 'Create the invoice to move this job forward.',
+  PAID: 'A job is paid once its invoice is fully settled.',
+  DELIVERED: 'Record the delivery to hand the vehicle back.',
 };
 
-const EXCEPTION_STATUSES: JobCardStatus[] = ['ON_HOLD', 'CANCELLED'];
+const EXCEPTION_STATUSES: WorkflowStatus[] = ['ON_HOLD', 'CANCELLED'];
 
 export class InvalidJobStatusTransitionError extends DomainError {}
 
-export function getAllowedNextStatuses(status: JobCardStatus): JobCardStatus[] {
-  return ALLOWED_TRANSITIONS[status];
+export function getAllowedNextStatuses(status: JobCardStatus): WorkflowStatus[] {
+  return ALLOWED_TRANSITIONS[normalizeStatus(status)];
 }
 
-export function canTransition(from: JobCardStatus, to: JobCardStatus): boolean {
-  return ALLOWED_TRANSITIONS[from].includes(to);
+export function canTransition(from: JobCardStatus, to: WorkflowStatus): boolean {
+  return getAllowedNextStatuses(from).includes(to);
 }
 
-/** The forward transition a user may apply manually from this status (post-approval stages only). */
-export function getManualForwardStatus(status: JobCardStatus): JobCardStatus | null {
-  const forward = ALLOWED_TRANSITIONS[status].find((s) => !EXCEPTION_STATUSES.includes(s));
+/** The forward step a user may apply with a button (post-approval stages until they get their own screens). */
+export function getManualForwardStatus(status: JobCardStatus): WorkflowStatus | null {
+  const forward = getAllowedNextStatuses(status).find((s) => !EXCEPTION_STATUSES.includes(s));
   if (!forward || WORKFLOW_OWNED[forward]) return null;
   return forward;
 }
 
-export function getSecondaryNextStatuses(status: JobCardStatus): JobCardStatus[] {
-  return ALLOWED_TRANSITIONS[status].filter((s) => EXCEPTION_STATUSES.includes(s));
+export function getSecondaryNextStatuses(status: JobCardStatus): WorkflowStatus[] {
+  return getAllowedNextStatuses(status).filter((s) => EXCEPTION_STATUSES.includes(s));
 }
 
 export type TransitionSource = 'manual' | 'workflow';
 
 /**
+ * Who caused a status change. A staff user for everything done inside the
+ * workshop app; the customer when their own online decision on the secure
+ * quotation link moved the job. Never both — enforced by a CHECK constraint.
+ */
+export type StatusActor = { userId: string } | { customerId: string };
+
+/**
  * Applies a status change with its history row and audit entry, in the
  * caller's transaction. Locks the job card row first, so two concurrent
  * changes can't both read the same "from" status.
- *
- * `actorUserId` is the user the change is attributed to. For customer
- * decisions made through a secure link it is the staff member who issued
- * that link (JobStatusHistory.changedByUserId is required by the schema);
- * the audit entry's metadata records that the customer made the decision.
  */
 export async function applyJobStatusChange(
   tx: Prisma.TransactionClient,
   params: {
     organizationId: string;
     jobCardId: string;
-    toStatus: JobCardStatus;
-    actorUserId: string;
+    toStatus: WorkflowStatus;
+    actor: StatusActor;
     source: TransitionSource;
-    auditActorUserId?: string | null;
     metadata?: Record<string, unknown>;
   },
 ): Promise<{ fromStatus: JobCardStatus }> {
@@ -113,22 +125,22 @@ export async function applyJobStatusChange(
   if (!jobCard) throw new NotFoundError('job card');
 
   const { toStatus } = params;
-  if (!canTransition(jobCard.status, toStatus)) {
+  const from = normalizeStatus(jobCard.status);
+  if (!canTransition(from, toStatus)) {
     throw new InvalidJobStatusTransitionError(
-      `A job that is "${JOB_STATUS_LABEL[jobCard.status]}" can't move to "${JOB_STATUS_LABEL[toStatus]}".`,
+      `A job that is "${JOB_STATUS_LABEL[from]}" can't move to "${JOB_STATUS_LABEL[toStatus]}".`,
     );
   }
-  // Resuming from hold is manual but must return to where the job paused.
-  if (params.source === 'manual' && jobCard.status !== 'ON_HOLD' && WORKFLOW_OWNED[toStatus]) {
+  if (params.source === 'manual' && from !== 'ON_HOLD' && WORKFLOW_OWNED[toStatus]) {
     throw new InvalidJobStatusTransitionError(WORKFLOW_OWNED[toStatus]!);
   }
-  if (params.source === 'manual' && jobCard.status === 'ON_HOLD' && toStatus !== 'CANCELLED') {
+  if (params.source === 'manual' && from === 'ON_HOLD' && toStatus !== 'CANCELLED') {
     const history = await tx.jobStatusHistory.findMany({
       where: { organizationId: params.organizationId, jobCardId: jobCard.id },
       orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
       select: { toStatus: true },
     });
-    const resumeTo = getEffectiveStageStatus('ON_HOLD', history);
+    const resumeTo = getResumeTarget(history);
     if (toStatus !== resumeTo) {
       throw new InvalidJobStatusTransitionError(
         `This job was paused at "${JOB_STATUS_LABEL[resumeTo]}" and can only resume there.`,
@@ -136,9 +148,12 @@ export async function applyJobStatusChange(
     }
   }
 
+  const actorUserId = 'userId' in params.actor ? params.actor.userId : null;
+  const actorCustomerId = 'customerId' in params.actor ? params.actor.customerId : null;
+
   await tx.jobCard.update({
     where: { id: jobCard.id },
-    data: { status: toStatus, closedAt: toStatus === 'CLOSED' ? new Date() : undefined },
+    data: { status: toStatus, closedAt: toStatus === 'DELIVERED' ? new Date() : undefined },
   });
   await tx.jobStatusHistory.create({
     data: {
@@ -146,19 +161,24 @@ export async function applyJobStatusChange(
       jobCardId: jobCard.id,
       fromStatus: jobCard.status,
       toStatus,
-      changedByUserId: params.actorUserId,
+      changedByUserId: actorUserId,
+      changedByCustomerId: actorCustomerId,
     },
   });
   await writeAuditLog(tx, {
     organizationId: params.organizationId,
     branchId: jobCard.branchId,
-    actorUserId: params.auditActorUserId === undefined ? params.actorUserId : params.auditActorUserId,
+    actorUserId,
     action: 'job_card.status_changed',
     entityType: 'JobCard',
     entityId: jobCard.id,
     beforeData: { status: jobCard.status },
     afterData: { status: toStatus },
-    metadata: { source: params.source, ...params.metadata },
+    metadata: {
+      source: params.source,
+      ...(actorCustomerId ? { decidedBy: 'customer', customerId: actorCustomerId } : {}),
+      ...params.metadata,
+    },
   });
   return { fromStatus: jobCard.status };
 }
@@ -168,34 +188,25 @@ export async function transitionJobStatus(
   tx: Prisma.TransactionClient,
   user: AuthenticatedUser,
   jobCardId: string,
-  toStatus: JobCardStatus,
+  toStatus: WorkflowStatus,
 ): Promise<void> {
   const jobCard = await tx.jobCard.findFirst({
     where: { id: jobCardId, organizationId: user.organizationId },
     select: { branchId: true },
   });
   if (!jobCard) throw new NotFoundError('job card');
-  requirePermission(user, toStatus === 'CLOSED' ? 'job_card.close' : 'job_card.edit', {
+  requirePermission(user, toStatus === 'DELIVERED' ? 'job_card.close' : 'job_card.edit', {
     branchId: jobCard.branchId,
   });
   await applyJobStatusChange(tx, {
     organizationId: user.organizationId,
     jobCardId,
     toStatus,
-    actorUserId: user.id,
+    actor: { userId: user.id },
     source: 'manual',
   });
 }
 
-export async function getResumeStatus(
-  tx: Prisma.TransactionClient,
-  organizationId: string,
-  jobCardId: string,
-): Promise<JobCardStatus> {
-  const history = await tx.jobStatusHistory.findMany({
-    where: { organizationId, jobCardId },
-    orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
-    select: { toStatus: true },
-  });
-  return getEffectiveStageStatus('ON_HOLD', history);
+export function isOpenJobStatus(status: JobCardStatus): boolean {
+  return !CLOSED_JOB_STATUSES.includes(status);
 }

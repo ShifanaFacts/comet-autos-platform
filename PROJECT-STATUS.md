@@ -2,6 +2,80 @@
 
 Last updated: 2026-09-18
 
+## Milestone: Ready → invoice → payment → paid → delivered — DONE (uncommitted, for review)
+
+READY → INVOICED → PAID → DELIVERED, working against the local database;
+`npm run test:integration` runs 41 tests (adds `tests/billing-flow.test.ts`).
+
+- Migrations (additive, one transaction each):
+  `20260918113231_invoicing_payments_delivery` — `JobCard.deliveredAt /
+  deliveredByUserId / deliveryNotes`, `Payment.notes`, partial unique index
+  `one_live_invoice_per_job_card` (status not VOID/CANCELLED), CHECKs
+  `payments_positive_amount`, `invoices_total_is_subtotal_plus_tax`,
+  `job_cards_delivery_complete`;
+  `20260918113455_normalize_live_invoice_index` — rewrites that index
+  predicate with `<>` so Prisma sees no drift.
+- Service: `src/lib/billing/invoice.ts` (`buildBilling`, `createInvoice`,
+  `recordPayment`, `deliverVehicle`, `getJobInvoice`, `getBillingPreview`).
+  UI: `src/app/(app)/job-cards/[id]/billing/` on the job card page
+  (`#invoice`, `#payments`, `#delivery`).
+- Billing rule: each part/labour record linked to an APPROVED estimate line
+  is billed at the approved price and VAT, capped at the approved quantity.
+  Unlinked (unapproved) work, excess quantity and price differences are
+  excluded and listed as notes on the preview and in the `invoice.issued`
+  audit entry. InvoiceItem links to the Labour / PartUsage it bills.
+- Payment state: invoice ISSUED (= unpaid) → PARTIALLY_PAID → PAID; paid =
+  completed payments; overpayment refused under a row lock. Job moves
+  INVOICED → PAID only when the balance reaches zero; delivery requires PAID
+  and a zero balance.
+- QC rule tightened: QC can't PASS while any approved line is incomplete.
+
+### Decisions awaiting approval (billing)
+
+1. Bill at the approved price, capped at the approved quantity (differences
+   reported, never silently billed).
+2. No journal entries are posted (no chart of accounts yet).
+3. No delivery on credit — balance must be zero.
+4. Invoice is issued directly (no draft step); no customer-facing invoice
+   link or PDF yet; no void / refund / payment-reversal flow yet.
+
+## Milestone: Repair → quality check → ready — DONE (uncommitted, for review)
+
+APPROVED → REPAIR → parts used / labour → QUALITY_CHECK → READY, working
+against the local database; `npm run test:integration` now runs 28 tests
+(`tests/workshop-flow.test.ts`, `tests/repair-flow.test.ts`).
+
+- Migration `20260918102849_repair_parts_labour_quality_check` (additive,
+  one transaction): `EstimateKind` (ORIGINAL / ADDITIONAL) + `Estimate.notes`;
+  `Labour.estimateItemId` and `PartUsage.estimateItemId` (the approved line
+  a record fulfils; NULL = additional, unapproved work); new `QualityCheck`
+  history table; CHECK constraints (failed QC needs corrections, positive
+  quantities/hours, job consumption is a stock-out).
+- Stock: `src/lib/inventory/stock.ts` — stock is the signed sum of the
+  InventoryTransaction ledger; issuing locks the Part row, refuses to go
+  negative, and writes one JOB_CONSUMPTION row in the same transaction as
+  the PartUsage.
+- Services: `src/lib/workshop/repair.ts`, `quality-check.ts`; additional
+  work in `estimates.ts` (`createAdditionalEstimate`). Job card page shows
+  the repair sections from APPROVED onwards; additional work has its own
+  page `/job-cards/[id]/additional/[estimateId]`.
+- Dev seed adds 12 parts with opening stock (idempotent).
+
+### Decisions awaiting approval (repair)
+
+1. **Selling price of parts used** is the catalog price at the time of use
+   (snapshotted on PartUsage), which may differ from the approved estimate
+   price. Invoicing must decide which one is billed.
+2. **Cost of parts used** is the part's default cost price, snapshotted.
+   No FIFO / weighted-average costing exists yet.
+3. **QC with work remaining** is blocked (superseded 2026-09-18: QC cannot pass while any approved line is incomplete). QC is
+   blocked while an additional-work request is waiting for the customer, and
+   when no parts or labour were recorded at all.
+4. **Labour line "done"** = any labour recorded against it; parts lines are
+   done when the fitted quantity reaches the approved quantity.
+5. **Corrections**: a wrongly recorded part or labour entry can't be undone
+   in the UI yet (no stock-return / reversal flow).
+
 ## Milestone: Core workshop workflow (customer → approval) — DONE
 
 Working end to end against the local PostgreSQL database, verified in a
@@ -22,23 +96,45 @@ workshop sees the result.
   workspace (current status + next action), Inspection (tablet checklist),
   Diagnosis, Estimate, Inspections / Estimates / Approvals queues, and the
   public `/customer/quote/[token]` page.
-- No Prisma schema change. Dev seed now adds four employees (inspections,
-  diagnoses and assignments must reference an Employee).
+- Dev seed adds four employees (inspections, diagnoses and assignments must
+  reference an Employee).
+
+### Schema corrections (2026-09-18)
+
+Two additive migrations, no data deleted:
+`20260918070227_workshop_status_and_approval_attribution` (enum values,
+columns) and `20260918070338_job_status_and_approval_data` (backfill,
+default, CHECK constraints — one explicit transaction).
+
+- **Job status** now stores the real workflow: ARRIVED → INSPECTION →
+  DIAGNOSIS → ESTIMATE → WAITING_APPROVAL → APPROVED / REJECTED → REPAIR →
+  QUALITY_CHECK → READY → INVOICED → PAID → DELIVERED (+ ON_HOLD,
+  CANCELLED). Legacy values (RECEIVED, INSPECTING, DIAGNOSED, ESTIMATE_SENT,
+  IN_PROGRESS, COMPLETED, CLOSED) stay in the enum only because
+  JobStatusHistory is append-only; live job cards were migrated off them and
+  the app never writes them. Mapping: `src/lib/workshop/stages.ts`.
+- **ApprovalMethod.ONLINE** for decisions made on the secure link.
+  DIGITAL_SIGNATURE is reserved for real signature capture.
+- **Attribution:** `Approval.customerId` (required, the decider),
+  `Approval.decidedAt`, `Approval.recordedByUserId` now nullable (NULL for
+  ONLINE; a CHECK enforces it). `JobStatusHistory.changedByCustomerId` added,
+  `changedByUserId` nullable, CHECK: exactly one actor. The sender of the
+  quotation remains `Estimate.sentByUserId`.
+- **VAT:** default rate lives only in `src/lib/tax.ts`
+  (`resolveDefaultVatRate`), passed into calculations and the estimate
+  builder.
 
 ### Decisions awaiting approval
 
-1. **ARRIVED status.** The frozen enum has no `ARRIVED`; new jobs are stored
-   as `RECEIVED` and shown as "Arrived" everywhere. The requested pipeline
-   (WAITING_APPROVAL, REJECTED, QUALITY_CHECK, READY, PAID, DELIVERED) is
-   likewise mapped onto existing values — see `src/lib/workshop/job-status.ts`.
-   Real statuses need an additive schema change.
-2. **Customer approvals via link.** `Approval.recordedByUserId` and
-   `JobStatusHistory.changedByUserId` are required, so a customer's own
-   decision is attributed to the staff member who issued the link; the audit
-   entry records `decidedBy: customer`. `ApprovalMethod` has no "online link"
-   value, so `DIGITAL_SIGNATURE` is used.
-3. **VAT** defaults to 5% per line (editable). There is no organization VAT
-   setting in the schema.
+1. **Legacy history rows.** Status-history rows written before the migration
+   keep their original status names and actors (append-only rule). Online
+   approvals made before the migration therefore still show the link sender
+   as the actor in the job's history; the Approval rows themselves were
+   corrected to ONLINE / customer.
+2. **Post-approval stages** (REPAIR → … → DELIVERED) are still advanced with
+   manual buttons until their own screens exist.
+3. **VAT** defaults to 5% per line (editable per line). No organization VAT
+   setting exists yet; `resolveDefaultVatRate` is the single place to add it.
 4. **Estimate revisions** are numbered `EST-000123-R2` (unique constraint
    requires a distinct number); the old version's link is revoked.
 5. **Quotation validity** defaults to 14 days; the customer link expires at

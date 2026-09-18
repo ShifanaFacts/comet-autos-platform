@@ -3,6 +3,7 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
+import { isOpenJobStatus } from '@/lib/workshop/job-status';
 
 export function employeeName(employee: { firstName: string; lastName: string }): string {
   return `${employee.firstName} ${employee.lastName}`.trim();
@@ -34,7 +35,7 @@ export async function assignPrimaryTechnician(
     });
     if (!jobCard) throw new NotFoundError('job card');
     requirePermission(user, 'job_card.assign', { branchId: jobCard.branchId });
-    if (jobCard.status === 'CLOSED' || jobCard.status === 'CANCELLED') {
+    if (!isOpenJobStatus(jobCard.status)) {
       throw new DomainError('This job is finished — technicians can no longer be changed.');
     }
 

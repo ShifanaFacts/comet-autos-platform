@@ -9,6 +9,7 @@ import { WORKFLOW_STAGES } from '@/lib/workshop/stages';
 const STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
   ...WORKFLOW_STAGES.map((stage) => ({ value: stage.status, label: stage.label })),
+  { value: 'REJECTED', label: 'Estimate rejected' },
   { value: 'ON_HOLD', label: 'On hold' },
   { value: 'CANCELLED', label: 'Cancelled' },
 ];

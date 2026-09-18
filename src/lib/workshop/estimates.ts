@@ -8,9 +8,10 @@ import { writeAuditLog } from '@/lib/audit';
 import { allocateDocumentNumber } from '@/lib/numbering';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
-import { calculateLine, calculateTotals, DEFAULT_VAT_RATE } from '@/lib/money';
+import { calculateLine, calculateTotals } from '@/lib/money';
+import { resolveDefaultVatRate } from '@/lib/tax';
 import { endOfLocalDay, localDateString, parseCalendarDate } from '@/lib/format';
-import { applyJobStatusChange } from '@/lib/workshop/job-status';
+import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 import { issueAccessToken, revokeAccessTokens } from '@/lib/customer-access/tokens';
 
 /** Default quotation validity when a new estimate is created. Editable per estimate. */
@@ -40,7 +41,10 @@ function defaultValidUntil(): Date {
   return new Date(today.getTime() + DEFAULT_QUOTE_VALIDITY_DAYS * 24 * 60 * 60 * 1000);
 }
 
-/** Opens version 1 of the job's estimate as a draft. Returns the existing draft if one is already open. */
+/**
+ * Opens version 1 of the job's estimate as a draft and moves the job from
+ * Diagnosis to Estimate. Returns the existing draft if one is already open.
+ */
 export async function createEstimate(user: AuthenticatedUser, jobCardId: string) {
   return prisma.$transaction(async (tx) => {
     await lockJob(tx, user.organizationId, jobCardId);
@@ -52,14 +56,21 @@ export async function createEstimate(user: AuthenticatedUser, jobCardId: string)
     requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
 
     const existing = await tx.estimate.findFirst({
-      where: { jobCardId: jobCard.id, organizationId: user.organizationId },
+      where: { jobCardId: jobCard.id, organizationId: user.organizationId, kind: 'ORIGINAL' },
       orderBy: { version: 'desc' },
     });
     if (existing?.status === 'DRAFT') return existing;
     if (existing) throw new DomainError('This job already has an estimate. Revise it instead.');
-    if (jobCard.status !== 'DIAGNOSED') {
+    if (normalizeStatus(jobCard.status) !== 'DIAGNOSIS') {
       throw new DomainError('Record the diagnosis before creating an estimate.');
     }
+    await applyJobStatusChange(tx, {
+      organizationId: user.organizationId,
+      jobCardId: jobCard.id,
+      toStatus: 'ESTIMATE',
+      actor: { userId: user.id },
+      source: 'workflow',
+    });
 
     const estimateNumber = await allocateDocumentNumber(tx, user.organizationId, jobCard.branchId, 'ESTIMATE');
     const estimate = await tx.estimate.create({
@@ -106,7 +117,7 @@ const draftSchema = z.object({
   validUntil: z.string({ error: 'Choose how long the quotation is valid.' }).min(1, 'Choose how long the quotation is valid.'),
 });
 
-function priceLines(items: z.infer<typeof lineSchema>[]) {
+function priceLines(items: z.infer<typeof lineSchema>[], defaultVatRate: string) {
   return items.map((item, index) => {
     try {
       return {
@@ -114,7 +125,7 @@ function priceLines(items: z.infer<typeof lineSchema>[]) {
         amounts: calculateLine({
           quantity: item.quantity,
           unitPrice: item.unitPrice,
-          taxRate: item.taxRate || DEFAULT_VAT_RATE,
+          taxRate: item.taxRate || defaultVatRate,
         }),
       };
     } catch (error) {
@@ -129,7 +140,7 @@ function priceLines(items: z.infer<typeof lineSchema>[]) {
 /** Replaces a draft's lines and recalculates Subtotal / VAT / Total on the server. */
 export async function saveEstimateDraft(user: AuthenticatedUser, estimateId: string, rawInput: unknown) {
   const input = parseInput(draftSchema, rawInput);
-  const lines = priceLines(input.items);
+  const lines = priceLines(input.items, resolveDefaultVatRate(user.organizationId));
   const totals = calculateTotals(lines.map((line) => line.amounts));
   const validUntil = parseCalendarDate(input.validUntil);
   if (!validUntil) throw new DomainError('Choose a valid date.', 'validUntil');
@@ -167,9 +178,8 @@ export async function saveEstimateDraft(user: AuthenticatedUser, estimateId: str
 }
 
 /**
- * Sends the draft to the customer: locks it, moves the job to "Waiting
- * approval" (first version only — revisions are sent while the job is
- * already waiting), revokes links to every other version of this job's
+ * Sends the draft to the customer: locks it, moves the job from Estimate to
+ * Waiting approval, revokes links to every other version of this job's
  * estimate, and issues a fresh secure link. The raw link is returned once
  * and never stored.
  */
@@ -191,17 +201,23 @@ export async function sendEstimate(user: AuthenticatedUser, estimateId: string) 
 
     const jobStatus = (await tx.jobCard.findUniqueOrThrow({ where: { id: estimate.jobCardId }, select: { status: true } }))
       .status;
-    if (jobStatus === 'DIAGNOSED') {
+    if (fresh.kind === 'ADDITIONAL') {
+      // Additional work is quoted during repair; the job stays in REPAIR.
+      if (normalizeStatus(jobStatus) !== 'REPAIR') {
+        throw new DomainError('Additional work can only be sent while the job is in repair.');
+      }
+    } else {
+      if (normalizeStatus(jobStatus) !== 'ESTIMATE') {
+        throw new DomainError('The job is not at the estimate stage, so this estimate cannot be sent.');
+      }
       await applyJobStatusChange(tx, {
         organizationId: user.organizationId,
         jobCardId: estimate.jobCardId,
-        toStatus: 'ESTIMATE_SENT',
-        actorUserId: user.id,
+        toStatus: 'WAITING_APPROVAL',
+        actor: { userId: user.id },
         source: 'workflow',
         metadata: { estimateId: estimate.id },
       });
-    } else if (jobStatus !== 'ESTIMATE_SENT') {
-      throw new DomainError('The job is not at the estimate stage, so this estimate cannot be sent.');
     }
 
     const sentAt = new Date();
@@ -210,8 +226,16 @@ export async function sendEstimate(user: AuthenticatedUser, estimateId: string) 
       data: { status: 'SENT', sentAt, sentByUserId: user.id },
     });
 
+    // Revoke links to other versions of the same quotation chain only; an
+    // additional-work request never invalidates the original quotation's link.
     const siblings = await tx.estimate.findMany({
-      where: { jobCardId: estimate.jobCardId, organizationId: user.organizationId, id: { not: estimate.id } },
+      where: {
+        jobCardId: estimate.jobCardId,
+        organizationId: user.organizationId,
+        id: { not: estimate.id },
+        kind: fresh.kind,
+        ...(fresh.kind === 'ADDITIONAL' ? { status: { in: ['DRAFT', 'SENT'] } } : {}),
+      },
       select: { id: true },
     });
     await revokeAccessTokens(tx, user.organizationId, 'ESTIMATE', siblings.map((s) => s.id));
@@ -275,6 +299,70 @@ export async function reissueEstimateLink(user: AuthenticatedUser, estimateId: s
   });
 }
 
+const additionalSchema = z.object({
+  notes: z
+    .string({ error: 'Explain what was found and why the extra work is needed.' })
+    .trim()
+    .min(5, 'Explain what was found and why the extra work is needed.')
+    .max(2000),
+});
+
+/**
+ * Additional work found during repair is quoted as its own ADDITIONAL
+ * estimate — never added to the approved quotation. It goes to the
+ * customer through the same secure link and approval flow; only once
+ * approved do its lines become approved work that parts and labour can be
+ * recorded against. Returns the open draft if one exists.
+ */
+export async function createAdditionalEstimate(user: AuthenticatedUser, jobCardId: string, rawInput: unknown) {
+  const input = parseInput(additionalSchema, rawInput);
+  return prisma.$transaction(async (tx) => {
+    await lockJob(tx, user.organizationId, jobCardId);
+    const jobCard = await tx.jobCard.findFirst({
+      where: { id: jobCardId, organizationId: user.organizationId },
+      select: { id: true, branchId: true, status: true },
+    });
+    if (!jobCard) throw new NotFoundError('job card');
+    requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
+    if (normalizeStatus(jobCard.status) !== 'REPAIR') {
+      throw new DomainError('Additional work can only be requested while the job is in repair.');
+    }
+    const open = await tx.estimate.findFirst({
+      where: { jobCardId: jobCard.id, organizationId: user.organizationId, kind: 'ADDITIONAL', status: { in: ['DRAFT', 'SENT'] } },
+    });
+    if (open?.status === 'DRAFT') return open;
+    if (open) throw new DomainError('An additional work request is already waiting for the customer.');
+
+    const estimateNumber = await allocateDocumentNumber(tx, user.organizationId, jobCard.branchId, 'ESTIMATE');
+    const estimate = await tx.estimate.create({
+      data: {
+        organizationId: user.organizationId,
+        jobCardId: jobCard.id,
+        estimateNumber,
+        kind: 'ADDITIONAL',
+        notes: input.notes,
+        version: 1,
+        status: 'DRAFT',
+        subtotal: '0.00',
+        taxAmount: '0.00',
+        totalAmount: '0.00',
+        preparedByUserId: user.id,
+        validUntil: defaultValidUntil(),
+      },
+    });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: jobCard.branchId,
+      actorUserId: user.id,
+      action: 'estimate.created',
+      entityType: 'Estimate',
+      entityId: estimate.id,
+      afterData: { jobCardId: jobCard.id, estimateNumber, kind: 'ADDITIONAL', notes: input.notes },
+    });
+    return estimate;
+  });
+}
+
 function rootEstimateNumber(estimateNumber: string): string {
   return estimateNumber.replace(/-R\d+$/, '');
 }
@@ -282,7 +370,8 @@ function rootEstimateNumber(estimateNumber: string): string {
 /**
  * Creates the next version as a new draft, copying the lines. The previous
  * version and its approval history are never modified; its customer link is
- * revoked so an outdated quotation can't be approved.
+ * revoked so an outdated quotation can't be approved. The job goes back to
+ * Estimate until the revision is sent.
  */
 export async function reviseEstimate(user: AuthenticatedUser, estimateId: string) {
   return prisma.$transaction(async (tx) => {
@@ -297,13 +386,25 @@ export async function reviseEstimate(user: AuthenticatedUser, estimateId: string
       if (newer.status === 'DRAFT') return newer;
       throw new DomainError('A newer version of this estimate already exists.');
     }
+    if (source.kind === 'ADDITIONAL') {
+      throw new DomainError('Additional work requests are not revised — create a new request instead.');
+    }
     if (source.status !== 'SENT' && source.status !== 'REJECTED') {
       throw new DomainError('Only an estimate that is waiting approval or was rejected can be revised.');
     }
     const job = await tx.jobCard.findUniqueOrThrow({ where: { id: source.jobCardId }, select: { status: true } });
-    if (job.status !== 'ESTIMATE_SENT') {
+    const jobStatus = normalizeStatus(job.status);
+    if (jobStatus !== 'WAITING_APPROVAL' && jobStatus !== 'REJECTED') {
       throw new DomainError('The job is no longer at the estimate stage.');
     }
+    await applyJobStatusChange(tx, {
+      organizationId: user.organizationId,
+      jobCardId: source.jobCardId,
+      toStatus: 'ESTIMATE',
+      actor: { userId: user.id },
+      source: 'workflow',
+      metadata: { revisedEstimateId: source.id },
+    });
 
     const version = source.version + 1;
     const revision = await tx.estimate.create({
@@ -355,7 +456,14 @@ export type EstimateDecision = 'APPROVED' | 'REJECTED';
 
 /**
  * The single code path for a customer's decision, whether they made it on
- * the secure link or told a staff member in person / by phone.
+ * the secure link (ONLINE) or told a staff member (IN_PERSON / PHONE / …).
+ *
+ * Attribution: the decision always belongs to the customer
+ * (Approval.customerId). The staff member who sent the quotation is
+ * Estimate.sentByUserId. A staff member is only recorded
+ * (Approval.recordedByUserId, history changedByUserId) when they entered a
+ * decision the customer gave them; an ONLINE decision is recorded against
+ * the customer alone.
  *
  * Whole-quotation decisions only in V1: every line gets the same
  * ApprovalItem decision (PARTIALLY_APPROVED is not offered yet).
@@ -368,14 +476,22 @@ export async function applyEstimateDecision(
     decision: EstimateDecision;
     method: ApprovalMethod;
     notes: string | null;
-    recordedByUserId: string;
-    auditActorUserId: string | null;
-    decidedBy: 'customer' | 'staff';
+    /** Staff member entering a decision the customer gave them; null for ONLINE. */
+    recordedByUserId: string | null;
     metadata?: Record<string, unknown>;
   },
 ) {
+  const online = params.method === 'ONLINE';
+  if (online !== (params.recordedByUserId === null)) {
+    throw new Error('An ONLINE decision has no recording staff member; any other method must have one.');
+  }
   await tx.$executeRaw`SELECT id FROM estimates WHERE id = ${params.estimateId}::uuid AND organization_id = ${params.organizationId}::uuid FOR UPDATE`;
   const estimate = await loadEstimate(tx, params.organizationId, params.estimateId);
+  const { vehicle } = await tx.jobCard.findUniqueOrThrow({
+    where: { id: estimate.jobCardId },
+    select: { vehicle: { select: { customerId: true } } },
+  });
+  const customerId = vehicle.customerId;
 
   if (estimate.status !== 'SENT') {
     throw new DomainError(
@@ -399,6 +515,8 @@ export async function applyEstimateDecision(
       status: params.decision,
       approvalMethod: params.method,
       approvedAt: params.decision === 'APPROVED' ? now : null,
+      decidedAt: now,
+      customerId,
       recordedByUserId: params.recordedByUserId,
       notes: params.notes,
     },
@@ -415,27 +533,31 @@ export async function applyEstimateDecision(
   }
   await tx.estimate.update({ where: { id: estimate.id }, data: { status: params.decision } });
 
-  if (params.decision === 'APPROVED') {
-    await lockJob(tx, params.organizationId, estimate.jobCardId);
-    const job = await tx.jobCard.findUniqueOrThrow({ where: { id: estimate.jobCardId }, select: { status: true } });
-    if (job.status !== 'ESTIMATE_SENT') {
+  await lockJob(tx, params.organizationId, estimate.jobCardId);
+  const job = await tx.jobCard.findUniqueOrThrow({ where: { id: estimate.jobCardId }, select: { status: true } });
+  if (estimate.kind === 'ADDITIONAL') {
+    // Approved additional lines simply join the approved work; the job stays in repair.
+    if (normalizeStatus(job.status) !== 'REPAIR') {
+      throw new DomainError('The job is no longer in repair, so this additional work can no longer be approved.');
+    }
+  } else {
+    if (normalizeStatus(job.status) !== 'WAITING_APPROVAL') {
       throw new DomainError('The job is not waiting for approval (it may be on hold). Ask the workshop to resume it.');
     }
     await applyJobStatusChange(tx, {
       organizationId: params.organizationId,
       jobCardId: estimate.jobCardId,
-      toStatus: 'APPROVED',
-      actorUserId: params.recordedByUserId,
-      auditActorUserId: params.auditActorUserId,
+      toStatus: params.decision,
+      actor: online ? { customerId } : { userId: params.recordedByUserId! },
       source: 'workflow',
-      metadata: { estimateId: estimate.id, approvalId: approval.id, decidedBy: params.decidedBy },
+      metadata: { estimateId: estimate.id, approvalId: approval.id, method: params.method },
     });
   }
 
   await writeAuditLog(tx, {
     organizationId: params.organizationId,
     branchId: estimate.jobCard.branchId,
-    actorUserId: params.auditActorUserId,
+    actorUserId: params.recordedByUserId,
     action: params.decision === 'APPROVED' ? 'approval.approved' : 'approval.rejected',
     entityType: 'Approval',
     entityId: approval.id,
@@ -447,8 +569,16 @@ export async function applyEstimateDecision(
       method: params.method,
       totalAmount: estimate.totalAmount.toString(),
       notes: params.notes,
+      decidedAt: now.toISOString(),
+      kind: estimate.kind,
     },
-    metadata: { decidedBy: params.decidedBy, ...params.metadata },
+    metadata: {
+      decidedBy: 'customer',
+      customerId,
+      recordedBy: online ? null : 'staff',
+      sentByUserId: estimate.sentByUserId,
+      ...params.metadata,
+    },
   });
   return approval;
 }
@@ -459,7 +589,7 @@ const staffDecisionSchema = z.object({
   notes: z.string().trim().max(2000).optional(),
 });
 
-/** A staff member records the customer's decision given in person, by phone, email or SMS. */
+/** A staff member records the decision the customer gave them in person, by phone, email or SMS. */
 export async function recordCustomerDecision(user: AuthenticatedUser, estimateId: string, rawInput: unknown) {
   const input = parseInput(staffDecisionSchema, rawInput);
   return prisma.$transaction(async (tx) => {
@@ -472,8 +602,26 @@ export async function recordCustomerDecision(user: AuthenticatedUser, estimateId
       method: input.method,
       notes: input.notes || null,
       recordedByUserId: user.id,
-      auditActorUserId: user.id,
-      decidedBy: 'staff',
     });
   });
+}
+
+/** One additional-work request, for its own page. Scoped to the organization and the job. */
+export async function getAdditionalEstimate(user: AuthenticatedUser, jobCardId: string, estimateId: string) {
+  const estimate = await prisma.estimate.findFirst({
+    where: { id: estimateId, jobCardId, organizationId: user.organizationId, kind: 'ADDITIONAL' },
+    include: {
+      jobCard: { select: { branchId: true } },
+      items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+      approvals: {
+        orderBy: { decidedAt: 'desc' },
+        include: { recordedBy: { select: { fullName: true } }, customer: { select: { name: true } } },
+      },
+      preparedBy: { select: { fullName: true } },
+      sentBy: { select: { fullName: true } },
+    },
+  });
+  if (!estimate) throw new NotFoundError('additional work request');
+  requirePermission(user, 'job_card.view', { branchId: estimate.jobCard.branchId });
+  return estimate;
 }

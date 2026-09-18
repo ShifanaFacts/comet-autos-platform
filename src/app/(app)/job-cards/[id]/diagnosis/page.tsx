@@ -23,14 +23,15 @@ export default async function DiagnosisPage({ params }: { params: Promise<{ id: 
     if (error instanceof NotFoundError) notFound();
     throw error;
   }
-  const { jobCard, inspection, diagnosis, estimate, primaryTechnician } = workspace;
+  const { jobCard, status, inspection, diagnosis, estimate, primaryTechnician } = workspace;
   const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
   const flagged = inspection?.items.filter((item) => item.result !== 'OK') ?? [];
 
   const editable =
     canEdit &&
-    ((jobCard.status === 'INSPECTING' && inspection?.status === 'COMPLETED') ||
-      (jobCard.status === 'DIAGNOSED' && (!estimate || estimate.status === 'DRAFT')));
+    ((status === 'INSPECTION' && inspection?.status === 'COMPLETED') ||
+      status === 'DIAGNOSIS' ||
+      (status === 'ESTIMATE' && estimate?.status === 'DRAFT' && estimate.version === 1));
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -142,7 +143,7 @@ export default async function DiagnosisPage({ params }: { params: Promise<{ id: 
                   : 'A diagnosis is recorded once the inspection is complete.'
               }
               action={
-                jobCard.status === 'RECEIVED' || jobCard.status === 'INSPECTING' ? (
+                status === 'ARRIVED' || status === 'INSPECTION' ? (
                   <LinkButton href={`/job-cards/${jobCard.id}/inspection`} variant="outline">
                     Go to inspection
                   </LinkButton>
