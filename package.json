@@ -18,7 +18,7 @@
     "db:start": "node scripts/dev-db.mjs start",
     "db:stop": "node scripts/dev-db.mjs stop",
     "db:seed": "tsx prisma/seed.ts",
-    "test:integration": "tsx --test tests/workshop-flow.test.ts"
+    "test:integration": "tsx --test tests/workshop-flow.test.ts tests/repair-flow.test.ts tests/billing-flow.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

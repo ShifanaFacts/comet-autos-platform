@@ -5,7 +5,7 @@ import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
-import { applyJobStatusChange } from '@/lib/workshop/job-status';
+import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 
 export const diagnosisSchema = z.object({
   employeeId: z.uuid('Choose who made the diagnosis.'),
@@ -28,7 +28,7 @@ export const diagnosisSchema = z.object({
  *
  * - Job in Inspection with a completed inspection → creates the diagnosis
  *   and moves the job to Diagnosed.
- * - Job already Diagnosed (no estimate sent yet) → corrects the latest
+ * - Job Diagnosed, or with an estimate still in draft → corrects the latest
  *   diagnosis in place.
  * - Once an estimate has been sent the diagnosis is locked: the quotation
  *   the customer saw is based on it.
@@ -50,8 +50,9 @@ export async function saveDiagnosis(user: AuthenticatedUser, jobCardId: string, 
       select: { id: true },
     });
     if (!employee) throw new DomainError('Choose who made the diagnosis.', 'employeeId');
+    const status = normalizeStatus(jobCard.status);
 
-    if (jobCard.status === 'INSPECTING') {
+    if (status === 'INSPECTION') {
       const inspection = await tx.inspection.findFirst({
         where: { jobCardId: jobCard.id, organizationId: user.organizationId, status: 'COMPLETED' },
         orderBy: { inspectedAt: 'desc' },
@@ -63,8 +64,8 @@ export async function saveDiagnosis(user: AuthenticatedUser, jobCardId: string, 
       await applyJobStatusChange(tx, {
         organizationId: user.organizationId,
         jobCardId: jobCard.id,
-        toStatus: 'DIAGNOSED',
-        actorUserId: user.id,
+        toStatus: 'DIAGNOSIS',
+        actor: { userId: user.id },
         source: 'workflow',
       });
       const diagnosis = await tx.diagnosis.create({
@@ -89,7 +90,7 @@ export async function saveDiagnosis(user: AuthenticatedUser, jobCardId: string, 
       return diagnosis;
     }
 
-    if (jobCard.status === 'DIAGNOSED') {
+    if (status === 'DIAGNOSIS' || status === 'ESTIMATE') {
       const sent = await tx.estimate.findFirst({
         where: { jobCardId: jobCard.id, organizationId: user.organizationId, status: { not: 'DRAFT' } },
         select: { id: true },
@@ -120,7 +121,7 @@ export async function saveDiagnosis(user: AuthenticatedUser, jobCardId: string, 
       return diagnosis;
     }
 
-    if (jobCard.status === 'RECEIVED') {
+    if (status === 'ARRIVED') {
       throw new DomainError('Inspect the vehicle before recording a diagnosis.');
     }
     throw new DomainError('The diagnosis can no longer be changed at this stage of the job.');

@@ -14,15 +14,18 @@ export interface FlowStage {
 // per the design system's "violet for workflow progress" rule, rather than
 // an arbitrary gradient.
 const STAGE_TONE: Record<string, { bar: string; text: string }> = {
-  received: { bar: 'bg-foreground/40', text: 'text-foreground' },
-  inspecting: { bar: 'bg-info', text: 'text-info' },
-  diagnosed: { bar: 'bg-info', text: 'text-info' },
+  arrived: { bar: 'bg-foreground/40', text: 'text-foreground' },
+  inspection: { bar: 'bg-info', text: 'text-info' },
+  diagnosis: { bar: 'bg-info', text: 'text-info' },
   estimate: { bar: 'bg-primary', text: 'text-primary' },
+  waiting: { bar: 'bg-warning', text: 'text-warning' },
   approved: { bar: 'bg-primary', text: 'text-primary' },
   repair: { bar: 'bg-warning', text: 'text-warning' },
-  completed: { bar: 'bg-success', text: 'text-success' },
+  qc: { bar: 'bg-warning', text: 'text-warning' },
+  ready: { bar: 'bg-success', text: 'text-success' },
   invoiced: { bar: 'bg-primary', text: 'text-primary' },
-  closed: { bar: 'bg-foreground/40', text: 'text-foreground' },
+  paid: { bar: 'bg-success', text: 'text-success' },
+  delivered: { bar: 'bg-foreground/40', text: 'text-foreground' },
 };
 
 /**
@@ -32,7 +35,7 @@ const STAGE_TONE: Record<string, { bar: string; text: string }> = {
  */
 export function WorkshopFlowRow({ stages }: { stages: FlowStage[] }) {
   return (
-    <ol className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-5 lg:grid-cols-9 lg:gap-x-2">
+    <ol className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-4 lg:grid-cols-6">
       {stages.map((stage) => {
         const tone = STAGE_TONE[stage.key];
         const active = stage.count > 0;

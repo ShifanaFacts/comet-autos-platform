@@ -7,7 +7,15 @@ interface TimelineEntry {
   toStatus: JobCardStatus;
   fromStatus: JobCardStatus | null;
   changedAt: Date;
-  changedBy: { fullName: string };
+  /** Staff member who made the change. */
+  changedBy: { fullName: string } | null;
+  /** Customer whose own online decision made the change. */
+  changedByCustomer: { name: string } | null;
+}
+
+function actorLabel(entry: TimelineEntry): string {
+  if (entry.changedByCustomer) return `${entry.changedByCustomer.name} (customer, online)`;
+  return entry.changedBy?.fullName ?? 'System';
 }
 
 export function StatusTimeline({ entries }: { entries: TimelineEntry[] }) {
@@ -24,7 +32,7 @@ export function StatusTimeline({ entries }: { entries: TimelineEntry[] }) {
               {entry.fromStatus ? JOB_STATUS_LABEL[entry.toStatus] : `Checked in · ${JOB_STATUS_LABEL[entry.toStatus]}`}
             </p>
             <p className="text-xs text-muted-foreground">
-              {formatDateTime(entry.changedAt)} · {entry.changedBy.fullName}
+              {formatDateTime(entry.changedAt)} · {actorLabel(entry)}
             </p>
           </div>
         </li>

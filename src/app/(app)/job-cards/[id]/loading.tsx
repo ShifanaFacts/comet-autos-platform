@@ -18,10 +18,10 @@ export default function JobCardDetailLoading() {
       <Stack gap="lg">
         <Panel>
           <div className="flex items-center">
-            {Array.from({ length: 9 }).map((_, i) => (
+            {Array.from({ length: 12 }).map((_, i) => (
               <div key={i} className="flex flex-1 items-center last:flex-none">
                 <Skeleton className="size-6 shrink-0 rounded-full" />
-                {i < 8 ? <Skeleton className="mx-2 h-px flex-1" /> : null}
+                {i < 11 ? <Skeleton className="mx-2 h-px flex-1" /> : null}
               </div>
             ))}
           </div>

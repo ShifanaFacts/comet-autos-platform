@@ -7,8 +7,9 @@ import type { JobCardStatus } from '@/generated/prisma/enums';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { JobStatusBadge } from '@/components/shared/job-status-badge';
-import { changeJobStatusAction } from '@/app/(app)/job-cards/[id]/actions';
+import { changeJobStatusAction, startRepairAction } from '@/app/(app)/job-cards/[id]/actions';
 import type { NextAction } from '@/lib/workshop/workspace';
+import type { WorkflowStatus } from '@/lib/workshop/stages';
 import { cn } from '@/lib/utils';
 
 const TONE = {
@@ -37,11 +38,19 @@ export function NextActionPanel({
   const tone = TONE[next.tone];
   const Icon = tone.icon;
 
-  function apply(toStatus: JobCardStatus) {
+  function apply(toStatus: WorkflowStatus) {
     setError(null);
     startTransition(async () => {
       const result = await changeJobStatusAction(jobCardId, toStatus);
       if (!result.ok) setError(result.error ?? 'Could not change the status.');
+    });
+  }
+
+  function startRepair() {
+    setError(null);
+    startTransition(async () => {
+      const result = await startRepairAction(jobCardId);
+      if (!result.ok) setError(result.error ?? 'Could not start the repair.');
     });
   }
 
@@ -91,6 +100,21 @@ export function NextActionPanel({
               {next.label}
               <ArrowRight />
             </Button>
+          ) : null}
+          {next.workflowAction === 'START_REPAIR' && next.label ? (
+            <ConfirmAction
+              tone="default"
+              trigger={
+                <Button size="lg" disabled={isPending}>
+                  {isPending ? 'Starting…' : next.label}
+                  <ArrowRight />
+                </Button>
+              }
+              title="Start the repair?"
+              description="The job moves to Repair. The approved work becomes the job list for the technicians."
+              confirmLabel="Start repair"
+              onConfirm={async () => startRepair()}
+            />
           ) : null}
           {next.manualStatus && next.label ? (
             <Button size="lg" disabled={isPending} onClick={() => apply(next.manualStatus!)}>

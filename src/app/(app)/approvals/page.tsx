@@ -12,7 +12,7 @@ export default async function ApprovalsPage() {
   const expired = estimates.filter((e) => isExpired(e));
   const decided = estimates
     .filter((e) => e.status === 'APPROVED' || e.status === 'REJECTED')
-    .sort((a, b) => (b.approvals[0]?.createdAt.getTime() ?? 0) - (a.approvals[0]?.createdAt.getTime() ?? 0));
+    .sort((a, b) => (b.approvals[0]?.decidedAt.getTime() ?? 0) - (a.approvals[0]?.decidedAt.getTime() ?? 0));
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">

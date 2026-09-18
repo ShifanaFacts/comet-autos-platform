@@ -24,7 +24,7 @@ export default async function InspectionPage({ params }: { params: Promise<{ id:
     if (error instanceof NotFoundError) notFound();
     throw error;
   }
-  const { jobCard, inspection, primaryTechnician } = workspace;
+  const { jobCard, status, inspection, primaryTechnician } = workspace;
   const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
 
   return (
@@ -39,7 +39,7 @@ export default async function InspectionPage({ params }: { params: Promise<{ id:
       </Panel>
 
       {!inspection ? (
-        jobCard.status === 'RECEIVED' && canEdit ? (
+        status === 'ARRIVED' && canEdit ? (
           <Section title="Start the inspection" description="Starting moves the job from Arrived into Inspection.">
             <Panel className="max-w-2xl sm:p-8">
               <StartInspectionForm
@@ -58,7 +58,7 @@ export default async function InspectionPage({ params }: { params: Promise<{ id:
             icon={ClipboardCheck}
             title="No inspection on this job"
             description={
-              jobCard.status === 'RECEIVED'
+              status === 'ARRIVED'
                 ? "You don't have permission to start inspections."
                 : 'This job moved on without an inspection being recorded.'
             }
@@ -75,7 +75,7 @@ export default async function InspectionPage({ params }: { params: Promise<{ id:
         <InspectionReport
           jobCardId={jobCard.id}
           inspection={inspection}
-          canDiagnose={canEdit && jobCard.status === 'INSPECTING'}
+          canDiagnose={canEdit && status === 'INSPECTION'}
         />
       )}
     </Stack>

@@ -11,17 +11,30 @@ import { createCustomer, type CustomerInput } from '@/lib/customers/service';
 import { createVehicle, MAX_MILEAGE, type VehicleInput } from '@/lib/vehicles/service';
 import { OPEN_APPOINTMENT_STATUSES } from '@/lib/appointments/service';
 
-/** A job is "in the workshop" until it is closed or cancelled. */
+/**
+ * A job is "in the workshop" until it is delivered or cancelled. Legacy
+ * values are included so a job still carrying one is never missed.
+ */
 export const OPEN_JOB_STATUSES: JobCardStatus[] = [
+  'ARRIVED',
+  'INSPECTION',
+  'DIAGNOSIS',
+  'ESTIMATE',
+  'WAITING_APPROVAL',
+  'APPROVED',
+  'REJECTED',
+  'REPAIR',
+  'QUALITY_CHECK',
+  'READY',
+  'INVOICED',
+  'PAID',
+  'ON_HOLD',
   'RECEIVED',
   'INSPECTING',
   'DIAGNOSED',
   'ESTIMATE_SENT',
-  'APPROVED',
   'IN_PROGRESS',
-  'ON_HOLD',
   'COMPLETED',
-  'INVOICED',
 ];
 
 const visitSchema = z.object({
@@ -45,8 +58,7 @@ export interface CheckInResult {
 }
 
 /**
- * Checks a vehicle in and opens its Job Card (status RECEIVED, shown as
- * "Arrived"). Either an existing vehicle is chosen, or a new customer and
+ * Checks a vehicle in and opens its Job Card (status ARRIVED). Either an existing vehicle is chosen, or a new customer and
  * vehicle are created in the same transaction — never a half-created
  * customer without a job.
  */
@@ -145,7 +157,7 @@ export async function checkInVehicle(
         vehicleId: vehicle.id,
         appointmentId,
         jobNumber,
-        status: 'RECEIVED',
+        status: 'ARRIVED',
         odometerReading: visit.mileage,
         customerComplaint: visit.complaint,
         createdByUserId: user.id,
@@ -159,7 +171,7 @@ export async function checkInVehicle(
         organizationId: user.organizationId,
         jobCardId: jobCard.id,
         fromStatus: null,
-        toStatus: 'RECEIVED',
+        toStatus: 'ARRIVED',
         changedByUserId: user.id,
       },
     });
@@ -172,7 +184,7 @@ export async function checkInVehicle(
       entityId: jobCard.id,
       afterData: {
         jobNumber,
-        status: 'RECEIVED',
+        status: 'ARRIVED',
         vehicleId: vehicle.id,
         customerId: vehicle.customerId,
         appointmentId,

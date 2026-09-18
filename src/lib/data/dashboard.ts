@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import type { JobCardStatus } from '@/generated/prisma/enums';
-import { WORKFLOW_STAGES } from '@/lib/workshop/stages';
+import { CLOSED_JOB_STATUSES, WORKFLOW_STAGES } from '@/lib/workshop/stages';
 
 function startOfToday(): Date {
   const now = new Date();
@@ -12,12 +12,9 @@ function startOfTomorrow(): Date {
   return new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
 }
 
-// "Currently in the workshop" = not yet handed back to the customer. The
-// frozen schema's JobCardStatus enum doesn't have a separate
-// QUALITY_CHECK/READY/DELIVERED breakdown (see PROJECT-STATUS.md Roadmap) —
-// COMPLETED/INVOICED jobs are still physically on-site awaiting handover;
-// only CLOSED/CANCELLED are actually gone.
-const NOT_IN_WORKSHOP: JobCardStatus[] = ['CLOSED', 'CANCELLED'];
+// "Currently in the workshop" = not yet handed back to the customer: every
+// job except DELIVERED / CANCELLED (and the legacy CLOSED).
+const NOT_IN_WORKSHOP: JobCardStatus[] = CLOSED_JOB_STATUSES;
 
 // Each dashboard section fetches independently (rather than one shared
 // getDashboardData()) so the page can wrap each in its own <Suspense>: the
@@ -52,7 +49,7 @@ export async function getWorkshopFlow(organizationId: string) {
     todaysAppointments,
     vehiclesCurrentlyIn,
     workflowStages,
-    waitingForApproval: statusCounts.get('ESTIMATE_SENT') ?? 0,
+    waitingForApproval: statusCounts.get('WAITING_APPROVAL') ?? 0,
     onHold: statusCounts.get('ON_HOLD') ?? 0,
   };
 }

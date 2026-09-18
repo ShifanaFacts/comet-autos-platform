@@ -84,6 +84,19 @@ enum EstimateStatus {
   EXPIRED
 }
 
+/// ORIGINAL: the quotation for the job (with its revision chain).
+/// ADDITIONAL: extra work found during repair, quoted and approved separately
+/// so it is never silently added to what the customer already approved.
+enum EstimateKind {
+  ORIGINAL
+  ADDITIONAL
+}
+
+enum QualityCheckStatus {
+  PASSED
+  FAILED
+}
+
 enum EstimateItemType {
   PART
   LABOUR
@@ -96,12 +109,18 @@ enum ApprovalStatus {
   REJECTED
 }
 
+/// How the customer's decision reached the workshop.
+/// ONLINE: the customer decided themselves on the secure quotation link
+/// (no staff member records it). IN_PERSON / PHONE / EMAIL / SMS: the
+/// customer told a staff member, who recorded it. DIGITAL_SIGNATURE is
+/// reserved for a captured signature (not built yet).
 enum ApprovalMethod {
   IN_PERSON
   PHONE
   EMAIL
   SMS
   DIGITAL_SIGNATURE
+  ONLINE
 }
 
 enum ApprovalItemDecision {
@@ -109,6 +128,19 @@ enum ApprovalItemDecision {
   REJECTED
 }
 
+/// Workshop job lifecycle. Forward path:
+///   ARRIVED → INSPECTION → DIAGNOSIS → ESTIMATE → WAITING_APPROVAL
+///   → APPROVED | REJECTED → REPAIR → QUALITY_CHECK → READY → INVOICED
+///   → PAID → DELIVERED
+/// Exceptions: ON_HOLD (resumes where it paused), CANCELLED (terminal).
+///
+/// LEGACY values (RECEIVED, INSPECTING, DIAGNOSED, ESTIMATE_SENT,
+/// IN_PROGRESS, COMPLETED, CLOSED) are the original coarse V1 states. They
+/// are no longer written by the application and live job cards were
+/// migrated off them (migration 20260918…_job_status_data). They remain in
+/// the enum only because JobStatusHistory is append-only and still records
+/// transitions that happened under the old names; PostgreSQL cannot drop
+/// enum values without rewriting that history.
 enum JobCardStatus {
   RECEIVED
   INSPECTING
@@ -121,6 +153,17 @@ enum JobCardStatus {
   INVOICED
   CLOSED
   CANCELLED
+  ARRIVED
+  INSPECTION
+  DIAGNOSIS
+  ESTIMATE
+  WAITING_APPROVAL
+  REJECTED
+  REPAIR
+  QUALITY_CHECK
+  READY
+  PAID
+  DELIVERED
 }
 
 enum AppointmentStatus {
@@ -300,6 +343,7 @@ model Organization {
   labours                 Labour[]
   partUsages              PartUsage[]
   workRecords             WorkRecord[]
+  qualityChecks           QualityCheck[]
   purchaseItems           PurchaseItem[]
   inventoryTransactions   InventoryTransaction[]
   invoiceItems            InvoiceItem[]
@@ -366,34 +410,36 @@ model User {
   organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   primaryBranch Branch?      @relation(fields: [organizationId, primaryBranchId], references: [organizationId, id], onDelete: Restrict)
 
-  userRoles              UserRole[]             @relation("UserRoleUser")
-  employee               Employee?
-  assignedJobAssignments JobAssignment[]        @relation("JobAssignmentAssignedBy")
-  jobStatusChanges       JobStatusHistory[]
-  createdAppointments    Appointment[]
-  createdJobCards        JobCard[]
-  preparedEstimates      Estimate[]             @relation("EstimatePreparedBy")
-  sentEstimates          Estimate[]             @relation("EstimateSentBy")
-  recordedApprovals      Approval[]
-  createdPurchases       Purchase[]             @relation("PurchaseCreatedBy")
-  receivedPurchases      Purchase[]             @relation("PurchaseReceivedBy")
-  inventoryAdjustments   InventoryTransaction[]
-  createdInvoices        Invoice[]              @relation("InvoiceCreatedBy")
-  issuedInvoices         Invoice[]              @relation("InvoiceIssuedBy")
-  receivedPayments       Payment[]
-  paidSupplierPayments   SupplierPayment[]
-  recordedExpenses       Expense[]
-  createdJournalEntries  JournalEntry[]         @relation("JournalEntryCreatedBy")
-  postedJournalEntries   JournalEntry[]         @relation("JournalEntryPostedBy")
-  approvedLeaves         Leave[]
-  createdPayrolls        Payroll[]              @relation("PayrollCreatedBy")
-  approvedPayrolls       Payroll[]              @relation("PayrollApprovedBy")
-  paidPayrolls           Payroll[]              @relation("PayrollPaidBy")
-  grantedUserRoles       UserRole[]             @relation("UserRoleAssignedBy")
-  revokedUserRoles       UserRole[]             @relation("UserRoleRevokedBy")
-  auditLogs              AuditLog[]
-  uploadedDocuments      Document[]
-  sessions               Session[]
+  userRoles                  UserRole[]             @relation("UserRoleUser")
+  employee                   Employee?
+  assignedJobAssignments     JobAssignment[]        @relation("JobAssignmentAssignedBy")
+  jobStatusChanges           JobStatusHistory[]
+  createdAppointments        Appointment[]
+  createdJobCards            JobCard[]
+  deliveredJobCards          JobCard[]              @relation("JobCardDeliveredBy")
+  preparedEstimates          Estimate[]             @relation("EstimatePreparedBy")
+  sentEstimates              Estimate[]             @relation("EstimateSentBy")
+  recordedApprovals          Approval[]
+  recordedQualityChecks      QualityCheck[]
+  createdPurchases           Purchase[]             @relation("PurchaseCreatedBy")
+  receivedPurchases          Purchase[]             @relation("PurchaseReceivedBy")
+  inventoryAdjustments       InventoryTransaction[]
+  createdInvoices            Invoice[]              @relation("InvoiceCreatedBy")
+  issuedInvoices             Invoice[]              @relation("InvoiceIssuedBy")
+  receivedPayments           Payment[]
+  paidSupplierPayments       SupplierPayment[]
+  recordedExpenses           Expense[]
+  createdJournalEntries      JournalEntry[]         @relation("JournalEntryCreatedBy")
+  postedJournalEntries       JournalEntry[]         @relation("JournalEntryPostedBy")
+  approvedLeaves             Leave[]
+  createdPayrolls            Payroll[]              @relation("PayrollCreatedBy")
+  approvedPayrolls           Payroll[]              @relation("PayrollApprovedBy")
+  paidPayrolls               Payroll[]              @relation("PayrollPaidBy")
+  grantedUserRoles           UserRole[]             @relation("UserRoleAssignedBy")
+  revokedUserRoles           UserRole[]             @relation("UserRoleRevokedBy")
+  auditLogs                  AuditLog[]
+  uploadedDocuments          Document[]
+  sessions                   Session[]
   issuedCustomerAccessTokens CustomerAccessToken[]
 
   @@unique([organizationId, id])
@@ -538,9 +584,11 @@ model Customer {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
-  vehicles     Vehicle[]
-  appointments Appointment[]
-  invoices     Invoice[]
+  vehicles           Vehicle[]
+  appointments       Appointment[]
+  invoices           Invoice[]
+  approvals          Approval[]
+  jobStatusDecisions JobStatusHistory[]
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -622,11 +670,15 @@ model JobCard {
   vehicleId         String        @map("vehicle_id") @db.Uuid
   appointmentId     String?       @map("appointment_id") @db.Uuid
   jobNumber         String        @map("job_number")
-  status            JobCardStatus @default(RECEIVED)
+  status            JobCardStatus @default(ARRIVED)
   odometerReading   Int?          @map("odometer_reading")
   customerComplaint String?       @map("customer_complaint")
   openedAt          DateTime      @default(now()) @map("opened_at") @db.Timestamptz
   closedAt          DateTime?     @map("closed_at") @db.Timestamptz
+  /// Vehicle handed back to the customer (PAID → DELIVERED).
+  deliveredAt       DateTime?     @map("delivered_at") @db.Timestamptz
+  deliveredByUserId String?       @map("delivered_by_user_id") @db.Uuid
+  deliveryNotes     String?       @map("delivery_notes")
   createdByUserId   String        @map("created_by_user_id") @db.Uuid
   createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz
@@ -636,6 +688,7 @@ model JobCard {
   vehicle      Vehicle      @relation(fields: [organizationId, vehicleId], references: [organizationId, id], onDelete: Restrict)
   appointment  Appointment? @relation(fields: [organizationId, appointmentId], references: [organizationId, id], onDelete: Restrict)
   createdBy    User         @relation(fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+  deliveredBy  User?        @relation("JobCardDeliveredBy", fields: [organizationId, deliveredByUserId], references: [organizationId, id], onDelete: Restrict)
 
   statusHistory JobStatusHistory[]
   assignments   JobAssignment[]
@@ -645,6 +698,7 @@ model JobCard {
   labours       Labour[]
   partUsages    PartUsage[]
   workRecords   WorkRecord[]
+  qualityChecks QualityCheck[]
   invoices      Invoice[]
 
   @@unique([organizationId, id])
@@ -658,18 +712,22 @@ model JobCard {
 }
 
 /// Immutable append-only log: rows are never edited after insert (rule 10).
+/// Exactly one actor per row: the staff user who made the change, or the
+/// customer whose own decision caused it (online quotation approval).
 model JobStatusHistory {
-  id              String         @id @default(uuid(7)) @db.Uuid
-  organizationId  String         @map("organization_id") @db.Uuid
-  jobCardId       String         @map("job_card_id") @db.Uuid
-  fromStatus      JobCardStatus? @map("from_status")
-  toStatus        JobCardStatus  @map("to_status")
-  changedByUserId String         @map("changed_by_user_id") @db.Uuid
-  changedAt       DateTime       @default(now()) @map("changed_at") @db.Timestamptz
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  organizationId      String         @map("organization_id") @db.Uuid
+  jobCardId           String         @map("job_card_id") @db.Uuid
+  fromStatus          JobCardStatus? @map("from_status")
+  toStatus            JobCardStatus  @map("to_status")
+  changedByUserId     String?        @map("changed_by_user_id") @db.Uuid
+  changedByCustomerId String?        @map("changed_by_customer_id") @db.Uuid
+  changedAt           DateTime       @default(now()) @map("changed_at") @db.Timestamptz
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  jobCard      JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
-  changedBy    User         @relation(fields: [organizationId, changedByUserId], references: [organizationId, id], onDelete: Restrict)
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard           JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  changedBy         User?        @relation(fields: [organizationId, changedByUserId], references: [organizationId, id], onDelete: Restrict)
+  changedByCustomer Customer?    @relation(fields: [organizationId, changedByCustomerId], references: [organizationId, id], onDelete: Restrict)
 
   @@index([organizationId])
   @@index([organizationId, jobCardId, changedAt])
@@ -778,6 +836,9 @@ model Estimate {
   previousVersionId String?        @map("previous_version_id") @db.Uuid
   estimateNumber    String         @map("estimate_number")
   version           Int            @default(1)
+  kind              EstimateKind   @default(ORIGINAL)
+  /// Why the work is needed — used for ADDITIONAL work found during repair.
+  notes             String?
   status            EstimateStatus @default(DRAFT)
   subtotal          Decimal        @db.Decimal(14, 2)
   taxAmount         Decimal        @default(0) @map("tax_amount") @db.Decimal(14, 2)
@@ -804,6 +865,7 @@ model Estimate {
   @@index([organizationId])
   @@index([organizationId, jobCardId])
   @@index([organizationId, previousVersionId])
+  @@index([organizationId, jobCardId, kind])
   @@map("estimates")
 }
 
@@ -827,6 +889,8 @@ model EstimateItem {
   part         Part?        @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
 
   approvalItems ApprovalItem[]
+  labours       Labour[]
+  partUsages    PartUsage[]
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -845,20 +909,29 @@ model Approval {
   status           ApprovalStatus
   approvalMethod   ApprovalMethod @map("approval_method")
   approvedAt       DateTime?      @map("approved_at") @db.Timestamptz
-  recordedByUserId String         @map("recorded_by_user_id") @db.Uuid
+  /// When the customer made the decision (approved or rejected).
+  decidedAt        DateTime       @default(now()) @map("decided_at") @db.Timestamptz
+  /// The customer who made the decision — always the customer, never staff.
+  customerId       String         @map("customer_id") @db.Uuid
+  /// Staff member who recorded a decision given in person / by phone etc.
+  /// NULL for ONLINE decisions the customer made themselves. The staff
+  /// member who sent the quotation is Estimate.sentByUserId.
+  recordedByUserId String?        @map("recorded_by_user_id") @db.Uuid
   notes            String?
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   estimate     Estimate     @relation(fields: [organizationId, estimateId], references: [organizationId, id], onDelete: Restrict)
-  recordedBy   User         @relation(fields: [organizationId, recordedByUserId], references: [organizationId, id], onDelete: Restrict)
+  customer     Customer     @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
+  recordedBy   User?        @relation(fields: [organizationId, recordedByUserId], references: [organizationId, id], onDelete: Restrict)
 
   items ApprovalItem[]
 
   @@unique([organizationId, id])
   @@index([organizationId])
   @@index([organizationId, estimateId])
+  @@index([organizationId, customerId])
   @@map("approvals")
 }
 
@@ -891,6 +964,9 @@ model Labour {
   jobCardId             String   @map("job_card_id") @db.Uuid
   performedByEmployeeId String   @map("performed_by_employee_id") @db.Uuid
   workRecordId          String?  @map("work_record_id") @db.Uuid
+  /// The approved estimate line this labour fulfils. NULL = additional work
+  /// that the customer has not approved (never charged automatically).
+  estimateItemId        String?  @map("estimate_item_id") @db.Uuid
   description           String
   hours                 Decimal  @db.Decimal(8, 2)
   rate                  Decimal  @db.Decimal(14, 2)
@@ -899,10 +975,11 @@ model Labour {
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  jobCard             JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
-  performedByEmployee Employee     @relation(fields: [organizationId, performedByEmployeeId], references: [organizationId, id], onDelete: Restrict)
-  workRecord          WorkRecord?  @relation(fields: [organizationId, workRecordId], references: [organizationId, id], onDelete: Restrict)
+  organization        Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard             JobCard       @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  performedByEmployee Employee      @relation(fields: [organizationId, performedByEmployeeId], references: [organizationId, id], onDelete: Restrict)
+  workRecord          WorkRecord?   @relation(fields: [organizationId, workRecordId], references: [organizationId, id], onDelete: Restrict)
+  estimateItem        EstimateItem? @relation(fields: [organizationId, estimateItemId], references: [organizationId, id], onDelete: Restrict)
 
   invoiceItems InvoiceItem[]
 
@@ -911,6 +988,7 @@ model Labour {
   @@index([organizationId, jobCardId])
   @@index([organizationId, performedByEmployeeId])
   @@index([organizationId, workRecordId])
+  @@index([organizationId, estimateItemId])
   @@map("labours")
 }
 
@@ -922,6 +1000,9 @@ model PartUsage {
   jobCardId        String   @map("job_card_id") @db.Uuid
   partId           String   @map("part_id") @db.Uuid
   usedByEmployeeId String   @map("used_by_employee_id") @db.Uuid
+  /// The approved estimate line this part fulfils. NULL = additional work
+  /// that the customer has not approved (never charged automatically).
+  estimateItemId   String?  @map("estimate_item_id") @db.Uuid
   quantity         Decimal  @db.Decimal(12, 3)
   unitCost         Decimal  @map("unit_cost") @db.Decimal(14, 2)
   unitPrice        Decimal  @map("unit_price") @db.Decimal(14, 2)
@@ -929,10 +1010,11 @@ model PartUsage {
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  jobCard        JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
-  part           Part         @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
-  usedByEmployee Employee     @relation(fields: [organizationId, usedByEmployeeId], references: [organizationId, id], onDelete: Restrict)
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard        JobCard       @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  part           Part          @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
+  usedByEmployee Employee      @relation(fields: [organizationId, usedByEmployeeId], references: [organizationId, id], onDelete: Restrict)
+  estimateItem   EstimateItem? @relation(fields: [organizationId, estimateItemId], references: [organizationId, id], onDelete: Restrict)
 
   invoiceItems          InvoiceItem[]
   inventoryTransactions InventoryTransaction[]
@@ -941,6 +1023,7 @@ model PartUsage {
   @@index([organizationId])
   @@index([organizationId, jobCardId])
   @@index([organizationId, partId])
+  @@index([organizationId, estimateItemId])
   @@map("part_usages")
 }
 
@@ -970,6 +1053,36 @@ model WorkRecord {
   @@index([organizationId, jobCardId])
   @@index([organizationId, employeeId])
   @@map("work_records")
+}
+
+/// A quality check of the repair. Append-only history: every check is a new
+/// row (a failed check followed by a passed re-check leaves both). The
+/// employee who checked the vehicle is recorded, plus the user who entered
+/// it, matching Inspection/Diagnosis (work is attributed to Employees).
+model QualityCheck {
+  id                  String             @id @default(uuid(7)) @db.Uuid
+  organizationId      String             @map("organization_id") @db.Uuid
+  jobCardId           String             @map("job_card_id") @db.Uuid
+  checkedByEmployeeId String             @map("checked_by_employee_id") @db.Uuid
+  recordedByUserId    String             @map("recorded_by_user_id") @db.Uuid
+  status              QualityCheckStatus
+  notes               String?
+  /// Required when FAILED: what must be corrected before the next check.
+  correctionsRequired String?            @map("corrections_required")
+  checkedAt           DateTime           @default(now()) @map("checked_at") @db.Timestamptz
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard           JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  checkedByEmployee Employee     @relation(fields: [organizationId, checkedByEmployeeId], references: [organizationId, id], onDelete: Restrict)
+  recordedBy        User         @relation(fields: [organizationId, recordedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, jobCardId, checkedAt])
+  @@index([organizationId, checkedByEmployeeId])
+  @@map("quality_checks")
 }
 
 // =============================================================================
@@ -1198,6 +1311,8 @@ model Invoice {
 
   @@unique([organizationId, id])
   @@unique([organizationId, invoiceNumber])
+  /// A job card has at most one live invoice; a VOID/CANCELLED one can be replaced.
+  @@unique([jobCardId], map: "one_live_invoice_per_job_card", where: raw("status <> 'VOID' AND status <> 'CANCELLED'"))
   @@index([organizationId])
   @@index([organizationId, branchId])
   @@index([organizationId, jobCardId])
@@ -1255,6 +1370,7 @@ model Payment {
   method              PaymentMethod
   status              PaymentStatus @default(COMPLETED)
   referenceNumber     String?       @map("reference_number")
+  notes               String?
   reversalOfPaymentId String?       @map("reversal_of_payment_id") @db.Uuid
   receivedAt          DateTime      @default(now()) @map("received_at") @db.Timestamptz
   receivedByUserId    String        @map("received_by_user_id") @db.Uuid
@@ -1473,6 +1589,7 @@ model Employee {
   labours        Labour[]
   partUsages     PartUsage[]
   workRecords    WorkRecord[]
+  qualityChecks  QualityCheck[]
   attendances    Attendance[]
   leaves         Leave[]
   salaries       Salary[]
@@ -1720,16 +1837,16 @@ model Document {
 /// where connected — see docs/integrations.md) before the resource is
 /// shown; the token alone is necessary but not sufficient.
 model CustomerAccessToken {
-  id               String                      @id @default(uuid(7)) @db.Uuid
-  organizationId   String                      @map("organization_id") @db.Uuid
-  resourceType     CustomerAccessResourceType   @map("resource_type")
-  resourceId       String                      @map("resource_id") @db.Uuid
-  tokenHash        String                      @unique @map("token_hash")
-  expiresAt        DateTime                    @map("expires_at") @db.Timestamptz
-  revokedAt        DateTime?                   @map("revoked_at") @db.Timestamptz
-  lastAccessedAt   DateTime?                   @map("last_accessed_at") @db.Timestamptz
-  createdByUserId  String                      @map("created_by_user_id") @db.Uuid
-  createdAt        DateTime                    @default(now()) @map("created_at") @db.Timestamptz
+  id              String                     @id @default(uuid(7)) @db.Uuid
+  organizationId  String                     @map("organization_id") @db.Uuid
+  resourceType    CustomerAccessResourceType @map("resource_type")
+  resourceId      String                     @map("resource_id") @db.Uuid
+  tokenHash       String                     @unique @map("token_hash")
+  expiresAt       DateTime                   @map("expires_at") @db.Timestamptz
+  revokedAt       DateTime?                  @map("revoked_at") @db.Timestamptz
+  lastAccessedAt  DateTime?                  @map("last_accessed_at") @db.Timestamptz
+  createdByUserId String                     @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime                   @default(now()) @map("created_at") @db.Timestamptz
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   createdBy    User         @relation(fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)

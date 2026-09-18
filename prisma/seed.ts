@@ -148,6 +148,60 @@ async function main() {
     });
   }
 
+  // Development parts catalog + opening stock, so the repair workflow can be
+  // exercised. Dev data only — nothing in the application depends on these
+  // SKUs. Safe to re-run: parts upsert by SKU, and opening stock is written
+  // only for a part that has no stock movements at this branch yet.
+  // Opening stock is an ADJUSTMENT ledger row (stock is always the sum of
+  // the ledger — there is no stock counter to set).
+  const sampleParts = [
+    { sku: 'OIL-5W30-1L', name: 'Engine oil 5W-30 (1 L)', unitOfMeasure: 'litre', cost: '18.00', price: '32.00', reorder: '20', opening: '120' },
+    { sku: 'FLT-OIL-STD', name: 'Oil filter', unitOfMeasure: 'piece', cost: '14.00', price: '28.00', reorder: '10', opening: '40' },
+    { sku: 'FLT-AIR-STD', name: 'Air filter', unitOfMeasure: 'piece', cost: '22.00', price: '45.00', reorder: '8', opening: '25' },
+    { sku: 'FLT-CABIN', name: 'Cabin (AC) filter', unitOfMeasure: 'piece', cost: '20.00', price: '42.00', reorder: '8', opening: '20' },
+    { sku: 'BRK-PAD-FRT', name: 'Brake pad set (front)', unitOfMeasure: 'set', cost: '95.00', price: '180.00', reorder: '4', opening: '12' },
+    { sku: 'BRK-DSC-FRT', name: 'Brake disc (front)', unitOfMeasure: 'piece', cost: '140.00', price: '260.00', reorder: '4', opening: '8' },
+    { sku: 'IGN-PLUG', name: 'Spark plug', unitOfMeasure: 'piece', cost: '16.00', price: '35.00', reorder: '16', opening: '48' },
+    { sku: 'CLT-1L', name: 'Coolant (1 L)', unitOfMeasure: 'litre', cost: '12.00', price: '25.00', reorder: '15', opening: '60' },
+    { sku: 'BRK-FLD-DOT4', name: 'Brake fluid DOT 4 (500 ml)', unitOfMeasure: 'bottle', cost: '15.00', price: '30.00', reorder: '6', opening: '20' },
+    { sku: 'WPR-BLD-PR', name: 'Wiper blades (pair)', unitOfMeasure: 'pair', cost: '35.00', price: '70.00', reorder: '5', opening: '15' },
+    { sku: 'AC-CLUTCH', name: 'AC compressor clutch assembly', unitOfMeasure: 'piece', cost: '310.00', price: '480.00', reorder: '1', opening: '3' },
+    { sku: 'AC-GAS-R134', name: 'AC refrigerant R134a (kg)', unitOfMeasure: 'kg', cost: '45.00', price: '90.00', reorder: '5', opening: '15' },
+  ];
+  for (const sample of sampleParts) {
+    const part = await prisma.part.upsert({
+      where: { organizationId_sku: { organizationId: organization.id, sku: sample.sku } },
+      update: {},
+      create: {
+        organizationId: organization.id,
+        sku: sample.sku,
+        name: sample.name,
+        unitOfMeasure: sample.unitOfMeasure,
+        defaultCostPrice: sample.cost,
+        defaultSellingPrice: sample.price,
+        defaultTaxRate: '5.00',
+        reorderLevel: sample.reorder,
+      },
+    });
+    const movements = await prisma.inventoryTransaction.count({
+      where: { organizationId: organization.id, branchId: branch.id, partId: part.id },
+    });
+    if (movements === 0) {
+      await prisma.inventoryTransaction.create({
+        data: {
+          organizationId: organization.id,
+          branchId: branch.id,
+          partId: part.id,
+          transactionType: 'ADJUSTMENT',
+          quantity: sample.opening,
+          unitCost: sample.cost,
+          performedByUserId: ownerUser.id,
+          note: 'Opening stock (development seed)',
+        },
+      });
+    }
+  }
+
   const sampleCustomers = [
     { name: 'Ahmed Al Marzooqi', phone: '0501234567', plateNumber: 'A 12345', make: 'Toyota', model: 'Land Cruiser', year: 2021 },
     { name: 'Fatima Hassan', phone: '0559876543', plateNumber: 'B 54321', make: 'Nissan', model: 'Patrol', year: 2019 },

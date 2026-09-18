@@ -35,7 +35,14 @@ export function EstimateTable({ estimates, dateLabel }: { estimates: QueueEstima
           {estimates.map((estimate) => (
             <TableRow key={estimate.id} className="relative">
               <TableCell>
-                <Link href={`/job-cards/${estimate.jobCard.id}/estimate`} className="after:absolute after:inset-0">
+                <Link
+                  href={
+                    estimate.kind === 'ADDITIONAL'
+                      ? `/job-cards/${estimate.jobCard.id}/additional/${estimate.id}`
+                      : `/job-cards/${estimate.jobCard.id}/estimate`
+                  }
+                  className="after:absolute after:inset-0"
+                >
                   <VehiclePlate plateNumber={estimate.jobCard.vehicle.plateNumber} className="px-2 py-0.5 text-xs" />
                 </Link>
               </TableCell>
@@ -44,6 +51,7 @@ export function EstimateTable({ estimates, dateLabel }: { estimates: QueueEstima
                 <span className="block text-xs text-muted-foreground">
                   {estimate.jobCard.jobNumber}
                   {estimate.version > 1 ? ` · v${estimate.version}` : ''}
+                  {estimate.kind === 'ADDITIONAL' ? ' · additional work' : ''}
                 </span>
               </TableCell>
               <TableCell>
@@ -57,7 +65,7 @@ export function EstimateTable({ estimates, dateLabel }: { estimates: QueueEstima
                 {dateLabel === 'sent' && estimate.sentAt
                   ? `${formatDateTime(estimate.sentAt)}${estimate.validUntil ? ` · ${formatCalendarDate(estimate.validUntil)}` : ''}`
                   : dateLabel === 'decided' && estimate.approvals[0]
-                    ? formatDateTime(estimate.approvals[0].createdAt)
+                    ? formatDateTime(estimate.approvals[0].decidedAt)
                     : formatDateTime(estimate.updatedAt)}
               </TableCell>
               <TableCell className="text-right font-medium tabular-nums">{formatMoney(estimate.totalAmount)}</TableCell>

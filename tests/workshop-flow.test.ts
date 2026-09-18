@@ -39,6 +39,7 @@ import { transitionJobStatus } from '@/lib/workshop/job-status';
 import { getQuoteAccess, verifyQuoteAccess, loadCustomerQuote, decideQuoteAsCustomer } from '@/lib/customer-access/quote';
 import { hashToken } from '@/lib/customer-access/tokens';
 import { toLocalDateTimeInput, localDateString } from '@/lib/format';
+import { resolveDefaultVatRate, UAE_STANDARD_VAT_RATE } from '@/lib/tax';
 
 const RUN = Date.now().toString(36).toUpperCase();
 const ALL_PERMISSIONS = [
@@ -254,7 +255,7 @@ describe('core workshop journey', () => {
     assert.match(result.jobNumber, /^JC-\d{6}$/);
 
     const job = await prisma.jobCard.findUniqueOrThrow({ where: { id: jobCardId }, include: { vehicle: true } });
-    assert.equal(job.status, 'RECEIVED');
+    assert.equal(job.status, 'ARRIVED');
     assert.equal(job.vehicle.customerId, customerId);
     assert.equal(job.appointmentId, appointment.id);
     assert.equal(job.odometerReading, 45000);
@@ -313,18 +314,19 @@ describe('core workshop journey', () => {
     workspace = await getJobWorkspace(a.owner, jobCardId);
     assert.equal(getNextAction(workspace).title, 'Inspect the vehicle');
 
-    await expectDomainError(prisma.$transaction((tx) => transitionJobStatus(tx, a.owner, jobCardId, 'DIAGNOSED')), /can't move/);
-    await expectDomainError(prisma.$transaction((tx) => transitionJobStatus(tx, a.owner, jobCardId, 'INSPECTING')), /Start the inspection/);
+    await expectDomainError(prisma.$transaction((tx) => transitionJobStatus(tx, a.owner, jobCardId, 'DIAGNOSIS')), /can't move/);
+    await expectDomainError(prisma.$transaction((tx) => transitionJobStatus(tx, a.owner, jobCardId, 'INSPECTION')), /Start the inspection/);
+    await expectDomainError(prisma.$transaction((tx) => transitionJobStatus(tx, a.owner, jobCardId, 'APPROVED')), /can't move/);
     await expectDomainError(
       saveDiagnosis(a.owner, jobCardId, { employeeId: a.technicianIds[1], findings: 'x x x', recommendedAction: 'y y y' }),
       /Inspect the vehicle/,
     );
-    assert.equal(await jobStatus(jobCardId), 'RECEIVED');
+    assert.equal(await jobStatus(jobCardId), 'ARRIVED');
   });
 
   test('7. inspection with findings', async () => {
     const inspection = await startInspection(a.owner, jobCardId, a.technicianIds[1]);
-    assert.equal(await jobStatus(jobCardId), 'INSPECTING');
+    assert.equal(await jobStatus(jobCardId), 'INSPECTION');
     await expectDomainError(startInspection(a.owner, jobCardId, a.technicianIds[1]), /just arrived/);
 
     await expectDomainError(
@@ -382,7 +384,7 @@ describe('core workshop journey', () => {
       findings: 'AC compressor clutch coil open circuit',
       recommendedAction: 'Replace compressor clutch, recharge gas; replace front brake pads',
     });
-    assert.equal(await jobStatus(jobCardId), 'DIAGNOSED');
+    assert.equal(await jobStatus(jobCardId), 'DIAGNOSIS');
     // Correction while still diagnosed updates in place.
     await saveDiagnosis(a.owner, jobCardId, {
       employeeId: a.technicianIds[1],
@@ -399,6 +401,9 @@ describe('core workshop journey', () => {
     estimateId = estimate.id;
     assert.match(estimate.estimateNumber, /^EST-\d{6}$/);
     assert.equal((await createEstimate(a.owner, jobCardId)).id, estimateId, 'reopens the same draft');
+    assert.equal(await jobStatus(jobCardId), 'ESTIMATE');
+    assert.equal(getNextAction(await getJobWorkspace(a.owner, jobCardId)).title, 'Finish and send the estimate');
+    assert.equal(resolveDefaultVatRate(a.owner.organizationId), UAE_STANDARD_VAT_RATE);
 
     await expectDomainError(sendEstimate(a.owner, estimateId), /at least one/);
     await expectDomainError(
@@ -419,6 +424,9 @@ describe('core workshop journey', () => {
         { itemType: 'LABOUR', description: 'AC gas recharge', quantity: '1', unitPrice: '99.99' },
       ],
     });
+    // Lines without a rate take the organization default (lib/tax.ts), stored on the line.
+    const stored = await prisma.estimateItem.findMany({ where: { estimateId } });
+    assert.ok(stored.every((item) => item.taxRate?.toString() === '5'));
     // 375.00 + 480.00 + 130.00 + 99.99 = 1084.99; VAT per line 18.75 + 24.00 + 6.50 + 5.00 = 54.25
     assert.equal(saved.subtotal.toString(), '1084.99');
     assert.equal(saved.taxAmount.toString(), '54.25');
@@ -429,7 +437,7 @@ describe('core workshop journey', () => {
     const sent = await sendEstimate(a.owner, estimateId);
     rawToken = sent.rawToken;
     assert.match(rawToken, /^[A-Za-z0-9_-]{43}$/);
-    assert.equal(await jobStatus(jobCardId), 'ESTIMATE_SENT');
+    assert.equal(await jobStatus(jobCardId), 'WAITING_APPROVAL');
     const stored = await prisma.customerAccessToken.findFirstOrThrow({ where: { resourceId: estimateId } });
     assert.equal(stored.tokenHash, hashToken(rawToken));
     assert.notEqual(stored.tokenHash, rawToken, 'raw token is never stored');
@@ -479,7 +487,13 @@ describe('core workshop journey', () => {
     const estimate = await prisma.estimate.findUniqueOrThrow({ where: { id: estimateId }, include: { approvals: { include: { items: true } }, items: true } });
     assert.equal(estimate.status, 'APPROVED');
     assert.equal(estimate.approvals.length, 1);
-    assert.equal(estimate.approvals[0].approvalMethod, 'DIGITAL_SIGNATURE');
+    // The customer decided online; no staff member is recorded as having approved it.
+    assert.equal(estimate.approvals[0].approvalMethod, 'ONLINE');
+    assert.equal(estimate.approvals[0].customerId, customerId);
+    assert.equal(estimate.approvals[0].recordedByUserId, null);
+    assert.ok(estimate.approvals[0].decidedAt instanceof Date);
+    // The staff member who sent the quotation stays on the estimate.
+    assert.equal(estimate.sentByUserId, a.owner.id);
     assert.equal(estimate.approvals[0].items.length, estimate.items.length);
     assert.equal(await jobStatus(jobCardId), 'APPROVED');
 
@@ -489,12 +503,17 @@ describe('core workshop journey', () => {
     assert.equal(approvalAudit.action, 'approval.approved');
     assert.equal(approvalAudit.actorUserId, null);
     assert.equal((approvalAudit.metadata as { decidedBy: string }).decidedBy, 'customer');
+    assert.equal((approvalAudit.metadata as { sentByUserId: string }).sentByUserId, a.owner.id);
 
     const history = await prisma.jobStatusHistory.findMany({ where: { jobCardId }, orderBy: [{ changedAt: 'asc' }, { id: 'asc' }] });
     assert.deepEqual(
       history.map((h) => h.toStatus),
-      ['RECEIVED', 'INSPECTING', 'DIAGNOSED', 'ESTIMATE_SENT', 'APPROVED'],
+      ['ARRIVED', 'INSPECTION', 'DIAGNOSIS', 'ESTIMATE', 'WAITING_APPROVAL', 'APPROVED'],
     );
+    // Every change before the decision was made by staff; the approval by the customer.
+    assert.ok(history.slice(0, -1).every((h) => h.changedByUserId === a.owner.id && h.changedByCustomerId === null));
+    assert.equal(history.at(-1)?.changedByCustomerId, customerId);
+    assert.equal(history.at(-1)?.changedByUserId, null);
     assert.deepEqual(await auditActions(a.owner.organizationId, estimateId), ['estimate.created', 'estimate.sent']);
 
     const workspace = await getJobWorkspace(a.owner, jobCardId);
@@ -506,11 +525,20 @@ describe('core workshop journey', () => {
   test('13. rejection, revision and expired links', async () => {
     const { jobCardId: job2, estimateId: est2, rawToken: token2 } = otherJob;
     await recordCustomerDecision(a.owner, est2, { decision: 'REJECTED', method: 'PHONE', notes: 'Too expensive' });
-    assert.equal(await jobStatus(job2), 'ESTIMATE_SENT', 'rejection keeps the job at the estimate stage');
+    assert.equal(await jobStatus(job2), 'REJECTED');
+    const rejection = await prisma.approval.findFirstOrThrow({ where: { estimateId: est2 } });
+    assert.equal(rejection.approvalMethod, 'PHONE');
+    assert.equal(rejection.recordedByUserId, a.owner.id, 'staff who took the call is recorded');
+    assert.ok(rejection.customerId, 'the decision still belongs to the customer');
+    const rejectedHistory = await prisma.jobStatusHistory.findFirstOrThrow({
+      where: { jobCardId: job2, toStatus: 'REJECTED' },
+    });
+    assert.equal(rejectedHistory.changedByUserId, a.owner.id);
     let workspace = await getJobWorkspace(a.owner, job2);
     assert.equal(getNextAction(workspace).title, 'Customer rejected the estimate');
 
     const revision = await reviseEstimate(a.owner, est2);
+    assert.equal(await jobStatus(job2), 'ESTIMATE', 'revising reopens the estimate stage');
     assert.equal(revision.version, 2);
     assert.equal(revision.previousVersionId, est2);
     assert.match(revision.estimateNumber, /^EST-\d{6}-R2$/);
@@ -522,6 +550,7 @@ describe('core workshop journey', () => {
     workspace = await getJobWorkspace(a.owner, job2);
     assert.equal(workspace.estimate?.id, revision.id);
     assert.equal(getNextAction(workspace).title, 'Waiting for customer approval');
+    assert.equal(await jobStatus(job2), 'WAITING_APPROVAL');
 
     // Expired link: can't be viewed or used.
     await prisma.customerAccessToken.updateMany({
@@ -531,6 +560,34 @@ describe('core workshop journey', () => {
     assert.equal((await getQuoteAccess(resent.rawToken, undefined)).state, 'expired');
     assert.deepEqual(await verifyQuoteAccess(resent.rawToken, 'any', 'any'), { ok: false, state: 'expired' });
     await expectDomainError(decideQuoteAsCustomer(resent.rawToken, 'x', 'APPROVED', null), /confirm your vehicle details/);
+  });
+
+  test('13b. database enforces attribution rules', async () => {
+    const approval = await prisma.approval.findFirstOrThrow({ where: { estimateId } });
+    // An ONLINE decision can't carry a recording staff member…
+    await assert.rejects(
+      prisma.approval.update({ where: { id: approval.id }, data: { recordedByUserId: a.owner.id } }),
+      /approvals_recorder_matches_method|check constraint/i,
+    );
+    // …and a history row can't have two actors, or none.
+    await assert.rejects(
+      prisma.jobStatusHistory.create({
+        data: {
+          organizationId: a.owner.organizationId,
+          jobCardId,
+          toStatus: 'ON_HOLD',
+          changedByUserId: a.owner.id,
+          changedByCustomerId: customerId,
+        },
+      }),
+      /job_status_history_single_actor|check constraint/i,
+    );
+    await assert.rejects(
+      prisma.jobStatusHistory.create({
+        data: { organizationId: a.owner.organizationId, jobCardId, toStatus: 'ON_HOLD' },
+      }),
+      /job_status_history_single_actor|check constraint/i,
+    );
   });
 
   test('14. permissions and tenant isolation', async () => {

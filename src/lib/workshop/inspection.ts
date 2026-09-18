@@ -7,7 +7,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull } from '@/lib/normalize';
-import { applyJobStatusChange } from '@/lib/workshop/job-status';
+import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 
 /**
  * The standard walk-around checklist a technician works through. Items are
@@ -46,7 +46,7 @@ async function loadJobForWork(user: AuthenticatedUser, jobCardId: string) {
 /** Opens the inspection and moves the job from Arrived into Inspection. */
 export async function startInspection(user: AuthenticatedUser, jobCardId: string, employeeId: string) {
   const jobCard = await loadJobForWork(user, jobCardId);
-  if (jobCard.status !== 'RECEIVED') {
+  if (normalizeStatus(jobCard.status) !== 'ARRIVED') {
     throw new DomainError('An inspection can only be started when the vehicle has just arrived.');
   }
 
@@ -60,8 +60,8 @@ export async function startInspection(user: AuthenticatedUser, jobCardId: string
     await applyJobStatusChange(tx, {
       organizationId: user.organizationId,
       jobCardId: jobCard.id,
-      toStatus: 'INSPECTING',
-      actorUserId: user.id,
+      toStatus: 'INSPECTION',
+      actor: { userId: user.id },
       source: 'workflow',
     });
     const inspection = await tx.inspection.create({
@@ -112,7 +112,7 @@ async function loadOpenInspection(user: AuthenticatedUser, inspectionId: string)
   if (inspection.status !== 'IN_PROGRESS') {
     throw new DomainError('This inspection is already complete and can no longer be changed.');
   }
-  if (inspection.jobCard.status !== 'INSPECTING') {
+  if (normalizeStatus(inspection.jobCard.status) !== 'INSPECTION') {
     throw new DomainError('This job is not in inspection right now.');
   }
   return inspection;

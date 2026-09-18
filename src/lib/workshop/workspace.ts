@@ -1,10 +1,15 @@
-import type { JobCardStatus } from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { localDateString } from '@/lib/format';
-import { getEffectiveStageStatus, JOB_STATUS_LABEL } from '@/lib/workshop/stages';
+import {
+  getEffectiveStageStatus,
+  getResumeTarget,
+  JOB_STATUS_LABEL,
+  normalizeStatus,
+  type WorkflowStatus,
+} from '@/lib/workshop/stages';
 import { getManualForwardStatus } from '@/lib/workshop/job-status';
 
 /** Everything the Job Card workspace and its sub-pages show. One query shape, used everywhere. */
@@ -14,11 +19,15 @@ export async function getJobWorkspace(user: AuthenticatedUser, jobCardId: string
     include: {
       branch: { select: { name: true } },
       createdBy: { select: { fullName: true } },
+      deliveredBy: { select: { fullName: true } },
       appointment: { select: { scheduledAt: true, notes: true } },
       vehicle: { include: { customer: true } },
       statusHistory: {
         orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
-        include: { changedBy: { select: { fullName: true } } },
+        include: {
+          changedBy: { select: { fullName: true } },
+          changedByCustomer: { select: { name: true } },
+        },
       },
       assignments: {
         where: { unassignedAt: null },
@@ -35,13 +44,19 @@ export async function getJobWorkspace(user: AuthenticatedUser, jobCardId: string
         orderBy: { diagnosedAt: 'desc' },
         include: { diagnosedByEmployee: { select: { id: true, firstName: true, lastName: true } } },
       },
+      // The original quotation chain only; additional-work requests are
+      // shown by the repair sections (lib/workshop/repair.ts).
       estimates: {
+        where: { kind: 'ORIGINAL' },
         orderBy: { version: 'desc' },
         include: {
           items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
           approvals: {
-            orderBy: { createdAt: 'desc' },
-            include: { recordedBy: { select: { fullName: true } } },
+            orderBy: { decidedAt: 'desc' },
+            include: {
+              recordedBy: { select: { fullName: true } },
+              customer: { select: { name: true } },
+            },
           },
           preparedBy: { select: { fullName: true } },
           sentBy: { select: { fullName: true } },
@@ -57,7 +72,9 @@ export async function getJobWorkspace(user: AuthenticatedUser, jobCardId: string
   const inspection = jobCard.inspections[0] ?? null;
   const diagnosis = jobCard.diagnoses[0] ?? null;
   const estimate = jobCard.estimates[0] ?? null;
+  const status = normalizeStatus(jobCard.status);
   const effectiveStatus = getEffectiveStageStatus(jobCard.status, jobCard.statusHistory);
+  const resumeStatus = getResumeTarget(jobCard.statusHistory);
   const estimateExpired =
     estimate?.status === 'SENT' &&
     estimate.validUntil !== null &&
@@ -65,12 +82,14 @@ export async function getJobWorkspace(user: AuthenticatedUser, jobCardId: string
 
   return {
     jobCard,
+    status,
     primaryTechnician: primary?.employee ?? null,
     inspection,
     diagnosis,
     estimate,
     estimateExpired,
     effectiveStatus,
+    resumeStatus,
   };
 }
 
@@ -85,28 +104,32 @@ export interface NextAction {
   /** Primary call to action: a page to go to, or a manual status change. */
   href?: string;
   label?: string;
-  manualStatus?: JobCardStatus;
+  manualStatus?: WorkflowStatus;
+  /** A workflow step the panel performs itself (with confirmation). */
+  workflowAction?: 'START_REPAIR';
 }
+
+const MANUAL_TITLES: Partial<Record<WorkflowStatus, string>> = {};
 
 /** "What do I do next?" — derived from the job status plus the workflow records, never stored. */
 export function getNextAction(workspace: JobWorkspace): NextAction {
-  const { jobCard, primaryTechnician, inspection, estimate, estimateExpired } = workspace;
+  const { jobCard, status, primaryTechnician, inspection, estimate, estimateExpired } = workspace;
   const base = `/job-cards/${jobCard.id}`;
 
-  switch (jobCard.status) {
+  switch (status) {
     case 'CANCELLED':
       return { tone: 'done', title: 'Job cancelled', description: 'No further work will be done on this job.' };
-    case 'CLOSED':
-      return { tone: 'done', title: 'Job closed', description: 'The vehicle has been handed back.' };
+    case 'DELIVERED':
+      return { tone: 'done', title: 'Vehicle delivered', description: 'The job is complete and the vehicle has been handed back.' };
     case 'ON_HOLD':
       return {
         tone: 'warning',
         title: 'Job is on hold',
-        description: `Paused at “${JOB_STATUS_LABEL[workspace.effectiveStatus]}”. Resume when the blocker is cleared.`,
-        manualStatus: workspace.effectiveStatus,
+        description: `Paused at “${JOB_STATUS_LABEL[workspace.resumeStatus]}”. Resume when the blocker is cleared.`,
+        manualStatus: workspace.resumeStatus,
         label: 'Resume job',
       };
-    case 'RECEIVED':
+    case 'ARRIVED':
       if (!primaryTechnician) {
         return {
           tone: 'action',
@@ -123,7 +146,7 @@ export function getNextAction(workspace: JobWorkspace): NextAction {
         href: `${base}/inspection`,
         label: 'Start inspection',
       };
-    case 'INSPECTING':
+    case 'INSPECTION':
       if (inspection?.status === 'COMPLETED') {
         return {
           tone: 'action',
@@ -140,41 +163,23 @@ export function getNextAction(workspace: JobWorkspace): NextAction {
         href: `${base}/inspection`,
         label: 'Continue inspection',
       };
-    case 'DIAGNOSED':
-      return estimate?.status === 'DRAFT'
-        ? {
-            tone: 'action',
-            title: 'Finish and send the estimate',
-            description: 'Add the labour and parts, check the total, then send it to the customer.',
-            href: `${base}/estimate`,
-            label: 'Open estimate',
-          }
-        : {
-            tone: 'action',
-            title: 'Create the estimate',
-            description: 'Price the recommended work so the customer can approve it.',
-            href: `${base}/estimate`,
-            label: 'Create estimate',
-          };
-    case 'ESTIMATE_SENT':
-      if (estimate?.status === 'REJECTED') {
-        return {
-          tone: 'warning',
-          title: 'Customer rejected the estimate',
-          description: 'Revise the quotation and send it again, or cancel the job.',
-          href: `${base}/estimate`,
-          label: 'Revise estimate',
-        };
-      }
-      if (estimate?.status === 'DRAFT') {
-        return {
-          tone: 'action',
-          title: 'Send the revised estimate',
-          description: `Version ${estimate.version} is a draft. Send it when it's ready.`,
-          href: `${base}/estimate`,
-          label: 'Open estimate',
-        };
-      }
+    case 'DIAGNOSIS':
+      return {
+        tone: 'action',
+        title: 'Create the estimate',
+        description: 'Price the recommended work so the customer can approve it.',
+        href: `${base}/estimate`,
+        label: 'Create estimate',
+      };
+    case 'ESTIMATE':
+      return {
+        tone: 'action',
+        title: estimate && estimate.version > 1 ? 'Send the revised estimate' : 'Finish and send the estimate',
+        description: 'Add the labour and parts, check the total, then send it to the customer.',
+        href: `${base}/estimate`,
+        label: 'Open estimate',
+      };
+    case 'WAITING_APPROVAL':
       if (estimateExpired) {
         return {
           tone: 'warning',
@@ -191,21 +196,72 @@ export function getNextAction(workspace: JobWorkspace): NextAction {
         href: `${base}/estimate`,
         label: 'View estimate',
       };
-    default: {
-      const forward = getManualForwardStatus(jobCard.status);
-      const titles: Partial<Record<JobCardStatus, string>> = {
-        APPROVED: 'Start the repair',
-        IN_PROGRESS: 'Complete the repair',
-        COMPLETED: 'Invoice the job',
-        INVOICED: 'Close the job',
-      };
+    case 'APPROVED':
       return {
         tone: 'action',
-        title: titles[jobCard.status] ?? 'Continue',
+        title: 'Start the repair',
+        description: 'The customer approved the work. Starting the repair lets the team record parts and labour.',
+        workflowAction: 'START_REPAIR',
+        label: 'Start repair',
+      };
+    case 'REPAIR':
+      return {
+        tone: 'action',
+        title: 'Repair in progress',
+        description: 'Record the parts and labour against the approved work, then do the quality check.',
+        href: `${base}#quality-check`,
+        label: 'Go to quality check',
+      };
+    case 'QUALITY_CHECK':
+      return {
+        tone: 'action',
+        title: 'Record the quality check',
+        description: 'Check the finished work, then pass it or send it back to the technician.',
+        href: `${base}#quality-check`,
+        label: 'Quality check',
+      };
+    case 'READY':
+      return {
+        tone: 'action',
+        title: 'Create the invoice',
+        description: 'Quality check passed. Bill the approved work, then take payment before handing the vehicle back.',
+        href: `${base}#invoice`,
+        label: 'Review invoice',
+      };
+    case 'INVOICED':
+      return {
+        tone: 'waiting',
+        title: 'Waiting for payment',
+        description: 'The invoice is issued. Record payments as the customer pays.',
+        href: `${base}#payments`,
+        label: 'Record payment',
+      };
+    case 'PAID':
+      return {
+        tone: 'action',
+        title: 'Deliver the vehicle',
+        description: 'The invoice is fully paid. Hand the vehicle back and record the delivery.',
+        href: `${base}#delivery`,
+        label: 'Deliver vehicle',
+      };
+    case 'REJECTED':
+      return {
+        tone: 'warning',
+        title: 'Customer rejected the estimate',
+        description: 'Revise the quotation and send it again, or cancel the job.',
+        href: `${base}/estimate`,
+        label: 'Revise estimate',
+      };
+    default: {
+      // Post-approval stages: manual buttons until repair / QC / invoicing get their own screens.
+      const forward = getManualForwardStatus(status);
+      return {
+        tone: 'action',
+        title: MANUAL_TITLES[status] ?? 'Continue',
         description:
-          jobCard.status === 'APPROVED'
-            ? 'The customer approved the work. Repair tracking arrives in the next phase.'
-            : 'Repair, invoicing and delivery screens arrive in later phases.',
+          status === 'READY'
+            ? 'Quality check passed. The vehicle can be collected. Invoicing and handover arrive in later phases.'
+            : 'Invoicing, payment and delivery screens arrive in later phases.',
         manualStatus: forward ?? undefined,
         label: forward ? `Mark ${JOB_STATUS_LABEL[forward].toLowerCase()}` : undefined,
       };
@@ -232,15 +288,24 @@ export async function getWorkQueues(user: AuthenticatedUser) {
     },
   };
 
-  const [awaitingInspection, inInspection, awaitingDiagnosis, estimates] = await Promise.all([
-    prisma.jobCard.findMany({ where: { organizationId: org, status: 'RECEIVED' }, orderBy: { openedAt: 'asc' }, select: jobSelect }),
+  const [awaitingInspection, inInspection, awaitingDiagnosis, needsEstimate, estimates] = await Promise.all([
     prisma.jobCard.findMany({
-      where: { organizationId: org, status: 'INSPECTING', inspections: { some: { status: 'IN_PROGRESS' } } },
+      where: { organizationId: org, status: { in: ['ARRIVED', 'RECEIVED'] } },
       orderBy: { openedAt: 'asc' },
       select: jobSelect,
     }),
     prisma.jobCard.findMany({
-      where: { organizationId: org, status: 'INSPECTING', inspections: { none: { status: 'IN_PROGRESS' } } },
+      where: { organizationId: org, status: { in: ['INSPECTION', 'INSPECTING'] }, inspections: { some: { status: 'IN_PROGRESS' } } },
+      orderBy: { openedAt: 'asc' },
+      select: jobSelect,
+    }),
+    prisma.jobCard.findMany({
+      where: { organizationId: org, status: { in: ['INSPECTION', 'INSPECTING'] }, inspections: { none: { status: 'IN_PROGRESS' } } },
+      orderBy: { openedAt: 'asc' },
+      select: jobSelect,
+    }),
+    prisma.jobCard.findMany({
+      where: { organizationId: org, status: { in: ['DIAGNOSIS', 'DIAGNOSED'] } },
       orderBy: { openedAt: 'asc' },
       select: jobSelect,
     }),
@@ -257,17 +322,12 @@ export async function getWorkQueues(user: AuthenticatedUser) {
         validUntil: true,
         sentAt: true,
         updatedAt: true,
-        approvals: { orderBy: { createdAt: 'desc' }, take: 1, select: { approvalMethod: true, createdAt: true } },
+        kind: true,
+        approvals: { orderBy: { decidedAt: 'desc' }, take: 1, select: { approvalMethod: true, decidedAt: true } },
         jobCard: { select: jobSelect },
       },
     }),
   ]);
-
-  const needsEstimate = await prisma.jobCard.findMany({
-    where: { organizationId: org, status: 'DIAGNOSED', estimates: { none: {} } },
-    orderBy: { openedAt: 'asc' },
-    select: jobSelect,
-  });
 
   return { awaitingInspection, inInspection, awaitingDiagnosis, needsEstimate, estimates };
 }

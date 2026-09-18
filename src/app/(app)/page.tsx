@@ -250,7 +250,7 @@ function SummaryMetric({
 
 async function TodaySummary({ organizationId }: { organizationId: string }) {
   const flow = await getWorkshopFlow(organizationId);
-  const ready = flow.workflowStages.find((stage) => stage.key === 'completed')?.count ?? 0;
+  const ready = flow.workflowStages.find((stage) => stage.key === 'ready')?.count ?? 0;
 
   return (
     <Panel padding="none" className="grid grid-cols-2 lg:grid-cols-4">
@@ -279,7 +279,7 @@ async function TodaySummary({ organizationId }: { organizationId: string }) {
         icon={KeyRound}
         label="Ready for handover"
         value={ready}
-        hint="Work completed"
+        hint="Work done, waiting for collection"
         className="border-t border-l border-border lg:border-t-0"
       />
     </Panel>
@@ -507,8 +507,8 @@ function SummarySkeleton() {
 function ActivitySkeleton() {
   return (
     <Panel padding="none">
-      <div className="grid grid-cols-3 gap-4 p-4 sm:grid-cols-5 sm:p-6 lg:grid-cols-9">
-        {Array.from({ length: 9 }).map((_, i) => (
+      <div className="grid grid-cols-3 gap-4 p-4 sm:grid-cols-4 sm:p-6 lg:grid-cols-6">
+        {Array.from({ length: 12 }).map((_, i) => (
           <div key={i} className="flex flex-col gap-3">
             <Skeleton className="h-1 w-full" />
             <Skeleton className="h-6 w-8" />

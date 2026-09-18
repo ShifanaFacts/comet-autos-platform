@@ -113,6 +113,8 @@ export async function loadCustomerQuote(rawToken: string) {
     select: {
       estimateNumber: true,
       version: true,
+      kind: true,
+      notes: true,
       status: true,
       subtotal: true,
       taxAmount: true,
@@ -132,9 +134,9 @@ export async function loadCustomerQuote(rawToken: string) {
         },
       },
       approvals: {
-        orderBy: { createdAt: 'desc' },
+        orderBy: { decidedAt: 'desc' },
         take: 1,
-        select: { status: true, approvedAt: true, createdAt: true, notes: true },
+        select: { status: true, approvedAt: true, decidedAt: true, notes: true },
       },
       jobCard: {
         select: {
@@ -207,18 +209,12 @@ export async function decideQuoteAsCustomer(
       organizationId: token.organizationId,
       estimateId: token.resourceId,
       decision,
-      // The frozen ApprovalMethod enum has no "online link" value;
-      // DIGITAL_SIGNATURE is used for a decision the customer made themselves
-      // through the verified secure link. See PROJECT-STATUS.md.
-      method: 'DIGITAL_SIGNATURE',
+      // The customer decided themselves on the verified secure link: no staff
+      // member records it. The link's sender stays on Estimate.sentByUserId.
+      method: 'ONLINE',
       notes: trimmedNotes,
-      // Approval.recordedByUserId is required: attribute it to the staff
-      // member who issued the link. The audit entry records that the
-      // customer made the decision.
-      recordedByUserId: token.createdByUserId,
-      auditActorUserId: null,
-      decidedBy: 'customer',
-      metadata: { customerAccessTokenId: token.id },
+      recordedByUserId: null,
+      metadata: { customerAccessTokenId: token.id, linkIssuedByUserId: token.createdByUserId },
     });
     await tx.customerAccessToken.update({ where: { id: token.id }, data: { lastAccessedAt: new Date() } });
     return approval;
