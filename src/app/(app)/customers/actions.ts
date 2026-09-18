@@ -7,8 +7,12 @@ import { requireUser } from '@/lib/auth/authorize';
 import { runAction } from '@/lib/action';
 import type { ActionResult } from '@/lib/errors';
 import { formDataToObject } from '@/lib/form-data';
-import { createCustomer, findCustomersByPhone, updateCustomer } from '@/lib/customers/service';
-import { createVehicle, updateVehicle } from '@/lib/vehicles/service';
+import { createCustomer, findCustomersByPhone, updateCustomer, type CustomerInput } from '@/lib/customers/service';
+import { createVehicle, updateVehicle, type VehicleInput } from '@/lib/vehicles/service';
+
+// Shape is validated by the services' zod schemas; missing fields become field errors there.
+const asCustomer = (formData: FormData) => formDataToObject(formData) as unknown as CustomerInput;
+const asVehicle = (input: Record<string, string>) => input as unknown as VehicleInput;
 
 const fail = (result: ActionResult<unknown>): ActionResult => ({
   ok: false,
@@ -19,7 +23,7 @@ const fail = (result: ActionResult<unknown>): ActionResult => ({
 export async function createCustomerAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() =>
-    prisma.$transaction((tx) => createCustomer(tx, user, formDataToObject(formData))),
+    prisma.$transaction((tx) => createCustomer(tx, user, asCustomer(formData))),
   );
   if (!result.ok || !result.data) return fail(result);
   revalidatePath('/customers');
@@ -32,7 +36,7 @@ export async function updateCustomerAction(
   formData: FormData,
 ): Promise<ActionResult> {
   const user = await requireUser();
-  const result = await runAction(() => updateCustomer(user, customerId, formDataToObject(formData)));
+  const result = await runAction(() => updateCustomer(user, customerId, asCustomer(formData)));
   if (!result.ok) return fail(result);
   revalidatePath('/customers');
   revalidatePath(`/customers/${customerId}`);
@@ -57,7 +61,7 @@ export async function createVehicleAction(
   const user = await requireUser();
   const input = formDataToObject(formData);
   const result = await runAction(() =>
-    prisma.$transaction((tx) => createVehicle(tx, user, customerId, input)),
+    prisma.$transaction((tx) => createVehicle(tx, user, customerId, asVehicle(input))),
   );
   if (!result.ok || !result.data) return fail(result);
   revalidatePath(`/customers/${customerId}`);
@@ -71,7 +75,7 @@ export async function updateVehicleAction(
   formData: FormData,
 ): Promise<ActionResult> {
   const user = await requireUser();
-  const result = await runAction(() => updateVehicle(user, vehicleId, formDataToObject(formData)));
+  const result = await runAction(() => updateVehicle(user, vehicleId, asVehicle(formDataToObject(formData))));
   if (!result.ok) return fail(result);
   revalidatePath('/vehicles');
   revalidatePath(`/vehicles/${vehicleId}`);

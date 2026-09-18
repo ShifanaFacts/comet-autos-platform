@@ -1,6 +1,65 @@
 # Project Status
 
-Last updated: 2026-09-17
+Last updated: 2026-09-18
+
+## Milestone: Core workshop workflow (customer → approval) — DONE
+
+Working end to end against the local PostgreSQL database, verified in a
+real browser and by `npm run test:integration` (14 service-level tests on
+throwaway organizations):
+
+customer → vehicle → appointment / walk-in → Quick Check-In → Job Card →
+technician → inspection → diagnosis → estimate (labour, parts, VAT,
+revisions) → secure customer quotation link → customer approve / reject →
+workshop sees the result.
+
+- Services: `src/lib/customers`, `src/lib/vehicles`, `src/lib/appointments`,
+  `src/lib/workshop/{check-in,assignment,inspection,diagnosis,estimates,workspace,job-status}.ts`,
+  `src/lib/customer-access/{tokens,quote}.ts`. Every write checks
+  permissions, runs in one transaction, and writes AuditLog (and
+  JobStatusHistory for status changes).
+- Screens: Customers, Vehicles, Appointments, Quick Check-In, Job Card
+  workspace (current status + next action), Inspection (tablet checklist),
+  Diagnosis, Estimate, Inspections / Estimates / Approvals queues, and the
+  public `/customer/quote/[token]` page.
+- No Prisma schema change. Dev seed now adds four employees (inspections,
+  diagnoses and assignments must reference an Employee).
+
+### Decisions awaiting approval
+
+1. **ARRIVED status.** The frozen enum has no `ARRIVED`; new jobs are stored
+   as `RECEIVED` and shown as "Arrived" everywhere. The requested pipeline
+   (WAITING_APPROVAL, REJECTED, QUALITY_CHECK, READY, PAID, DELIVERED) is
+   likewise mapped onto existing values — see `src/lib/workshop/job-status.ts`.
+   Real statuses need an additive schema change.
+2. **Customer approvals via link.** `Approval.recordedByUserId` and
+   `JobStatusHistory.changedByUserId` are required, so a customer's own
+   decision is attributed to the staff member who issued the link; the audit
+   entry records `decidedBy: customer`. `ApprovalMethod` has no "online link"
+   value, so `DIGITAL_SIGNATURE` is used.
+3. **VAT** defaults to 5% per line (editable). There is no organization VAT
+   setting in the schema.
+4. **Estimate revisions** are numbered `EST-000123-R2` (unique constraint
+   requires a distinct number); the old version's link is revoked.
+5. **Quotation validity** defaults to 14 days; the customer link expires at
+   the end of that day. Verification cookie lasts 1 hour.
+6. **Check-in rules:** a vehicle with an open job can't be checked in again;
+   mileage can't be lower than the last recorded reading or above 2,000,000 km.
+7. **Permissions:** no appointment/inspection/estimate codes exist in the
+   catalog, so appointments use `job_card.create` and inspection, diagnosis
+   and estimates use `job_card.edit`.
+8. Whole-quotation approve/reject only — partial approval is not offered.
+
+### Remaining gaps in this milestone
+
+- Job card **notes** and inspection **severity** have no schema fields.
+- **Photos/documents**: the Document model exists but no file storage is
+  configured (see docs/integrations.md).
+- Quotation links are **copied and sent by staff** — no email/SMS/WhatsApp
+  provider is connected. No OTP, and no rate limit on the verification form
+  (the 256-bit token is the real secret).
+- No employee management screen (employees come from the seed).
+- Changing a vehicle's owner is not supported.
 
 ## Stage: Phase 1 — Architecture, auth, design system, and the first real vertical slice
 

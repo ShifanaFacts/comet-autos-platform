@@ -46,6 +46,8 @@ export default async function EstimatePage({
 
   const shown = version ? (jobCard.estimates.find((e) => String(e.version) === version) ?? latest) : latest;
   const isLatest = shown?.id === latest?.id;
+  // A first draft has nothing in the side column, so the builder gets the full width.
+  const fullWidth = shown?.status === 'DRAFT' && jobCard.estimates.length === 1 && !shown.approvals[0];
   const expired =
     shown?.status === 'SENT' && shown.validUntil !== null && shown.validUntil.toISOString().slice(0, 10) < localDateString();
 
@@ -92,7 +94,7 @@ export default async function EstimatePage({
                 ? `Version ${shown.version} · draft prepared by ${shown.preparedBy.fullName}`
                 : `Version ${shown.version} · sent ${shown.sentAt ? formatDateTime(shown.sentAt) : ''}${shown.sentBy ? ` by ${shown.sentBy.fullName}` : ''}${shown.validUntil ? ` · valid until ${formatCalendarDate(shown.validUntil)}` : ''}`
             }
-            className="xl:col-span-8"
+            className={fullWidth ? 'xl:col-span-12' : 'xl:col-span-8'}
           >
             {!isLatest ? (
               <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning">
@@ -126,7 +128,7 @@ export default async function EstimatePage({
             )}
           </Section>
 
-          <Stack gap="xl" className="xl:col-span-4">
+          <Stack gap="xl" className={cn('xl:col-span-4', fullWidth && 'hidden')}>
             {shown.approvals[0] ? (
               <Section title="Customer decision">
                 <Panel

@@ -52,7 +52,8 @@ const SHORTCUTS: {
     icon: ClipboardList,
     href: '/job-cards',
   },
-  { label: 'New estimate', detail: 'Quote parts and labour', icon: FileText, comingIn: 'Phase 3' },
+  { label: 'Book an appointment', detail: 'Reserve a slot for a customer', icon: CalendarDays, href: '/appointments/new' },
+  { label: 'Estimates to prepare', detail: 'Diagnosed jobs waiting for pricing', icon: FileText, href: '/estimates' },
   { label: 'Create invoice', detail: 'Bill a completed job', icon: Receipt, comingIn: 'Phase 5' },
 ];
 
@@ -366,7 +367,7 @@ async function AttentionList({ organizationId }: { organizationId: string }) {
           label: 'Quotations awaiting approval',
           detail: `${plural(flow.waitingForApproval, 'estimate')} sent, no reply yet`,
           count: flow.waitingForApproval,
-          href: '/job-cards?status=ESTIMATE_SENT',
+          href: '/approvals',
         }
       : null,
     flow.onHold > 0

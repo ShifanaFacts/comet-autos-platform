@@ -124,7 +124,7 @@ const trimmed = query.trim();
                         icon={<Car className="size-4" />}
                         title={`${v.plateNumber} — ${v.make} ${v.model}`}
                         subtitle={v.customerName}
-                        onClick={v.latestJobCardId ? () => go(`/job-cards/${v.latestJobCardId}`) : undefined}
+                        onClick={() => go(`/vehicles/${v.id}`)}
                       />
                     ))}
                   </ResultGroup>
@@ -133,7 +133,7 @@ const trimmed = query.trim();
                 {displayedResults.customers.length > 0 ? (
                   <ResultGroup label="Customers">
                     {displayedResults.customers.map((c) => (
-                      <ResultRow key={c.id} icon={<User className="size-4" />} title={c.name} subtitle={c.phone} />
+                      <ResultRow key={c.id} icon={<User className="size-4" />} title={c.name} subtitle={c.phone} onClick={() => go(`/customers/${c.id}`)} />
                     ))}
                   </ResultGroup>
                 ) : null}
