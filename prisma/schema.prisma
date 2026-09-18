@@ -39,7 +39,7 @@
 
 generator client {
   provider        = "prisma-client"
-  output          = "../apps/web/src/generated/prisma"
+  output          = "../src/generated/prisma"
   previewFeatures = ["partialIndexes"]
 }
 

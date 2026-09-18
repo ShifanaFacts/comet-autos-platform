@@ -18,7 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const POSTGRES_PORT = 5432;
+// Must match the port in scripts/dev-db.mjs.
+const POSTGRES_PORT = 5433;
 
 function isPortInUse(port, host = '127.0.0.1') {
   return new Promise((resolve) => {

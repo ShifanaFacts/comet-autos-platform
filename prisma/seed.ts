@@ -3,7 +3,7 @@
 // local dev database — there is no production/CI wiring for this script.
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '../apps/web/src/generated/prisma/client.js';
+import { PrismaClient } from '../src/generated/prisma/client.js';
 import bcrypt from 'bcryptjs';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
@@ -123,6 +123,28 @@ async function main() {
   if (!existingOwnerGrant) {
     await prisma.userRole.create({
       data: { organizationId: organization.id, userId: ownerUser.id, roleId: ownerRole.id },
+    });
+  }
+
+  // Workshop staff. Inspections, diagnoses and job assignments are always
+  // attributed to an Employee (never a User), so the workflow needs at least
+  // one. The owner doubles as the service advisor; technicians have no login.
+  const sampleEmployees = [
+    { employeeCode: 'EMP-001', firstName: 'Shifana', lastName: '', jobTitle: 'Service Advisor', userId: ownerUser.id },
+    { employeeCode: 'EMP-002', firstName: 'Rajesh', lastName: 'Kumar', jobTitle: 'Senior Technician', userId: null },
+    { employeeCode: 'EMP-003', firstName: 'Omar', lastName: 'Farooq', jobTitle: 'Technician', userId: null },
+    { employeeCode: 'EMP-004', firstName: 'Joel', lastName: 'Mathew', jobTitle: 'Technician', userId: null },
+  ];
+  for (const employee of sampleEmployees) {
+    await prisma.employee.upsert({
+      where: { organizationId_employeeCode: { organizationId: organization.id, employeeCode: employee.employeeCode } },
+      update: {},
+      create: {
+        organizationId: organization.id,
+        branchId: branch.id,
+        hireDate: new Date('2024-01-01T00:00:00Z'),
+        ...employee,
+      },
     });
   }
 

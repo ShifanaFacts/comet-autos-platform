@@ -14,7 +14,7 @@ build/
 out/
 
 # Prisma generated client (build artifact, regenerated via `npm run prisma:generate`)
-apps/web/src/generated/
+src/generated/
 
 # Local-development-only embedded PostgreSQL data (see scripts/dev-db.mjs)
 .local-postgres-data/
@@ -34,3 +34,6 @@ coverage/
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Vercel
+.vercel
