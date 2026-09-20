@@ -1,132 +1,163 @@
 import { prisma } from '@/lib/prisma';
 import type { JobCardStatus } from '@/generated/prisma/enums';
+import type { AuthenticatedUser } from '@/lib/auth/session';
 import { CLOSED_JOB_STATUSES, WORKFLOW_STAGES } from '@/lib/workshop/stages';
+import { localDayRange } from '@/lib/format';
+import { filsToString, toFils } from '@/lib/money';
+import { invoiceBalance, paidFils } from '@/lib/billing/invoice';
+import { getStockByPart, resolveInventoryBranch, stockState } from '@/lib/inventory/stock';
 
-function startOfToday(): Date {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-}
+/*
+ * Dashboard data. "Today" is the workshop's day in Dubai, whatever time zone
+ * the server runs in. Money is summed exactly (fils) with the billing rules,
+ * and stock uses the same rule as the inventory screens.
+ *
+ * Each section fetches independently so the page can stream them with
+ * <Suspense>; the page wraps these in React cache() to share queries.
+ */
 
-function startOfTomorrow(): Date {
-  const start = startOfToday();
-  return new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
-}
-
-// "Currently in the workshop" = not yet handed back to the customer: every
-// job except DELIVERED / CANCELLED (and the legacy CLOSED).
+// "Currently in the workshop" = not yet handed back to the customer.
 const NOT_IN_WORKSHOP: JobCardStatus[] = CLOSED_JOB_STATUSES;
 
-// Each dashboard section fetches independently (rather than one shared
-// getDashboardData()) so the page can wrap each in its own <Suspense>: the
-// hero renders instantly, and every section streams in as its own query
-// resolves instead of the whole page waiting on the slowest one.
-
 export async function getWorkshopFlow(organizationId: string) {
-  const todayStart = startOfToday();
-  const tomorrowStart = startOfTomorrow();
+  const today = localDayRange();
 
   const [todaysAppointments, vehiclesCurrentlyIn, jobsByStatus] = await Promise.all([
     prisma.appointment.count({
-      where: { organizationId, scheduledAt: { gte: todayStart, lt: tomorrowStart } },
+      where: {
+        organizationId,
+        scheduledAt: { gte: today.start, lt: today.end },
+        status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+      },
     }),
-    prisma.jobCard.count({
-      where: { organizationId, status: { notIn: NOT_IN_WORKSHOP } },
-    }),
-    prisma.jobCard.groupBy({
-      by: ['status'],
-      where: { organizationId },
-      _count: { _all: true },
-    }),
+    prisma.jobCard.count({ where: { organizationId, status: { notIn: NOT_IN_WORKSHOP } } }),
+    prisma.jobCard.groupBy({ by: ['status'], where: { organizationId }, _count: { _all: true } }),
   ]);
 
   const statusCounts = new Map(jobsByStatus.map((row) => [row.status, row._count._all]));
-  const workflowStages = WORKFLOW_STAGES.map((stage) => ({
-    ...stage,
-    count: statusCounts.get(stage.status) ?? 0,
-  }));
+  const count = (...statuses: JobCardStatus[]) =>
+    statuses.reduce((sum, status) => sum + (statusCounts.get(status) ?? 0), 0);
 
   return {
     todaysAppointments,
     vehiclesCurrentlyIn,
-    workflowStages,
-    waitingForApproval: statusCounts.get('WAITING_APPROVAL') ?? 0,
-    onHold: statusCounts.get('ON_HOLD') ?? 0,
+    workflowStages: WORKFLOW_STAGES.map((stage) => ({
+      ...stage,
+      count: statusCounts.get(stage.status) ?? 0,
+    })),
+    waitingForApproval: count('WAITING_APPROVAL'),
+    onHold: count('ON_HOLD'),
+    /** The jobs that need someone to act, by what that action is. */
+    actions: {
+      toInspect: count('ARRIVED', 'INSPECTION'),
+      toQuote: count('DIAGNOSIS', 'ESTIMATE'),
+      waitingApproval: count('WAITING_APPROVAL'),
+      approved: count('APPROVED'),
+      inRepair: count('REPAIR'),
+      qualityCheck: count('QUALITY_CHECK'),
+      ready: count('READY'),
+      awaitingPayment: count('INVOICED'),
+      toDeliver: count('PAID'),
+      onHold: count('ON_HOLD'),
+    },
   };
 }
 
-export async function getLowStockParts(organizationId: string) {
-  const parts = await prisma.part.findMany({
-    where: { organizationId, isActive: true, reorderLevel: { not: null } },
-    select: { id: true, name: true, sku: true, reorderLevel: true },
-  });
-  if (parts.length === 0) return [];
-
-  const stockByPart = await prisma.inventoryTransaction.groupBy({
-    by: ['partId'],
-    where: { organizationId, partId: { in: parts.map((p) => p.id) } },
-    _sum: { quantity: true },
-  });
-  const stockByPartId = new Map(stockByPart.map((row) => [row.partId, row._sum.quantity ?? 0]));
-
+/** Parts at or below their minimum at the user's branch — the same rule as the Parts screen. */
+export async function getLowStockParts(user: AuthenticatedUser) {
+  const branch = await resolveInventoryBranch(user);
+  const [parts, stock] = await Promise.all([
+    prisma.part.findMany({
+      where: { organizationId: user.organizationId, isActive: true, reorderLevel: { not: null } },
+      select: { id: true, name: true, sku: true, unitOfMeasure: true, reorderLevel: true },
+    }),
+    getStockByPart(user.organizationId, branch.id),
+  ]);
   return parts
-    .map((part) => ({ ...part, currentStock: Number(stockByPartId.get(part.id) ?? 0) }))
-    .filter((part) => part.reorderLevel !== null && part.currentStock <= Number(part.reorderLevel));
+    .map((part) => {
+      const onHandMilli = stock.get(part.id) ?? 0;
+      return { ...part, onHandMilli, state: stockState(onHandMilli, part.reorderLevel) };
+    })
+    .filter((part) => part.state !== 'IN_STOCK')
+    .sort((a, b) => a.onHandMilli - b.onHandMilli);
 }
 
+/**
+ * Today's invoiced sales and collections, and what customers still owe.
+ * Only unpaid / part-paid invoices (and their payments) are read for the
+ * outstanding figure, and only today's payments for collections.
+ */
 export async function getFinanceSnapshot(organizationId: string) {
-  const todayStart = startOfToday();
-  const tomorrowStart = startOfTomorrow();
-
-  const [outstandingInvoices, completedPayments, todaysIssuedInvoices, todaysCompletedPayments] =
-    await Promise.all([
-      prisma.invoice.findMany({
-        where: { organizationId, status: { in: ['ISSUED', 'PARTIALLY_PAID'] } },
-        select: { id: true, totalAmount: true },
-      }),
-      prisma.payment.findMany({
-        where: { organizationId, status: 'COMPLETED' },
-        select: { amount: true, invoiceId: true, reversals: { select: { id: true } } },
-      }),
-      prisma.invoice.aggregate({
-        where: {
-          organizationId,
-          status: { in: ['ISSUED', 'PARTIALLY_PAID', 'PAID'] },
-          issuedAt: { gte: todayStart, lt: tomorrowStart },
+  const today = localDayRange();
+  const [openInvoices, todaysInvoices, todaysPayments] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { organizationId, status: { in: ['ISSUED', 'PARTIALLY_PAID'] } },
+      select: {
+        totalAmount: true,
+        status: true,
+        payments: {
+          select: {
+            id: true,
+            amount: true,
+            status: true,
+            reversalOfPaymentId: true,
+            receivedAt: true,
+          },
         },
-        _sum: { totalAmount: true },
-      }),
-      prisma.payment.findMany({
-        where: { organizationId, status: 'COMPLETED', receivedAt: { gte: todayStart, lt: tomorrowStart } },
-        select: { amount: true, reversals: { select: { id: true } } },
-      }),
-    ]);
+      },
+    }),
+    prisma.invoice.findMany({
+      where: {
+        organizationId,
+        status: { in: ['ISSUED', 'PARTIALLY_PAID', 'PAID'] },
+        issuedAt: { gte: today.start, lt: today.end },
+      },
+      select: { totalAmount: true },
+    }),
+    prisma.payment.findMany({
+      where: { organizationId, receivedAt: { gte: today.start, lt: today.end } },
+      select: { id: true, amount: true, status: true, reversalOfPaymentId: true },
+    }),
+  ]);
 
-  const paidByInvoiceId = new Map<string, number>();
-  for (const payment of completedPayments) {
-    // A payment that itself has been reversed no longer counts toward "paid".
-    if (payment.reversals.length > 0) continue;
-    paidByInvoiceId.set(
-      payment.invoiceId,
-      (paidByInvoiceId.get(payment.invoiceId) ?? 0) + Number(payment.amount),
-    );
-  }
-  const customerOutstanding = outstandingInvoices.reduce((sum, invoice) => {
-    const paid = paidByInvoiceId.get(invoice.id) ?? 0;
-    return sum + Math.max(Number(invoice.totalAmount) - paid, 0);
-  }, 0);
-
-  const todaysCollections = todaysCompletedPayments
-    .filter((payment) => payment.reversals.length === 0)
-    .reduce((sum, payment) => sum + Number(payment.amount), 0);
-
+  const outstandingFils = openInvoices.reduce(
+    (sum, invoice) => sum + toFils(invoiceBalance(invoice).balance),
+    0,
+  );
   return {
-    todaysSales: Number(todaysIssuedInvoices._sum.totalAmount ?? 0),
-    todaysCollections,
-    customerOutstanding,
+    todaysSales: filsToString(
+      todaysInvoices.reduce((sum, invoice) => sum + toFils(invoice.totalAmount.toString()), 0),
+    ),
+    todaysInvoiceCount: todaysInvoices.length,
+    todaysCollections: filsToString(paidFils(todaysPayments.filter((p) => !p.reversalOfPaymentId))),
+    customerOutstanding: filsToString(outstandingFils),
+    unpaidInvoices: openInvoices.length,
   };
 }
 
-/** Most recently opened job cards that are still in the workshop — the dashboard's live activity list. */
+/** Today's appointments in time order (Dubai day). */
+export async function getTodaysAppointments(organizationId: string) {
+  const today = localDayRange();
+  return prisma.appointment.findMany({
+    where: {
+      organizationId,
+      scheduledAt: { gte: today.start, lt: today.end },
+      status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+    },
+    orderBy: { scheduledAt: 'asc' },
+    take: 8,
+    select: {
+      id: true,
+      scheduledAt: true,
+      status: true,
+      notes: true,
+      vehicle: { select: { plateNumber: true, make: true, model: true } },
+      customer: { select: { name: true } },
+    },
+  });
+}
+
+/** Most recently opened job cards that are still in the workshop. */
 export async function getRecentJobCards(organizationId: string, take = 6) {
   return prisma.jobCard.findMany({
     where: { organizationId, status: { notIn: NOT_IN_WORKSHOP } },
@@ -137,7 +168,14 @@ export async function getRecentJobCards(organizationId: string, take = 6) {
       jobNumber: true,
       status: true,
       openedAt: true,
-      vehicle: { select: { plateNumber: true, make: true, model: true, customer: { select: { name: true } } } },
+      vehicle: {
+        select: {
+          plateNumber: true,
+          make: true,
+          model: true,
+          customer: { select: { name: true } },
+        },
+      },
     },
   });
 }

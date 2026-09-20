@@ -38,14 +38,23 @@ export function JobContextHeader({
   return (
     <PageHeader
       eyebrow={
-        <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1.5 tracking-normal normal-case">
-          <Link href="/job-cards" className="hover:text-foreground">
+        <nav
+          aria-label="Breadcrumb"
+          className="flex flex-wrap items-center gap-1.5 tracking-normal normal-case"
+        >
+          <Link
+            href="/job-cards"
+            className="inline-flex min-h-9 items-center hover:text-foreground md:min-h-0"
+          >
             Job Cards
           </Link>
           <ChevronRight className="size-3.5" />
           {section ? (
             <>
-              <Link href={`/job-cards/${jobCard.id}`} className="hover:text-foreground">
+              <Link
+                href={`/job-cards/${jobCard.id}`}
+                className="inline-flex min-h-9 items-center hover:text-foreground md:min-h-0"
+              >
                 {jobCard.jobNumber}
               </Link>
               <ChevronRight className="size-3.5" />
@@ -62,7 +71,9 @@ export function JobContextHeader({
           <span>
             {section ? `${section} · ` : ''}
             {vehicle.make} {vehicle.model}
-            {vehicle.year ? <span className="font-normal text-muted-foreground"> {vehicle.year}</span> : null}
+            {vehicle.year ? (
+              <span className="font-normal text-muted-foreground"> {vehicle.year}</span>
+            ) : null}
           </span>
           <JobStatusBadge status={jobCard.status} />
         </>
@@ -70,7 +81,10 @@ export function JobContextHeader({
       description={
         description ?? (
           <>
-            <Link href={`/customers/${vehicle.customer.id}`} className="font-medium text-foreground hover:underline">
+            <Link
+              href={`/customers/${vehicle.customer.id}`}
+              className="inline-flex min-h-9 items-center font-medium text-foreground hover:underline md:min-h-0"
+            >
               {vehicle.customer.name}
             </Link>
             {' · '}

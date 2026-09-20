@@ -21,10 +21,17 @@ import {
   recordCustomerDecision,
   createAdditionalEstimate,
 } from '@/lib/workshop/estimates';
-import { recordLabour, recordPartUsage, startRepair } from '@/lib/workshop/repair';
+import {
+  recordLabour,
+  recordPartUsage,
+  returnPartFromJob,
+  startRepair,
+} from '@/lib/workshop/repair';
 import { recordQualityCheck } from '@/lib/workshop/quality-check';
+import { removeJobPhoto } from '@/lib/media/photos';
 import { createInvoice, deliverVehicle, recordPayment } from '@/lib/billing/invoice';
 import { customerQuotePath, getRequestOrigin } from '@/lib/request-origin';
+import { quotationWhatsApp } from '@/lib/customer-access/share';
 
 function refreshJob(jobCardId: string) {
   revalidatePath(`/job-cards/${jobCardId}`, 'layout');
@@ -32,7 +39,10 @@ function refreshJob(jobCardId: string) {
   revalidatePath('/');
 }
 
-export async function changeJobStatusAction(jobCardId: string, toStatus: WorkflowStatus): Promise<ActionResult> {
+export async function changeJobStatusAction(
+  jobCardId: string,
+  toStatus: WorkflowStatus,
+): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(async () => {
     await prisma.$transaction((tx) => transitionJobStatus(tx, user, jobCardId, toStatus));
@@ -115,30 +125,38 @@ export async function saveAndSendEstimateAction(
   jobCardId: string,
   estimateId: string,
   payload: unknown,
-): Promise<ActionResult<{ link: string }>> {
+): Promise<ActionResult<{ link: string; whatsappUrl: string }>> {
   const user = await requireUser();
   const origin = await getRequestOrigin();
   const result = await runAction(async () => {
     await saveEstimateDraft(user, estimateId, payload);
     const { rawToken } = await sendEstimate(user, estimateId);
-    return { link: `${origin}${customerQuotePath(rawToken)}` };
+    const link = `${origin}${customerQuotePath(rawToken)}`;
+    return { link, whatsappUrl: await quotationWhatsApp(user, estimateId, link) };
   });
   // No revalidation here: re-rendering would unmount the panel that shows the
   // one-time link. The client refreshes when the user closes the panel.
   return result;
 }
 
-export async function reissueLinkAction(jobCardId: string, estimateId: string): Promise<ActionResult<{ link: string }>> {
+export async function reissueLinkAction(
+  jobCardId: string,
+  estimateId: string,
+): Promise<ActionResult<{ link: string; whatsappUrl: string }>> {
   const user = await requireUser();
   const origin = await getRequestOrigin();
   const result = await runAction(async () => {
     const { rawToken } = await reissueEstimateLink(user, estimateId);
-    return { link: `${origin}${customerQuotePath(rawToken)}` };
+    const link = `${origin}${customerQuotePath(rawToken)}`;
+    return { link, whatsappUrl: await quotationWhatsApp(user, estimateId, link) };
   });
   return result;
 }
 
-export async function reviseEstimateAction(jobCardId: string, estimateId: string): Promise<ActionResult> {
+export async function reviseEstimateAction(
+  jobCardId: string,
+  estimateId: string,
+): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() => reviseEstimate(user, estimateId));
   if (result.ok) refreshJob(jobCardId);
@@ -152,7 +170,9 @@ export async function recordDecisionAction(
   formData: FormData,
 ): Promise<ActionResult> {
   const user = await requireUser();
-  const result = await runAction(() => recordCustomerDecision(user, estimateId, formDataToObject(formData)));
+  const result = await runAction(() =>
+    recordCustomerDecision(user, estimateId, formDataToObject(formData)),
+  );
   if (result.ok) refreshJob(jobCardId);
   return toClientResult(result);
 }
@@ -168,30 +188,70 @@ export async function startRepairAction(jobCardId: string): Promise<ActionResult
   return toClientResult(result);
 }
 
-export async function recordPartUsageAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+export async function recordPartUsageAction(
+  jobCardId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
   const user = await requireUser();
-  const result = await runAction(() => recordPartUsage(user, jobCardId, formDataToObject(formData)));
+  const result = await runAction(() =>
+    recordPartUsage(user, jobCardId, formDataToObject(formData)),
+  );
   if (result.ok) refreshJob(jobCardId);
   return toClientResult(result);
 }
 
-export async function recordLabourAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+/** Takes a recorded part back into stock (a JOB_RETURN ledger entry); the original record stays. */
+export async function returnPartAction(
+  jobCardId: string,
+  partUsageId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() =>
+    returnPartFromJob(user, jobCardId, partUsageId, formDataToObject(formData)),
+  );
+  if (result.ok) {
+    refreshJob(jobCardId);
+    revalidatePath('/inventory', 'layout');
+  }
+  return toClientResult(result);
+}
+
+export async function recordLabourAction(
+  jobCardId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() => recordLabour(user, jobCardId, formDataToObject(formData)));
   if (result.ok) refreshJob(jobCardId);
   return toClientResult(result);
 }
 
-export async function recordQualityCheckAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+export async function recordQualityCheckAction(
+  jobCardId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
   const user = await requireUser();
-  const result = await runAction(() => recordQualityCheck(user, jobCardId, formDataToObject(formData)));
+  const result = await runAction(() =>
+    recordQualityCheck(user, jobCardId, formDataToObject(formData)),
+  );
   if (result.ok) refreshJob(jobCardId);
   return toClientResult(result);
 }
 
-export async function createAdditionalEstimateAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+export async function createAdditionalEstimateAction(
+  jobCardId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
   const user = await requireUser();
-  const result = await runAction(() => createAdditionalEstimate(user, jobCardId, formDataToObject(formData)));
+  const result = await runAction(() =>
+    createAdditionalEstimate(user, jobCardId, formDataToObject(formData)),
+  );
   if (!result.ok || !result.data) return toClientResult(result);
   refreshJob(jobCardId);
   redirect(`/job-cards/${jobCardId}/additional/${result.data.id}`);
@@ -213,16 +273,32 @@ export async function createInvoiceAction(jobCardId: string): Promise<ActionResu
   return toClientResult(result);
 }
 
-export async function recordPaymentAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+export async function recordPaymentAction(
+  jobCardId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() => recordPayment(user, jobCardId, formDataToObject(formData)));
   if (result.ok) refreshFinance(jobCardId);
   return toClientResult(result);
 }
 
-export async function deliverVehicleAction(jobCardId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+export async function deliverVehicleAction(
+  jobCardId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() => deliverVehicle(user, jobCardId, formDataToObject(formData)));
   if (result.ok) refreshFinance(jobCardId);
+  return toClientResult(result);
+}
+
+/** Removes a photo from the job (kept on record as removed, with who removed it). */
+export async function removePhotoAction(jobCardId: string, documentId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => removeJobPhoto(user, documentId));
+  if (result.ok) refreshJob(jobCardId);
   return toClientResult(result);
 }

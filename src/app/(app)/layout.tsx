@@ -1,24 +1,41 @@
 import type { ReactNode } from 'react';
-import { requireUser } from '@/lib/auth/authorize';
+import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
+import { NAV_GROUPS } from '@/lib/nav';
 import { SidebarNav } from '@/components/shell/sidebar-nav';
+import { BottomNav } from '@/components/shell/bottom-nav';
 import { Topbar } from '@/components/shell/topbar';
+import { SessionGuard } from '@/components/shell/session-guard';
 import { PageContainer } from '@/components/layout/primitives';
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const user = await requireUser();
   const branch = user.primaryBranchId
-    ? await prisma.branch.findUnique({ where: { id: user.primaryBranchId }, select: { name: true } })
+    ? await prisma.branch.findUnique({
+        where: { id: user.primaryBranchId },
+        select: { name: true },
+      })
     : null;
+  // Navigation shows only what the user's permissions allow. Convenience only:
+  // every page and action checks permissions again on the server.
+  const branchScope = user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined;
+  const allowedHrefs = NAV_GROUPS.flatMap((group) => group.items)
+    .filter((item) => !item.permission || hasPermission(user, item.permission, branchScope))
+    .map((item) => item.href);
 
   return (
     <div className="flex min-h-screen bg-background">
-      <SidebarNav />
+      <SessionGuard />
+      <SidebarNav allowedHrefs={allowedHrefs} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar user={user} branchName={branch?.name ?? null} />
-        <main className="flex-1">
+        <Topbar
+          user={{ fullName: user.fullName, email: user.email, roleNames: user.roleNames }}
+          branchName={branch?.name ?? null}
+        />
+        <main className="flex-1 pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
           <PageContainer>{children}</PageContainer>
         </main>
+        <BottomNav allowedHrefs={allowedHrefs} />
       </div>
     </div>
   );

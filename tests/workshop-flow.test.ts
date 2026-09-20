@@ -96,7 +96,7 @@ async function createTestOrg(label: string): Promise<TestOrg> {
     ),
   );
 
-  const base = { organizationId: org.id, primaryBranchId: branch.id, branchPermissions: new Map<string, Set<string>>() };
+  const base = { organizationId: org.id, primaryBranchId: branch.id, roleNames: [] as string[], branchPermissions: new Map<string, Set<string>>() };
   return {
     owner: { ...base, id: ownerUser.id, email: ownerUser.email, fullName: ownerUser.fullName, orgWidePermissions: new Set(ALL_PERMISSIONS) },
     viewer: {

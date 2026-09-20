@@ -2,13 +2,18 @@
 export function BrandMark({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sm font-bold text-sidebar-primary-foreground">
+      {/* The mark is the one place the brand violet is allowed to glow. */}
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-primary bg-gradient-to-br from-violet-400 to-violet-700 text-sm font-bold text-sidebar-primary-foreground shadow-glow">
         C
       </span>
       {!collapsed ? (
         <span className="flex min-w-0 flex-col">
-          <span className="truncate text-sm leading-tight font-semibold tracking-tight">Comet Autos</span>
-          <span className="truncate text-xs leading-tight text-sidebar-foreground/50">Workshop</span>
+          <span className="truncate text-[15px] leading-tight font-semibold tracking-[-0.015em]">
+            Comet Autos
+          </span>
+          <span className="truncate text-[11px] leading-tight tracking-[0.06em] text-sidebar-foreground/45 uppercase">
+            Workshop
+          </span>
         </span>
       ) : null}
     </div>

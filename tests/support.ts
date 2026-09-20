@@ -27,6 +27,15 @@ export const ALL_PERMISSIONS = [
   'invoice.view',
   'invoice.create',
   'payment.create',
+  'inventory.adjust',
+  'inventory.manage',
+  'purchase.create',
+  'purchase.receive',
+  'accounting.view',
+  'accounting.create',
+  'accounting.edit',
+  'payroll.view',
+  'payroll.create',
 ];
 
 export interface TestOrg {
@@ -101,12 +110,13 @@ export async function createTestOrg(
   return {
     organizationId: org.id,
     branchId: branch.id,
-    owner: { ...base, id: ownerUser.id, email: ownerUser.email, fullName: ownerUser.fullName, orgWidePermissions: new Set(ALL_PERMISSIONS) },
+    owner: { ...base, id: ownerUser.id, email: ownerUser.email, fullName: ownerUser.fullName, roleNames: ['Owner'], orgWidePermissions: new Set(ALL_PERMISSIONS) },
     viewer: {
       ...base,
       id: viewerUser.id,
       email: viewerUser.email,
       fullName: viewerUser.fullName,
+      roleNames: ['Viewer'],
       orgWidePermissions: new Set(['job_card.view', 'customer.view', 'vehicle.view', 'inventory.view']),
     },
     technicianIds: technicians.map((t) => t.id),

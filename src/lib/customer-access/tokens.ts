@@ -92,7 +92,9 @@ export async function resolveAccessToken(
   client: Prisma.TransactionClient = prisma,
 ): Promise<ResolvedToken> {
   if (!RAW_TOKEN_PATTERN.test(rawToken)) return { state: 'invalid', token: null };
-  const token = await client.customerAccessToken.findUnique({ where: { tokenHash: hashToken(rawToken) } });
+  const token = await client.customerAccessToken.findUnique({
+    where: { tokenHash: hashToken(rawToken) },
+  });
   if (!token || token.revokedAt || token.resourceType !== expectedType) {
     return { state: 'invalid', token: null };
   }
@@ -103,18 +105,15 @@ export async function resolveAccessToken(
 /** The proof a verified browser holds for one token. Bound to the token hash and the owner's identifiers. */
 export function computeAccessProof(tokenHash: string, plateNumber: string, phone: string): string {
   return createHash('sha256')
-    .update(`comet-customer-access:v1:${tokenHash}:${compactPlate(plateNumber)}:${phoneCore(phone)}`)
+    .update(
+      `comet-customer-access:v1:${tokenHash}:${compactPlate(plateNumber)}:${phoneCore(phone)}`,
+    )
     .digest('hex');
 }
 
 export function proofMatches(expected: string, provided: string | undefined | null): boolean {
   if (!provided || provided.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(expected), Buffer.from(provided));
-}
-
-/** Cookie name is derived from the token hash so proofs for different links never collide. */
-export function accessCookieName(tokenHash: string): string {
-  return `comet_quote_${tokenHash.slice(0, 16)}`;
 }
 
 export const ACCESS_COOKIE_MAX_AGE_SECONDS = 60 * 60;

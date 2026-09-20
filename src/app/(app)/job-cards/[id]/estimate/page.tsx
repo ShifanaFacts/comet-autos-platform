@@ -15,7 +15,12 @@ import { cn } from '@/lib/utils';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { EstimateLines, trimQuantity } from '@/components/workshop/estimate-lines';
 import { EstimateBuilder } from './estimate-builder';
-import { CreateEstimateButton, NewLinkButton, RecordDecisionForm, ReviseEstimateButton } from './estimate-controls';
+import {
+  CreateEstimateButton,
+  NewLinkButton,
+  RecordDecisionForm,
+  ReviseEstimateButton,
+} from './estimate-controls';
 
 const METHOD_LABEL: Record<ApprovalMethod, string> = {
   IN_PERSON: 'in person',
@@ -48,12 +53,17 @@ export default async function EstimatePage({
   const customer = jobCard.vehicle.customer;
   const defaultVatRate = resolveDefaultVatRate(user.organizationId);
 
-  const shown = version ? (jobCard.estimates.find((e) => String(e.version) === version) ?? latest) : latest;
+  const shown = version
+    ? (jobCard.estimates.find((e) => String(e.version) === version) ?? latest)
+    : latest;
   const isLatest = shown?.id === latest?.id;
   // A first draft has nothing in the side column, so the builder gets the full width.
-  const fullWidth = shown?.status === 'DRAFT' && jobCard.estimates.length === 1 && !shown.approvals[0];
+  const fullWidth =
+    shown?.status === 'DRAFT' && jobCard.estimates.length === 1 && !shown.approvals[0];
   const expired =
-    shown?.status === 'SENT' && shown.validUntil !== null && shown.validUntil.toISOString().slice(0, 10) < localDateString();
+    shown?.status === 'SENT' &&
+    shown.validUntil !== null &&
+    shown.validUntil.toISOString().slice(0, 10) < localDateString();
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -61,11 +71,16 @@ export default async function EstimatePage({
 
       {!shown ? (
         status === 'DIAGNOSIS' && canEdit ? (
-          <Section title="Create the estimate" description="Price the recommended work with labour and parts. VAT is calculated per line.">
+          <Section
+            title="Create the estimate"
+            description="Price the recommended work with labour and parts. VAT is calculated per line."
+          >
             <Panel className="flex flex-col gap-6 sm:p-8">
               {diagnosis ? (
                 <div className="flex flex-col gap-2">
-                  <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Recommended work</p>
+                  <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+                    Recommended work
+                  </p>
                   <p className="text-sm whitespace-pre-wrap">{diagnosis.recommendedAction}</p>
                 </div>
               ) : null}
@@ -102,7 +117,11 @@ export default async function EstimatePage({
           >
             {!isLatest ? (
               <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning">
-                You are viewing an older version. <Link href={`/job-cards/${jobCard.id}/estimate`} className="font-medium underline">See the current version</Link>.
+                You are viewing an older version.{' '}
+                <Link href={`/job-cards/${jobCard.id}/estimate`} className="font-medium underline">
+                  See the current version
+                </Link>
+                .
               </div>
             ) : null}
 
@@ -113,7 +132,11 @@ export default async function EstimatePage({
                   estimateId={shown.id}
                   customerName={customer.name}
                   recommendation={diagnosis?.recommendedAction ?? null}
-                  initialValidUntil={shown.validUntil ? shown.validUntil.toISOString().slice(0, 10) : localDateString()}
+                  initialValidUntil={
+                    shown.validUntil
+                      ? shown.validUntil.toISOString().slice(0, 10)
+                      : localDateString()
+                  }
                   minValidUntil={localDateString()}
                   defaultVatRate={defaultVatRate}
                   initialLines={shown.items
@@ -138,10 +161,17 @@ export default async function EstimatePage({
               <Section title="Customer decision">
                 <Panel
                   className={cn(
-                    shown.approvals[0].status === 'APPROVED' ? 'border-success/30 bg-success/5' : 'border-danger/30 bg-danger/5',
+                    shown.approvals[0].status === 'APPROVED'
+                      ? 'border-success/30 bg-success/5'
+                      : 'border-danger/30 bg-danger/5',
                   )}
                 >
-                  <p className={cn('text-lg font-semibold', shown.approvals[0].status === 'APPROVED' ? 'text-success' : 'text-danger')}>
+                  <p
+                    className={cn(
+                      'text-lg font-semibold',
+                      shown.approvals[0].status === 'APPROVED' ? 'text-success' : 'text-danger',
+                    )}
+                  >
                     {shown.approvals[0].status === 'APPROVED' ? 'Approved' : 'Rejected'}
                   </p>
                   <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2 text-sm">
@@ -161,11 +191,17 @@ export default async function EstimatePage({
                     ) : null}
                   </dl>
                   {shown.approvals[0].notes ? (
-                    <p className="mt-4 border-t border-border pt-4 text-sm whitespace-pre-wrap">“{shown.approvals[0].notes}”</p>
+                    <p className="mt-4 border-t border-border pt-4 text-sm whitespace-pre-wrap">
+                      “{shown.approvals[0].notes}”
+                    </p>
                   ) : null}
                   {shown.status === 'REJECTED' && isLatest && canEdit && status === 'REJECTED' ? (
                     <div className="mt-6">
-                      <ReviseEstimateButton jobCardId={jobCard.id} estimateId={shown.id} variant="default" />
+                      <ReviseEstimateButton
+                        jobCardId={jobCard.id}
+                        estimateId={shown.id}
+                        variant="default"
+                      />
                     </div>
                   ) : null}
                 </Panel>
@@ -183,14 +219,29 @@ export default async function EstimatePage({
                   }
                 >
                   <Panel className="flex flex-col gap-4">
-                    {!expired ? <NewLinkButton jobCardId={jobCard.id} estimateId={shown.id} customerName={customer.name} /> : null}
-                    {status === 'WAITING_APPROVAL' ? <ReviseEstimateButton jobCardId={jobCard.id} estimateId={shown.id} /> : null}
+                    {!expired ? (
+                      <NewLinkButton
+                        jobCardId={jobCard.id}
+                        estimateId={shown.id}
+                        customerName={customer.name}
+                      />
+                    ) : null}
+                    {status === 'WAITING_APPROVAL' ? (
+                      <ReviseEstimateButton jobCardId={jobCard.id} estimateId={shown.id} />
+                    ) : null}
                   </Panel>
                 </Section>
                 {!expired ? (
-                  <Section title="Record the decision" description="If the customer answers in person, by phone or by message.">
+                  <Section
+                    title="Record the decision"
+                    description="If the customer answers in person, by phone or by message."
+                  >
                     <Panel>
-                      <RecordDecisionForm jobCardId={jobCard.id} estimateId={shown.id} />
+                      <RecordDecisionForm
+                        jobCardId={jobCard.id}
+                        estimateId={shown.id}
+                        customerName={customer.name}
+                      />
                     </Panel>
                   </Section>
                 ) : null}
@@ -213,9 +264,16 @@ export default async function EstimatePage({
                           <span className="flex flex-col gap-0.5">
                             <span className="font-medium">
                               Version {estimate.version}
-                              {estimate.id === latest?.id ? <span className="font-normal text-muted-foreground"> · current</span> : null}
+                              {estimate.id === latest?.id ? (
+                                <span className="font-normal text-muted-foreground">
+                                  {' '}
+                                  · current
+                                </span>
+                              ) : null}
                             </span>
-                            <span className="text-xs text-muted-foreground tabular-nums">{formatMoney(estimate.totalAmount)}</span>
+                            <span className="text-xs text-muted-foreground tabular-nums">
+                              {formatMoney(estimate.totalAmount)}
+                            </span>
                           </span>
                           <EstimateStatusPill status={estimate.status} />
                         </Link>

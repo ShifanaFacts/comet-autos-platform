@@ -66,7 +66,9 @@ export function Grid({
   className?: string;
   children: ReactNode;
 }) {
-  return <div className={cn('grid', GAP[gap], className)}>{children}</div>;
+  // grid-cols-1 by default: without it the implicit column is sized to its
+  // widest content, which pushes wide tables past the screen on tablets.
+  return <div className={cn('grid grid-cols-1', GAP[gap], className)}>{children}</div>;
 }
 
 /** Top of every page: optional eyebrow, title, description, and primary actions, separated from content by a rule. */
@@ -95,11 +97,13 @@ export function PageHeader({
         <div className="flex min-w-0 items-start gap-4">
           {leading ? <div className="shrink-0 pt-0.5">{leading}</div> : null}
           <div className="flex min-w-0 flex-col gap-2">
-            <h1 className="flex flex-wrap items-center gap-3 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            <h1 className="flex flex-wrap items-center gap-3 text-[28px] leading-[1.15] font-semibold tracking-[-0.022em] text-balance text-foreground sm:text-4xl">
               {title}
             </h1>
             {description ? (
-              <p className="max-w-2xl text-sm text-muted-foreground sm:text-base">{description}</p>
+              <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground sm:text-[15px]">
+                {description}
+              </p>
             ) : null}
           </div>
         </div>
@@ -113,20 +117,42 @@ export function SectionHeader({
   title,
   description,
   action,
+  step,
   className,
 }: {
   title: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
+  /** Position in an ordered run of sections — shown as a numbered marker. */
+  step?: number;
   className?: string;
 }) {
   return (
     <div className={cn('flex flex-wrap items-end justify-between gap-x-4 gap-y-2', className)}>
-      <div className="flex min-w-0 flex-col gap-1">
-        <h2 className="text-base font-semibold tracking-tight text-foreground">{title}</h2>
-        {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
+      <div className="flex min-w-0 items-start gap-3">
+        {step !== undefined ? (
+          <span
+            aria-hidden
+            className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-accent text-[12px] font-semibold text-accent-foreground tabular-nums"
+          >
+            {step}
+          </span>
+        ) : null}
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 className="text-[17px] leading-tight font-semibold tracking-[-0.011em] text-foreground">
+            {title}
+          </h2>
+          {description ? (
+            <p className="text-[13px] leading-relaxed text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
       </div>
-      {action ? <div className="shrink-0 text-sm">{action}</div> : null}
+      {/* On a phone the section's link is a real tap target, not a 20px line of text. */}
+      {action ? (
+        <div className="shrink-0 text-sm [&_a]:inline-flex [&_a]:min-h-11 [&_a]:items-center md:[&_a]:min-h-0">
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -136,18 +162,21 @@ export function Section({
   title,
   description,
   action,
+  step,
   className,
   children,
 }: {
   title: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
+  /** Position in an ordered run of sections — shown as a numbered marker. */
+  step?: number;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <section className={cn('flex min-w-0 flex-col gap-4', className)}>
-      <SectionHeader title={title} description={description} action={action} />
+      <SectionHeader title={title} description={description} action={action} step={step} />
       {children}
     </section>
   );
@@ -171,7 +200,7 @@ export function Panel({
   return (
     <div
       className={cn(
-        'min-w-0 rounded-xl border border-border bg-card shadow-xs',
+        'min-w-0 rounded-xl border border-border/70 bg-card shadow-card',
         PANEL_PADDING[padding],
         className,
       )}

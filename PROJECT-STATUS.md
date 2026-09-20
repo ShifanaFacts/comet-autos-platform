@@ -1,8 +1,217 @@
 # Project Status
 
-Last updated: 2026-09-18
+Last updated: 2026-09-20
 
-## Milestone: Ready → invoice → payment → paid → delivered — DONE (uncommitted, for review)
+## Milestone: Job photos, signatures & responsive workshop UI — IN PROGRESS (increment 2 done, uncommitted)
+
+88 integration tests pass (adds `tests/media-flow.test.ts`, 11 tests).
+
+Schema (both migrations applied, no drift; additive only):
+
+- `20260919120000_media_signature_types` — `MediaStage`, `SignatureContext`,
+  `SignerType`; `DocumentCategory.SIGNATURE`.
+- `20260919120100_job_media_and_signatures` — Document gains `jobCardId`,
+  `stage`, `description`, `deletedByUserId`; new `signatures` table; CHECK
+  constraints for attribution and one handover signature per job.
+
+Photos:
+
+- Storage abstraction (`lib/storage`): `FileStorage` interface with a local
+  disk driver chosen by `STORAGE_DRIVER`; no business code names a provider.
+- `lib/media/photos.ts`: upload (checked by actual bytes — JPEG/PNG/WebP
+  only, 10 MB each, 12 per upload), list, soft-remove with attribution, and
+  read. Files are served only by document id through `/media/[id]`, which
+  checks the viewer's organization and branch; storage keys never reach a
+  screen or a URL.
+- On the job card: stage chips, thumbnail grid, a viewer, and an upload
+  dialog that downscales large photos on the device before sending. The
+  phone quick-action bar opens the camera/gallery picker directly.
+
+Signatures (always optional — the workflow completes without one):
+
+- Captured on the quotation approval (customer link and in-person) and on
+  the delivery handover; recorded as a business record (who signed, what
+  they signed, when, which device captured it) with an audit entry, and
+  shown on the job card.
+
+Responsive (phone / tablet / desktop, verified at 375–1920):
+
+- Bottom navigation on phones (Home / Jobs / Check-in / More); the drawer
+  now opens from "More" only — the duplicate hamburger is gone.
+- Job card rebuilt mobile-first: vehicle hero with plate, status, one-tap
+  call, journey progress (full stepper from `xl`, compact bar below), and a
+  fixed quick-action bar with the actions that fit the job's stage.
+- No horizontally scrolling tables: approved work, parts, labour, invoice
+  lines and quotation lines each render as cards on phones and as a table
+  from `md` up. Job-cards list likewise. The estimate builder stacks each
+  line's fields instead of a sideways grid.
+- Fixed: `Grid` had no default `grid-cols-1`, so its implicit column was
+  sized to its widest content and pushed wide tables off tablet screens;
+  the workflow stepper's `whitespace-nowrap` labels overflowed at 1280; the
+  document action row could not wrap; several links were under 36px tall on
+  a phone. Job-card list paging dropped the status/search filters.
+
+Visual system (increment 3):
+
+- Elevation is now a token (`--shadow-card` / `--shadow-raised` /
+  `--shadow-float`) with a theme-aware tint, so cards sit on the page
+  instead of being outlined on it. Radius 8px → 12px, softer hairline
+  border, deeper page ground, higher-contrast muted text.
+- A typographic scale that actually steps: page title 28/36px, section
+  title 17px, body 13–14px. Money and counts are tabular and weighted.
+- Ordered sections carry a numbered marker (`Section step={n}`) so the
+  repair workspace reads as a sequence.
+- Motion where there was none: nav items, action tiles, pipeline stages and
+  table rows respond to hover and focus, all behind
+  `motion-reduce:transition-none`. The sidebar's current page is a violet
+  pill rather than a hairline, and the dashboard's anchor strip carries a
+  violet wash.
+- The job card showed four empty forms at once. Each now folds behind its
+  own labelled action (`InlineForm`, a native `<details>`, so it works
+  without JavaScript); the one the job is waiting on opens by default. No
+  field or action was removed — the screen is 20% shorter and reads as a
+  record of work.
+- The parts and labour tables gave their description column 80px out of
+  725. The part/labour name and the approved line it fulfils now share one
+  cell, the numeric columns are fixed and no longer wrap, and rows have
+  room.
+
+Visual system (increment 4 — the component layer, where "basic" actually
+lived):
+
+- Buttons were flat colour fills. The primary action is now lit from above
+  (an inset highlight over a gradient) and casts a violet-tinted shadow
+  (`--shadow-primary`), so it reads as a control rather than a coloured
+  rectangle. Outline and secondary get `--shadow-control`.
+- Inputs were flat outlined boxes; they now carry `--shadow-inset-field`, so
+  a field reads as a recess.
+- Scrollbars were the platform default — a wide grey rail that dated every
+  screen. App-wide they are a thin floating thumb on a transparent track;
+  the sidebar hides its bar entirely (`.scrollbar-none`) and still scrolls
+  by wheel and touch.
+- The sidebar was a flat slab. It now carries a violet bloom behind the
+  brand, a gradient brand tile with a halo (`--shadow-glow`), and a gradient
+  active pill with an inset ring instead of a 3px hairline.
+- The top bar is properly glassy (`backdrop-blur-xl` over `background/60`)
+  and the signed-in avatar carries the same violet halo as the brand mark.
+- The page ground is a fixed violet radial wash rather than one flat grey.
+
+Still visually weak, in priority order: the white content cards are still
+plain rectangles; the "Money today" tiles are bare number blocks; empty
+action tiles still show a large grey "0"; the finance and inventory list
+pages have not had the same pass as the job card.
+
+Not done — needs a decision, not code: a technician-specific home ("My
+jobs"). The organization has one role, Owner; there is no Technician role
+to key a role-aware home off, and inventing one would be a business
+decision. Employees exist as records without user accounts.
+
+## Workshop-floor UX, reliability & account — increment 1 (uncommitted)
+
+Done in increment 1 (77 integration tests; adds `tests/reliability.test.ts`,
+`tests/account.test.ts`):
+
+- Duplicate-safe submissions: `request_keys` table (migration
+  `20260919090000_request_keys`, additive) + `lib/request-keys.ts`;
+  `useFormAction` sends a one-time key and ignores re-submits while pending.
+  Payments, part usage, labour, part returns, QC records, appointments,
+  check-in, customers, vehicles, stock adjustments, parts, suppliers,
+  purchases and receipts are recorded once; a repeat answers with the first
+  result.
+- Plain failure messages (`systemFailureMessage`), page error / not-found /
+  access-denied screens with retry.
+- Account: name + role in the header, account menu (profile, change
+  password, log out — the menu previously crashed on open), `/account`,
+  password change signs out other sessions, back-button protection after
+  logout, login by email or mobile with return to the requested page.
+- Navigation filtered by permission; unbuilt modules kept, marked "Soon".
+- Dashboard: Dubai "today", exact finance totals via billing rules (no full
+  payments scan), branch-consistent low stock, action board, today's
+  appointments. One status palette (`lib/workshop/status-tone.ts`).
+- Invoices and Payments list pages (were placeholders). Job card loads its
+  sections in parallel.
+
+Next: screen-by-screen redesign of the workflow screens, then the full
+18-step browser journey. Job-card photos and signatures await schema approval.
+
+## Milestone: Customer documents + WhatsApp sharing — DONE (uncommitted, for review)
+
+Quotation, tax invoice and payment receipt as PDFs; WhatsApp sharing by
+deep link; mobile customer pages for quotations and invoices; a "Customer
+communication" block on the job card. `npm run test:integration` runs 66
+tests (adds `tests/documents-flow.test.ts`). No schema change.
+
+- Layers: `lib/documents/build.ts` (domain → document model, using stored
+  totals and `invoiceBalance` / `receiptBalances` from billing),
+  `lib/documents/pdf/{writer,render}.ts` (dependency-free PDF writer +
+  layout, formatting only), `lib/sharing/whatsapp.ts` (phone normalisation,
+  messages, wa.me URL), `lib/customer-access/{access,share,verify-browser}.ts`
+  (registration + mobile verification for quote and invoice links; share
+  links), customer pages `/customer/quote/[token]`, `/customer/invoice/[token]`.
+- PDF routes: staff `/documents/{quotation,invoice,receipt}/[id]`
+  (session + permission); customer `/customer/quote/[token]/pdf`,
+  `/customer/invoice/[token]/pdf`, `/customer/invoice/[token]/receipts/[RCT-…]/pdf`
+  (only after the browser verified that link). `?download=1` downloads.
+- Sharing issues a fresh secure link each time (raw tokens are never stored)
+  without revoking earlier ones; audited as `customer_access.link_shared`.
+  Quotation links expire with the quotation (30 days once decided); invoice
+  links after 90 days. Receipts are shared through the invoice link.
+
+### Decisions awaiting approval (documents)
+
+1. PDFs use the built-in Helvetica font (no dependency, no font files):
+   Latin text only — Arabic names print as "?". Supporting Arabic needs an
+   embedded font and text shaping (a separate decision).
+2. No payment instructions / bank details on invoices (not in the schema).
+3. Each WhatsApp share creates an extra valid link rather than reusing one.
+4. Quotation numbers stay `EST-…` (existing numbering), shown as "Quotation".
+
+## Milestone: Inventory management — DONE (uncommitted, for review)
+
+Parts catalogue, suppliers, purchase receiving, the stock ledger, stock
+controls and job-part returns, against the local database;
+`npm run test:integration` runs 58 tests (adds `tests/inventory-flow.test.ts`).
+
+- Migrations (additive): `20260918140000_inventory_ledger_types` (enum
+  values OPENING_STOCK, JOB_RETURN, REVERSAL) and
+  `20260918140100_inventory_management` (one transaction): `Part.category`;
+  `Purchase.supplierInvoiceNumber / supplierInvoiceDate / notes` with partial
+  unique index `one_live_purchase_per_supplier_invoice`;
+  `InventoryTransaction.reversalOfTransactionId` (FK, reversed at most once);
+  CHECKs on the ledger (non-zero, sign by type, job movements name the part
+  usage, receipts name the purchase line, reversals name the original) and on
+  purchase lines/totals; trigger `inventory_transactions_append_only` refuses
+  UPDATE/DELETE on the ledger.
+- Stock is only ever the ledger sum. `src/lib/inventory/stock.ts`
+  `postMovement()` is the single way stock moves: locks the part row, refuses
+  negative stock. Job issue, receipts, adjustments, reversals and job returns
+  all go through it.
+- Services: `src/lib/inventory/{parts,suppliers,purchases,labels}.ts`;
+  `returnPartFromJob` in `lib/workshop/repair.ts`. A part usage's net quantity
+  (fitted − returned, from the ledger) is what repair progress, QC and billing
+  use.
+- Screens: `/inventory/parts` (search, filters, low/out-of-stock), part
+  detail (stock, history with running balance, adjust, reverse), suppliers,
+  purchases (draft → partial/full receipt), `/inventory/movements`; "Take
+  back" on the job card's parts list.
+- Permissions added (dev seed grants them to Owner): `inventory.manage`,
+  `purchase.create`, `purchase.receive`. Existing `inventory.adjust` covers
+  adjustments/reversals; `inventory.issue` covers job issue and returns.
+
+### Decisions awaiting approval (inventory)
+
+1. Receiving at a different cost does not change the part's catalogue cost;
+   the difference is shown. No FIFO / weighted-average costing.
+2. Supplier outstanding = received value (cost + VAT) − supplier payments;
+   supplier payments aren't recorded by the app yet.
+3. Purchase receipts can't be reversed; return-to-supplier / supplier credit
+   notes are not built. Only adjustments and opening stock are reversible;
+   job parts are corrected with a job return (only while the job is in repair).
+4. Stock is per branch — the user's primary branch. No transfers yet.
+5. The 12 existing opening-stock rows stay as ADJUSTMENT (history not
+   rewritten); new opening stock is OPENING_STOCK.
+
+## Milestone: Ready → invoice → payment → paid → delivered — DONE (committed d47b169)
 
 READY → INVOICED → PAID → DELIVERED, working against the local database;
 `npm run test:integration` runs 41 tests (adds `tests/billing-flow.test.ts`).
@@ -39,7 +248,7 @@ READY → INVOICED → PAID → DELIVERED, working against the local database;
 4. Invoice is issued directly (no draft step); no customer-facing invoice
    link or PDF yet; no void / refund / payment-reversal flow yet.
 
-## Milestone: Repair → quality check → ready — DONE (uncommitted, for review)
+## Milestone: Repair → quality check → ready — DONE (committed d47b169)
 
 APPROVED → REPAIR → parts used / labour → QUALITY_CHECK → READY, working
 against the local database; `npm run test:integration` now runs 28 tests

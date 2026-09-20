@@ -1,14 +1,15 @@
 import { prisma } from '@/lib/prisma';
 import { DomainError } from '@/lib/errors';
-import { compactPlate, phoneCore } from '@/lib/normalize';
 import { localDateString } from '@/lib/format';
 import { applyEstimateDecision, type EstimateDecision } from '@/lib/workshop/estimates';
+import { resolveAccessToken } from '@/lib/customer-access/tokens';
+import { prepareSignature, recordSignature } from '@/lib/media/signatures';
 import {
-  computeAccessProof,
-  proofMatches,
-  resolveAccessToken,
-  type TokenState,
-} from '@/lib/customer-access/tokens';
+  getCustomerAccess,
+  verifyCustomerAccess,
+  type CustomerAccess,
+  type OrganizationBranding,
+} from '@/lib/customer-access/access';
 
 /*
  * Everything the customer-facing quotation page needs, keyed only by the raw
@@ -17,89 +18,18 @@ import {
  * resource other than the one their token was issued for.
  */
 
-async function loadOwnerIdentifiers(organizationId: string, estimateId: string) {
-  const estimate = await prisma.estimate.findFirst({
-    where: { id: estimateId, organizationId },
-    select: {
-      jobCard: {
-        select: {
-          vehicle: { select: { plateNumber: true, customer: { select: { phone: true } } } },
-        },
-      },
-    },
-  });
-  if (!estimate) return null;
-  return {
-    plateNumber: estimate.jobCard.vehicle.plateNumber,
-    phone: estimate.jobCard.vehicle.customer.phone,
-  };
-}
+export type { OrganizationBranding };
 
-export type QuoteAccess =
-  | { state: 'invalid' }
-  | { state: 'expired'; organization: OrganizationBranding }
-  | { state: 'needs_verification'; tokenHash: string; organization: OrganizationBranding }
-  | { state: 'verified'; tokenHash: string; organization: OrganizationBranding };
-
-export interface OrganizationBranding {
-  name: string;
-  legalName: string | null;
-  address: string | null;
-  phone: string | null;
-  email: string | null;
-  taxNumber: string | null;
-}
-
-async function loadBranding(organizationId: string): Promise<OrganizationBranding> {
-  const org = await prisma.organization.findUniqueOrThrow({
-    where: { id: organizationId },
-    select: { name: true, legalName: true, address: true, phone: true, email: true, taxNumber: true },
-  });
-  return org;
-}
+export type QuoteAccess = CustomerAccess;
 
 /** Resolves the link and checks the browser's verification proof (cookie value). */
-export async function getQuoteAccess(rawToken: string, proof: string | undefined): Promise<QuoteAccess> {
-  const resolved = await resolveAccessToken(rawToken, 'ESTIMATE');
-  if (resolved.state === 'invalid' || !resolved.token) return { state: 'invalid' };
-  const organization = await loadBranding(resolved.token.organizationId);
-  if (resolved.state === 'expired') return { state: 'expired', organization };
-
-  const owner = await loadOwnerIdentifiers(resolved.token.organizationId, resolved.token.resourceId);
-  if (!owner) return { state: 'invalid' };
-  const expected = computeAccessProof(resolved.token.tokenHash, owner.plateNumber, owner.phone);
-  return proofMatches(expected, proof)
-    ? { state: 'verified', tokenHash: resolved.token.tokenHash, organization }
-    : { state: 'needs_verification', tokenHash: resolved.token.tokenHash, organization };
+export function getQuoteAccess(rawToken: string, proof: string | undefined): Promise<QuoteAccess> {
+  return getCustomerAccess(rawToken, 'ESTIMATE', proof);
 }
 
-/**
- * Checks the registration + mobile number the customer typed against the
- * vehicle and owner on the estimate. The same generic message is returned
- * for every mismatch so the form can't be used to probe which part was wrong.
- */
-export async function verifyQuoteAccess(
-  rawToken: string,
-  plateNumber: string,
-  phone: string,
-): Promise<{ ok: true; proof: string; tokenHash: string } | { ok: false; state: TokenState | 'mismatch' }> {
-  const resolved = await resolveAccessToken(rawToken, 'ESTIMATE');
-  if (resolved.state !== 'valid' || !resolved.token) return { ok: false, state: resolved.state };
-
-  const owner = await loadOwnerIdentifiers(resolved.token.organizationId, resolved.token.resourceId);
-  const plateOk = owner !== null && compactPlate(plateNumber).length > 0 && compactPlate(plateNumber) === compactPlate(owner.plateNumber);
-  const phoneOk = owner !== null && phoneCore(phone).length >= 7 && phoneCore(phone) === phoneCore(owner.phone);
-  if (!owner || !plateOk || !phoneOk) return { ok: false, state: 'mismatch' };
-
-  await prisma.customerAccessToken.update({
-    where: { id: resolved.token.id },
-    data: { lastAccessedAt: new Date() },
-  });
-  return {
-    ok: true,
-    proof: computeAccessProof(resolved.token.tokenHash, owner.plateNumber, owner.phone),
-    tokenHash: resolved.token.tokenHash,
-  };
+/** Checks the registration + mobile number the customer typed against the vehicle and owner on the estimate. */
+export function verifyQuoteAccess(rawToken: string, plateNumber: string, phone: string) {
+  return verifyCustomerAccess(rawToken, 'ESTIMATE', plateNumber, phone);
 }
 
 /** The quotation as the customer sees it. Call only after getQuoteAccess returned "verified". */
@@ -188,6 +118,8 @@ export async function decideQuoteAsCustomer(
   proof: string | undefined,
   decision: EstimateDecision,
   notes: string | null,
+  /** Optional signature confirming an approval (PNG data URL); never required. */
+  signatureDataUrl: string | null = null,
 ) {
   const access = await getQuoteAccess(rawToken, proof);
   if (access.state !== 'verified') {
@@ -199,6 +131,12 @@ export async function decideQuoteAsCustomer(
   }
   const token = resolved.token;
   const trimmedNotes = notes?.trim().slice(0, 2000) || null;
+  const estimateJob = await prisma.estimate.findFirst({
+    where: { id: token.resourceId, organizationId: token.organizationId },
+    select: { jobCardId: true, jobCard: { select: { branchId: true } } },
+  });
+  const signature =
+    decision === 'APPROVED' && estimateJob ? await prepareSignature(signatureDataUrl, token.organizationId, estimateJob.jobCardId) : null;
 
   return prisma.$transaction(async (tx) => {
     // Re-check revocation inside the transaction: a revision may have been created a moment ago.
@@ -214,9 +152,31 @@ export async function decideQuoteAsCustomer(
       method: 'ONLINE',
       notes: trimmedNotes,
       recordedByUserId: null,
-      metadata: { customerAccessTokenId: token.id, linkIssuedByUserId: token.createdByUserId },
+      metadata: { customerAccessTokenId: token.id, linkIssuedByUserId: token.createdByUserId, signed: Boolean(signature) },
     });
-    await tx.customerAccessToken.update({ where: { id: token.id }, data: { lastAccessedAt: new Date() } });
+    if (signature && estimateJob) {
+      const customer = await tx.customer.findUniqueOrThrow({ where: { id: approval.customerId }, select: { name: true } });
+      await recordSignature(tx, {
+        prepared: signature,
+        organizationId: token.organizationId,
+        branchId: estimateJob.jobCard.branchId,
+        jobCardId: estimateJob.jobCardId,
+        context: 'QUOTATION_APPROVAL',
+        approvalId: approval.id,
+        signerType: 'CUSTOMER',
+        signerName: customer.name,
+        customerId: approval.customerId,
+        // Signed on the customer's own phone: no staff device captured it. The
+        // stored file is attributed to the staff member who issued the link.
+        capturedByUserId: null,
+        fileOwnerUserId: token.createdByUserId,
+        auditActorUserId: null,
+      });
+    }
+    await tx.customerAccessToken.update({
+      where: { id: token.id },
+      data: { lastAccessedAt: new Date() },
+    });
     return approval;
   });
 }

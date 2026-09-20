@@ -7,6 +7,7 @@ import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { allocateDocumentNumber } from '@/lib/numbering';
 import { DomainError, NotFoundError } from '@/lib/errors';
+import { prepareSignature, recordSignature } from '@/lib/media/signatures';
 import { parseInput } from '@/lib/form-data';
 import { calculateLine, calculateTotals } from '@/lib/money';
 import { resolveDefaultVatRate } from '@/lib/tax';
@@ -587,15 +588,27 @@ const staffDecisionSchema = z.object({
   decision: z.enum(['APPROVED', 'REJECTED'], { error: 'Choose approved or rejected.' }),
   method: z.enum(['IN_PERSON', 'PHONE', 'EMAIL', 'SMS'], { error: 'Choose how the customer told you.' }),
   notes: z.string().trim().max(2000).optional(),
+  /** Optional: the customer signs the approval on the workshop device (in person). */
+  signature: z.string().max(2_000_000).optional(),
+  signerName: z.string().trim().max(120).optional(),
 });
 
-/** A staff member records the decision the customer gave them in person, by phone, email or SMS. */
+/**
+ * A staff member records the decision the customer gave them in person, by
+ * phone, email or SMS. An approval given in person may carry the customer's
+ * signature, captured on the workshop device — never required.
+ */
 export async function recordCustomerDecision(user: AuthenticatedUser, estimateId: string, rawInput: unknown) {
   const input = parseInput(staffDecisionSchema, rawInput);
+  const target = await prisma.estimate.findFirst({ where: { id: estimateId, organizationId: user.organizationId }, select: { jobCardId: true } });
+  const signature =
+    target && input.decision === 'APPROVED' && input.method === 'IN_PERSON'
+      ? await prepareSignature(input.signature, user.organizationId, target.jobCardId)
+      : null;
   return prisma.$transaction(async (tx) => {
     const estimate = await loadEstimate(tx, user.organizationId, estimateId);
     requirePermission(user, 'job_card.edit', { branchId: estimate.jobCard.branchId });
-    return applyEstimateDecision(tx, {
+    const approval = await applyEstimateDecision(tx, {
       organizationId: user.organizationId,
       estimateId: estimate.id,
       decision: input.decision,
@@ -603,6 +616,24 @@ export async function recordCustomerDecision(user: AuthenticatedUser, estimateId
       notes: input.notes || null,
       recordedByUserId: user.id,
     });
+    if (signature) {
+      const customer = await tx.customer.findUniqueOrThrow({ where: { id: approval.customerId }, select: { name: true } });
+      await recordSignature(tx, {
+        prepared: signature,
+        organizationId: user.organizationId,
+        branchId: estimate.jobCard.branchId,
+        jobCardId: estimate.jobCardId,
+        context: 'QUOTATION_APPROVAL',
+        approvalId: approval.id,
+        signerType: 'CUSTOMER',
+        signerName: input.signerName || customer.name,
+        customerId: approval.customerId,
+        capturedByUserId: user.id,
+        fileOwnerUserId: user.id,
+        auditActorUserId: user.id,
+      });
+    }
+    return approval;
   });
 }
 

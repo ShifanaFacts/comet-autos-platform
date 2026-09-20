@@ -6,6 +6,7 @@ import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { allocateDocumentNumber } from '@/lib/numbering';
 import { DomainError } from '@/lib/errors';
+import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
 import { createCustomer, type CustomerInput } from '@/lib/customers/service';
 import { createVehicle, MAX_MILEAGE, type VehicleInput } from '@/lib/vehicles/service';
@@ -65,12 +66,13 @@ export interface CheckInResult {
 export async function checkInVehicle(
   user: AuthenticatedUser,
   input:
-    | { mode: 'existing'; vehicleId: string; visit: Record<string, string | undefined> }
+    | { mode: 'existing'; vehicleId: string; visit: Record<string, string | undefined>; requestKey?: string }
     | {
         mode: 'new';
         customer: CustomerInput;
         vehicle: VehicleInput;
         visit: Record<string, string | undefined>;
+        requestKey?: string;
       },
 ): Promise<CheckInResult> {
   if (!user.primaryBranchId) {
@@ -81,6 +83,7 @@ export async function checkInVehicle(
   const visit = parseInput(visitSchema, input.visit);
 
   return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, input, 'job_card.check_in');
     let vehicleId: string;
     if (input.mode === 'existing') {
       vehicleId = input.vehicleId;
@@ -193,6 +196,7 @@ export async function checkInVehicle(
       },
     });
 
+    await settleRequestKey(tx, user, input, jobCard.id);
     return { jobCardId: jobCard.id, jobNumber };
   });
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Copy, ExternalLink, ShieldCheck } from 'lucide-react';
+import { Check, Copy, ExternalLink, MessageCircle, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -12,10 +12,12 @@ import { Input } from '@/components/ui/input';
  */
 export function CustomerLinkPanel({
   link,
+  whatsappUrl,
   customerName,
   onDone,
 }: {
   link: string;
+  whatsappUrl?: string;
   customerName: string;
   onDone?: () => void;
 }) {
@@ -38,21 +40,45 @@ export function CustomerLinkPanel({
           <ShieldCheck className="size-5" />
         </span>
         <div className="flex flex-col gap-1">
-          <p className="text-lg font-semibold tracking-tight">Quotation link ready for {customerName}</p>
+          <p className="text-lg font-semibold tracking-tight">
+            Quotation link ready for {customerName}
+          </p>
           <p className="text-sm text-muted-foreground">
-            Send this link by WhatsApp, SMS or email. The customer confirms their vehicle registration and mobile number
-            before they can see or approve it. Copy it now — for security it can&apos;t be shown again.
+            Send it on WhatsApp — the message is ready, just press send. The customer confirms their
+            vehicle registration and mobile number before they can see or approve it. For security
+            this link can&apos;t be shown again.
           </p>
         </div>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row">
-        <Input readOnly value={link} onFocus={(event) => event.currentTarget.select()} className="h-10 font-mono text-xs" aria-label="Customer link" />
-        <div className="flex shrink-0 gap-3">
-          <Button size="lg" onClick={copy}>
+        <Input
+          readOnly
+          value={link}
+          onFocus={(event) => event.currentTarget.select()}
+          className="h-10 font-mono text-xs"
+          aria-label="Customer link"
+        />
+        <div className="flex shrink-0 flex-wrap gap-3">
+          {whatsappUrl ? (
+            <Button
+              size="lg"
+              nativeButton={false}
+              render={<a href={whatsappUrl} target="_blank" rel="noreferrer" />}
+            >
+              <MessageCircle />
+              Send on WhatsApp
+            </Button>
+          ) : null}
+          <Button size="lg" variant={whatsappUrl ? 'outline' : 'default'} onClick={copy}>
             {copied ? <Check /> : <Copy />}
             {copied ? 'Copied' : 'Copy link'}
           </Button>
-          <Button size="lg" variant="outline" nativeButton={false} render={<a href={link} target="_blank" rel="noreferrer" />}>
+          <Button
+            size="lg"
+            variant="outline"
+            nativeButton={false}
+            render={<a href={link} target="_blank" rel="noreferrer" />}
+          >
             <ExternalLink />
             Preview
           </Button>

@@ -9,7 +9,7 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 // Session tokens are high-entropy random values, not user-chosen secrets —
 // a fast SHA-256 lookup hash is appropriate here (unlike passwords, which
 // use bcrypt because they're low-entropy and must resist offline guessing).
-function hashToken(rawToken: string): string {
+export function hashSessionToken(rawToken: string): string {
   return createHash('sha256').update(rawToken).digest('hex');
 }
 
@@ -19,6 +19,8 @@ export interface AuthenticatedUser {
   primaryBranchId: string | null;
   email: string;
   fullName: string;
+  /** Names of the roles granted to the user (e.g. "Owner"), for display only — never for access decisions. */
+  roleNames: string[];
   /** Permission codes effective org-wide (branchId null on the grant). */
   orgWidePermissions: Set<string>;
   /** Permission codes effective only for specific branches. */
@@ -32,7 +34,7 @@ export async function createSession(userId: string, organizationId: string): Pro
     data: {
       organizationId,
       userId,
-      tokenHash: hashToken(rawToken),
+      tokenHash: hashSessionToken(rawToken),
       expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     },
   });
@@ -42,7 +44,7 @@ export async function createSession(userId: string, organizationId: string): Pro
 
 export async function revokeSession(rawToken: string): Promise<void> {
   await prisma.session.updateMany({
-    where: { tokenHash: hashToken(rawToken), revokedAt: null },
+    where: { tokenHash: hashSessionToken(rawToken), revokedAt: null },
     data: { revokedAt: new Date() },
   });
 }
@@ -64,7 +66,7 @@ export const getCurrentUser = cache(async (): Promise<AuthenticatedUser | null> 
   if (!rawToken) return null;
 
   const session = await prisma.session.findUnique({
-    where: { tokenHash: hashToken(rawToken) },
+    where: { tokenHash: hashSessionToken(rawToken) },
     include: {
       user: {
         include: {
@@ -104,6 +106,7 @@ export const getCurrentUser = cache(async (): Promise<AuthenticatedUser | null> 
     primaryBranchId: session.user.primaryBranchId,
     email: session.user.email,
     fullName: session.user.fullName,
+    roleNames: [...new Set(session.user.userRoles.map((userRole) => userRole.role.name))],
     orgWidePermissions,
     branchPermissions,
   };

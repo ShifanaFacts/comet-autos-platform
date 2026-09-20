@@ -194,6 +194,15 @@ enum InventoryTransactionType {
   TRANSFER_OUT
   RETURN_TO_SUPPLIER
   CUSTOMER_RETURN
+  /// First stock of a part at a branch. (Rows written before this value
+  /// existed are ADJUSTMENTs noted "Opening stock" — history is not rewritten.)
+  OPENING_STOCK
+  /// A part taken back from a job into stock (wrong part, fewer used).
+  /// Linked to the PartUsage; that usage's net quantity is its consumption
+  /// minus its returns.
+  JOB_RETURN
+  /// Cancels one earlier row exactly (reversalOfTransactionId).
+  REVERSAL
 }
 
 /// V1 supports quotations (Estimate) and two invoice concepts only.
@@ -291,6 +300,30 @@ enum DocumentCategory {
   INSPECTION_REPORT
   EMPLOYEE_DOCUMENT
   OTHER
+  /// A captured signature image (see Signature).
+  SIGNATURE
+}
+
+/// Where in the job a photo was taken.
+enum MediaStage {
+  INTAKE
+  INSPECTION
+  DIAGNOSIS
+  REPAIR
+  QUALITY_CHECK
+  DELIVERY
+  GENERAL
+}
+
+/// What a signature confirms.
+enum SignatureContext {
+  QUOTATION_APPROVAL
+  DELIVERY_HANDOVER
+}
+
+enum SignerType {
+  CUSTOMER
+  STAFF
 }
 
 // =============================================================================
@@ -353,6 +386,7 @@ model Organization {
   salaries                Salary[]
   payrollItems            PayrollItem[]
   auditLogs               AuditLog[]
+  signatures              Signature[]
   documents               Document[]
   sessions                Session[]
   customerAccessTokens    CustomerAccessToken[]
@@ -438,7 +472,9 @@ model User {
   grantedUserRoles           UserRole[]             @relation("UserRoleAssignedBy")
   revokedUserRoles           UserRole[]             @relation("UserRoleRevokedBy")
   auditLogs                  AuditLog[]
-  uploadedDocuments          Document[]
+  uploadedDocuments          Document[]             @relation("DocumentUploadedBy")
+  deletedDocuments           Document[]             @relation("DocumentDeletedBy")
+  capturedSignatures         Signature[]
   sessions                   Session[]
   issuedCustomerAccessTokens CustomerAccessToken[]
 
@@ -589,6 +625,7 @@ model Customer {
   invoices           Invoice[]
   approvals          Approval[]
   jobStatusDecisions JobStatusHistory[]
+  signatures         Signature[]
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -700,6 +737,8 @@ model JobCard {
   workRecords   WorkRecord[]
   qualityChecks QualityCheck[]
   invoices      Invoice[]
+  documents     Document[]
+  signatures    Signature[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, jobNumber])
@@ -926,7 +965,8 @@ model Approval {
   customer     Customer     @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
   recordedBy   User?        @relation(fields: [organizationId, recordedByUserId], references: [organizationId, id], onDelete: Restrict)
 
-  items ApprovalItem[]
+  items     ApprovalItem[]
+  signature Signature?
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -1104,6 +1144,7 @@ model Part {
   defaultTaxRate      Decimal? @map("default_tax_rate") @db.Decimal(5, 2)
   preferredSupplierId String?  @map("preferred_supplier_id") @db.Uuid
   reorderLevel        Decimal? @map("reorder_level") @db.Decimal(12, 3)
+  category            String?
   isActive            Boolean  @default(true) @map("is_active")
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz
@@ -1120,6 +1161,7 @@ model Part {
   @@unique([organizationId, sku])
   @@index([organizationId])
   @@index([organizationId, preferredSupplierId])
+  @@index([organizationId, category])
   @@map("parts")
 }
 
@@ -1146,23 +1188,27 @@ model Supplier {
 }
 
 model Purchase {
-  id               String         @id @default(uuid(7)) @db.Uuid
-  organizationId   String         @map("organization_id") @db.Uuid
-  branchId         String         @map("branch_id") @db.Uuid
-  supplierId       String         @map("supplier_id") @db.Uuid
-  purchaseNumber   String         @map("purchase_number")
-  status           PurchaseStatus @default(DRAFT)
-  subtotal         Decimal?       @db.Decimal(14, 2)
-  taxAmount        Decimal?       @default(0) @map("tax_amount") @db.Decimal(14, 2)
-  totalAmount      Decimal?       @map("total_amount") @db.Decimal(14, 2)
-  orderedAt        DateTime       @default(now()) @map("ordered_at") @db.Timestamptz
-  expectedAt       DateTime?      @map("expected_at") @db.Timestamptz
-  receivedAt       DateTime?      @map("received_at") @db.Timestamptz
-  receivedByUserId String?        @map("received_by_user_id") @db.Uuid
-  journalEntryId   String?        @map("journal_entry_id") @db.Uuid
-  createdByUserId  String         @map("created_by_user_id") @db.Uuid
-  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  id                    String         @id @default(uuid(7)) @db.Uuid
+  organizationId        String         @map("organization_id") @db.Uuid
+  branchId              String         @map("branch_id") @db.Uuid
+  supplierId            String         @map("supplier_id") @db.Uuid
+  purchaseNumber        String         @map("purchase_number")
+  status                PurchaseStatus @default(DRAFT)
+  /// The supplier's own invoice / delivery note number and date.
+  supplierInvoiceNumber String?        @map("supplier_invoice_number")
+  supplierInvoiceDate   DateTime?      @map("supplier_invoice_date") @db.Date
+  notes                 String?
+  subtotal              Decimal?       @db.Decimal(14, 2)
+  taxAmount             Decimal?       @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  totalAmount           Decimal?       @map("total_amount") @db.Decimal(14, 2)
+  orderedAt             DateTime       @default(now()) @map("ordered_at") @db.Timestamptz
+  expectedAt            DateTime?      @map("expected_at") @db.Timestamptz
+  receivedAt            DateTime?      @map("received_at") @db.Timestamptz
+  receivedByUserId      String?        @map("received_by_user_id") @db.Uuid
+  journalEntryId        String?        @map("journal_entry_id") @db.Uuid
+  createdByUserId       String         @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime       @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branch       Branch        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
@@ -1176,6 +1222,8 @@ model Purchase {
 
   @@unique([organizationId, id])
   @@unique([organizationId, purchaseNumber])
+  /// The same supplier invoice can't be entered twice (cancelled entries excepted).
+  @@unique([organizationId, supplierId, supplierInvoiceNumber], map: "one_live_purchase_per_supplier_invoice", where: raw("supplier_invoice_number IS NOT NULL AND status <> 'CANCELLED'"))
   @@index([organizationId])
   @@index([organizationId, branchId])
   @@index([organizationId, supplierId])
@@ -1219,28 +1267,36 @@ model PurchaseItem {
 /// financial receipts (see Payment) — physical stock movement and cash
 /// receipts are different domains with different audit-friendliness needs.
 model InventoryTransaction {
-  id                String                   @id @default(uuid(7)) @db.Uuid
-  organizationId    String                   @map("organization_id") @db.Uuid
-  branchId          String                   @map("branch_id") @db.Uuid
-  partId            String                   @map("part_id") @db.Uuid
-  transactionType   InventoryTransactionType @map("transaction_type")
-  quantity          Decimal                  @db.Decimal(12, 3)
-  unitCost          Decimal?                 @map("unit_cost") @db.Decimal(14, 2)
-  purchaseItemId    String?                  @map("purchase_item_id") @db.Uuid
-  partUsageId       String?                  @map("part_usage_id") @db.Uuid
-  performedByUserId String?                  @map("performed_by_user_id") @db.Uuid
-  note              String?
-  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+  id                      String                   @id @default(uuid(7)) @db.Uuid
+  organizationId          String                   @map("organization_id") @db.Uuid
+  branchId                String                   @map("branch_id") @db.Uuid
+  partId                  String                   @map("part_id") @db.Uuid
+  transactionType         InventoryTransactionType @map("transaction_type")
+  quantity                Decimal                  @db.Decimal(12, 3)
+  unitCost                Decimal?                 @map("unit_cost") @db.Decimal(14, 2)
+  purchaseItemId          String?                  @map("purchase_item_id") @db.Uuid
+  partUsageId             String?                  @map("part_usage_id") @db.Uuid
+  performedByUserId       String?                  @map("performed_by_user_id") @db.Uuid
+  /// For REVERSAL rows: the row this one cancels. A row is reversed at most once.
+  reversalOfTransactionId String?                  @map("reversal_of_transaction_id") @db.Uuid
+  note                    String?
+  createdAt               DateTime                 @default(now()) @map("created_at") @db.Timestamptz
 
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  branch       Branch        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
-  part         Part          @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
-  purchaseItem PurchaseItem? @relation(fields: [organizationId, purchaseItemId], references: [organizationId, id], onDelete: Restrict)
-  partUsage    PartUsage?    @relation(fields: [organizationId, partUsageId], references: [organizationId, id], onDelete: Restrict)
-  performedBy  User?         @relation(fields: [organizationId, performedByUserId], references: [organizationId, id], onDelete: Restrict)
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch                @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  part         Part                  @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
+  purchaseItem PurchaseItem?         @relation(fields: [organizationId, purchaseItemId], references: [organizationId, id], onDelete: Restrict)
+  partUsage    PartUsage?            @relation(fields: [organizationId, partUsageId], references: [organizationId, id], onDelete: Restrict)
+  performedBy  User?                 @relation(fields: [organizationId, performedByUserId], references: [organizationId, id], onDelete: Restrict)
+  reversalOf   InventoryTransaction? @relation("InventoryReversal", fields: [organizationId, reversalOfTransactionId], references: [organizationId, id], onDelete: Restrict)
+  reversedBy   InventoryTransaction? @relation("InventoryReversal")
 
+  @@unique([organizationId, id])
+  @@unique([organizationId, reversalOfTransactionId])
   @@index([organizationId])
   @@index([organizationId, branchId, partId])
+  @@index([organizationId, partUsageId])
+  @@index([organizationId, purchaseItemId])
   @@index([organizationId, partId])
   @@index([createdAt])
   @@map("inventory_transactions")
@@ -1818,11 +1874,23 @@ model Document {
   uploadedByUserId String           @map("uploaded_by_user_id") @db.Uuid
   createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz
   deletedAt        DateTime?        @map("deleted_at") @db.Timestamptz
+  /// Job-card media: the job the file belongs to (enforced by FK within the
+  /// organization), the stage it documents and an optional caption.
+  jobCardId        String?          @map("job_card_id") @db.Uuid
+  stage            MediaStage?
+  description      String?
+  /// Who removed the file (soft delete — the stored file is kept).
+  deletedByUserId  String?          @map("deleted_by_user_id") @db.Uuid
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
-  uploadedBy   User         @relation(fields: [organizationId, uploadedByUserId], references: [organizationId, id], onDelete: Restrict)
+  uploadedBy   User         @relation("DocumentUploadedBy", fields: [organizationId, uploadedByUserId], references: [organizationId, id], onDelete: Restrict)
+  jobCard      JobCard?     @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Restrict)
+  deletedBy    User?        @relation("DocumentDeletedBy", fields: [organizationId, deletedByUserId], references: [organizationId, id], onDelete: Restrict)
+  signature    Signature?
 
+  @@unique([organizationId, id])
+  @@index([organizationId, jobCardId, stage])
   @@index([organizationId])
   @@index([organizationId, entityType, entityId])
   @@index([organizationId, uploadedByUserId])
@@ -1854,4 +1922,63 @@ model CustomerAccessToken {
   @@index([organizationId])
   @@index([organizationId, resourceType, resourceId])
   @@map("customer_access_tokens")
+}
+
+/// One-time keys that make form submissions safe to repeat. The browser sends
+/// a fresh key with each submission; the server claims it in the same
+/// transaction as the change. A repeated submission (double click, retry on a
+/// slow network) finds the key already claimed and is answered with the
+/// original result instead of creating a second payment, part usage, labour
+/// entry, appointment or check-in. Rows are small and can be pruned after a
+/// few days; nothing references them.
+model RequestKey {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  requestKey     String   @map("request_key")
+  action         String
+  /// The record the first submission created, so a repeat can lead to it.
+  resultId       String?  @map("result_id")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([organizationId, userId, requestKey])
+  @@index([createdAt])
+  @@map("request_keys")
+}
+
+/// An optional signature confirming a customer decision or a handover. The
+/// image is stored like any other file (Document, category SIGNATURE); this
+/// row records what was signed, by whom and when. Never required: a missing
+/// row simply means no signature was given.
+model Signature {
+  id               String           @id @default(uuid(7)) @db.Uuid
+  organizationId   String           @map("organization_id") @db.Uuid
+  jobCardId        String           @map("job_card_id") @db.Uuid
+  context          SignatureContext
+  /// The customer decision this signature confirms (quotation approval).
+  approvalId       String?          @map("approval_id") @db.Uuid
+  signerType       SignerType       @map("signer_type")
+  signerName       String           @map("signer_name")
+  customerId       String?          @map("customer_id") @db.Uuid
+  /// Staff member whose device captured it (handover at the counter); NULL
+  /// when the customer signed on their own phone through the secure link.
+  capturedByUserId String?          @map("captured_by_user_id") @db.Uuid
+  documentId       String           @map("document_id") @db.Uuid
+  signedAt         DateTime         @default(now()) @map("signed_at") @db.Timestamptz
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  jobCard      JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Restrict)
+  approval     Approval?    @relation(fields: [organizationId, approvalId], references: [organizationId, id], onDelete: Restrict)
+  customer     Customer?    @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
+  capturedBy   User?        @relation(fields: [organizationId, capturedByUserId], references: [organizationId, id], onDelete: Restrict)
+  document     Document     @relation(fields: [organizationId, documentId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, approvalId])
+  @@unique([organizationId, documentId])
+  /// One handover signature per job.
+  @@unique([organizationId, jobCardId], map: "one_handover_signature_per_job", where: raw("context = 'DELIVERY_HANDOVER'"))
+  @@index([organizationId, jobCardId])
+  @@map("signatures")
 }

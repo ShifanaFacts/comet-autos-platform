@@ -4,6 +4,8 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
+import { claimRequestKey } from '@/lib/request-keys';
+import { withNetQuantities } from '@/lib/inventory/stock';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull } from '@/lib/normalize';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
@@ -35,6 +37,7 @@ export async function recordQualityCheck(user: AuthenticatedUser, jobCardId: str
   const input = parseInput(qualityCheckSchema, rawInput);
 
   return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'quality_check.record');
     await tx.$executeRaw`SELECT id FROM job_cards WHERE id = ${jobCardId}::uuid AND organization_id = ${user.organizationId}::uuid FOR UPDATE`;
     const jobCard = await tx.jobCard.findFirst({
       where: { id: jobCardId, organizationId: user.organizationId },
@@ -49,7 +52,10 @@ export async function recordQualityCheck(user: AuthenticatedUser, jobCardId: str
     }
 
     const [parts, labour, waitingAdditional] = await Promise.all([
-      tx.partUsage.count({ where: { organizationId: user.organizationId, jobCardId: jobCard.id } }),
+      tx.partUsage
+        .findMany({ where: { organizationId: user.organizationId, jobCardId: jobCard.id }, select: { id: true, quantity: true } })
+        .then((usages) => withNetQuantities(tx, user.organizationId, usages))
+        .then((usages) => usages.filter((u) => u.netMilli > 0).length),
       tx.labour.count({ where: { organizationId: user.organizationId, jobCardId: jobCard.id } }),
       tx.estimate.count({
         where: { organizationId: user.organizationId, jobCardId: jobCard.id, kind: 'ADDITIONAL', status: 'SENT' },

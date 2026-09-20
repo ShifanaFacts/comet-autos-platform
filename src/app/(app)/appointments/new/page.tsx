@@ -1,4 +1,5 @@
-import { requireUser, requirePermission } from '@/lib/auth/authorize';
+import { requireUser, hasPermission } from '@/lib/auth/authorize';
+import { AccessDenied } from '@/components/shared/access-denied';
 import { getVehicleSummaries, type VehicleSummary } from '@/lib/vehicles/summary';
 import { localDateString, toLocalDateTimeInput } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -12,9 +13,21 @@ function suggestedSlot(): string {
   return `${localDateString(tomorrow)}T09:00`;
 }
 
-export default async function NewAppointmentPage({ searchParams }: { searchParams: Promise<{ vehicle?: string }> }) {
+export default async function NewAppointmentPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ vehicle?: string }>;
+}) {
   const user = await requireUser();
-  requirePermission(user, 'job_card.create');
+  if (
+    !hasPermission(
+      user,
+      'job_card.create',
+      user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
+    )
+  ) {
+    return <AccessDenied what="booking appointments" />;
+  }
   const { vehicle: vehicleParam } = await searchParams;
 
   let vehicle: VehicleSummary | null = null;

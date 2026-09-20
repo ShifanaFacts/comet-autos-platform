@@ -19,6 +19,9 @@ src/generated/
 # Local-development-only embedded PostgreSQL data (see scripts/dev-db.mjs)
 .local-postgres-data/
 
+# Local-development file storage (uploaded photos, signatures)
+.local-storage/
+
 # Logs
 npm-debug.log*
 *.log
