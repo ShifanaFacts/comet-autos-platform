@@ -16,19 +16,26 @@ import { getJobWorkspace, getNextAction } from '@/lib/workshop/workspace';
 import { getSecondaryNextStatuses } from '@/lib/workshop/job-status';
 import { employeeName, listWorkshopEmployees } from '@/lib/workshop/assignment';
 import { Grid, Panel, Section, Stack } from '@/components/layout/primitives';
-import { JobContextHeader } from '@/components/workshop/job-context-header';
+import { JobHero } from '@/components/workshop/job-hero';
+import { JobQuickActions } from '@/components/workshop/job-quick-actions';
 import { NextActionPanel } from '@/components/workshop/next-action-panel';
 import { TechnicianForm } from '@/components/workshop/technician-form';
 import { EstimateStatusPill, InspectionResultPill } from '@/components/workshop/status-pills';
 import { StatusPill } from '@/components/shared/status-pill';
-import { WorkflowStepper } from '@/components/shared/workflow-stepper';
+import { WorkflowProgress } from '@/components/shared/workflow-progress';
 import { StatusTimeline } from '@/components/shared/status-timeline';
+import { JobPhotos } from '@/components/media/job-photos';
+import { JobSignatures } from '@/components/media/job-signatures';
+import { listJobPhotos, listJobSignatures } from '@/lib/media/photos';
+import { defaultMediaStage } from '@/lib/media/stages';
 import { cn } from '@/lib/utils';
 import { getRepairWorkspace } from '@/lib/workshop/repair';
 import type { WorkflowStatus } from '@/lib/workshop/stages';
 import { RepairSections } from './repair/repair-sections';
 import { BillingSections } from './billing/billing-sections';
 import { getBillingPreview, getJobInvoice } from '@/lib/billing/invoice';
+import { getJobDocuments } from '@/lib/documents/build';
+import { CustomerCommunication } from '@/components/documents/customer-communication';
 
 const BILLING_PHASE: WorkflowStatus[] = ['READY', 'INVOICED', 'PAID', 'DELIVERED'];
 const REPAIR_PHASE: WorkflowStatus[] = [
@@ -70,12 +77,21 @@ export default async function JobCardWorkspacePage({
   const secondary = getSecondaryNextStatuses(jobCard.status);
   const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
   const canAssign = hasPermission(user, 'job_card.assign', { branchId: jobCard.branchId });
-  const employees = canAssign || canEdit ? await listWorkshopEmployees(user) : [];
+  const canIssueParts = hasPermission(user, 'inventory.issue', { branchId: jobCard.branchId });
+  const canPay = hasPermission(user, 'payment.create', { branchId: jobCard.branchId });
   const repairPhase = REPAIR_PHASE.includes(status);
-  const repair = repairPhase ? await getRepairWorkspace(user, jobCard.id) : null;
   const billingPhase = BILLING_PHASE.includes(status);
-  const invoice = billingPhase ? await getJobInvoice(user, jobCard.id) : null;
+  // Independent reads, fetched together rather than one after another.
+  const [employees, repair, invoice, documents, photos, signatures] = await Promise.all([
+    canAssign || canEdit ? listWorkshopEmployees(user) : Promise.resolve([]),
+    repairPhase ? getRepairWorkspace(user, jobCard.id) : Promise.resolve(null),
+    billingPhase ? getJobInvoice(user, jobCard.id) : Promise.resolve(null),
+    getJobDocuments(user, jobCard.id),
+    listJobPhotos(user, jobCard.id),
+    listJobSignatures(user, jobCard.id),
+  ]);
   const preview = billingPhase && !invoice ? await getBillingPreview(user, jobCard.id) : null;
+  const hasDocuments = documents.quotations.length > 0 || documents.invoice !== null;
   const employeeOptions = employees.map((e) => ({
     id: e.id,
     name: employeeName(e),
@@ -88,7 +104,10 @@ export default async function JobCardWorkspacePage({
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
-      <JobContextHeader jobCard={jobCard} />
+      <JobHero
+        jobCard={jobCard}
+        technician={primaryTechnician ? employeeName(primaryTechnician) : null}
+      />
 
       <Stack gap="lg">
         <NextActionPanel
@@ -98,10 +117,8 @@ export default async function JobCardWorkspacePage({
           canHold={canEdit && secondary.includes('ON_HOLD')}
           canCancel={canEdit && secondary.includes('CANCELLED')}
         />
-        <Panel className="overflow-x-auto">
-          <div className="min-w-[900px]">
-            <WorkflowStepper effectiveStatus={effectiveStatus} />
-          </div>
+        <Panel>
+          <WorkflowProgress effectiveStatus={effectiveStatus} />
         </Panel>
       </Stack>
 
@@ -115,7 +132,7 @@ export default async function JobCardWorkspacePage({
               invoice={invoice}
               preview={preview}
               canInvoice={hasPermission(user, 'invoice.create', { branchId: jobCard.branchId })}
-              canPay={hasPermission(user, 'payment.create', { branchId: jobCard.branchId })}
+              canPay={canPay}
               canDeliver={hasPermission(user, 'job_card.close', { branchId: jobCard.branchId })}
             />
           ) : null}
@@ -125,7 +142,7 @@ export default async function JobCardWorkspacePage({
               repair={repair}
               status={status}
               canEdit={canEdit}
-              canIssueParts={hasPermission(user, 'inventory.issue', { branchId: jobCard.branchId })}
+              canIssueParts={canIssueParts}
               employees={employeeOptions}
             />
           ) : null}
@@ -301,10 +318,50 @@ export default async function JobCardWorkspacePage({
               </ul>
             </Panel>
           </Section>
+
+          <section id="photos" className="flex scroll-mt-24 flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-base font-semibold tracking-tight">Photos</h2>
+              <p className="text-sm text-muted-foreground">
+                What the vehicle looked like at each stage — evidence for the customer and for the
+                workshop.
+              </p>
+            </div>
+            <JobPhotos
+              jobCardId={jobCard.id}
+              photos={photos.map((photo) => ({
+                id: photo.id,
+                stage: photo.stage,
+                description: photo.description,
+                createdAt: photo.createdAt.toISOString(),
+                uploadedBy: photo.uploadedBy?.fullName ?? 'Workshop',
+              }))}
+              defaultStage={defaultMediaStage(jobCard.status)}
+              canEdit={canEdit && !isFinished}
+            />
+          </section>
+
+          <Section
+            title="Signatures"
+            description="Signed approvals and handovers on this job."
+          >
+            <Panel padding="none">
+              <JobSignatures signatures={signatures} />
+            </Panel>
+          </Section>
         </Stack>
 
         {/* Side column: who, what, when */}
         <Stack gap="xl" className="xl:col-span-4">
+          {hasDocuments ? (
+            <Section
+              title="Customer communication"
+              description="Send documents to the customer on WhatsApp."
+            >
+              <CustomerCommunication documents={documents} canShareQuotation={canEdit} />
+            </Section>
+          ) : null}
+
           <Section title="Visit">
             <Panel>
               <dl className="flex flex-col gap-4 text-sm">
@@ -404,6 +461,16 @@ export default async function JobCardWorkspacePage({
           </Section>
         </Stack>
       </Grid>
+
+      {!isFinished ? (
+        <JobQuickActions
+          jobCardId={jobCard.id}
+          status={status}
+          canEdit={canEdit}
+          canIssueParts={canIssueParts}
+          canPay={canPay}
+        />
+      ) : null}
     </Stack>
   );
 }
@@ -438,7 +505,7 @@ function ProgressRow({
             <Link
               href={href}
               className={cn(
-                'inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover',
+                'inline-flex min-h-11 items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover md:min-h-0',
               )}
             >
               {linkLabel}

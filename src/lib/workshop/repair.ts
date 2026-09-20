@@ -6,9 +6,10 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
+import { claimRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
-import { calculateLabour, filsToString, multiplyQuantity, signedToMilli, toFils, toMilli, milliToString } from '@/lib/money';
-import { getStockByPart, issueStockToJob } from '@/lib/inventory/stock';
+import { calculateLabour, filsToString, formatMilli, multiplyQuantity, signedToMilli, toFils, toMilli, milliToString } from '@/lib/money';
+import { getStockByPart, issueStockToJob, postMovement, withNetQuantities } from '@/lib/inventory/stock';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 
 /*
@@ -128,6 +129,7 @@ export async function recordPartUsage(user: AuthenticatedUser, jobCardId: string
   const input = parseInput(partUsageSchema, rawInput);
 
   return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'part_usage.record');
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
     requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
     requirePermission(user, 'inventory.issue', { branchId: jobCard.branchId });
@@ -213,6 +215,7 @@ export async function recordLabour(user: AuthenticatedUser, jobCardId: string, r
   const amounts = calculateLabour({ hours: input.hours, rate: input.rate });
 
   return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'labour.record');
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
     requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
     if (normalizeStatus(jobCard.status) !== 'REPAIR') {
@@ -265,7 +268,7 @@ export async function getRepairWorkspace(user: AuthenticatedUser, jobCardId: str
   if (!jobCard) throw new NotFoundError('job card');
   requirePermission(user, 'job_card.view', { branchId: jobCard.branchId });
 
-  const [approvedEstimates, additionalEstimates, partUsages, labours, qualityChecks, parts, stock] = await Promise.all([
+  const [approvedEstimates, additionalEstimates, recordedUsages, labours, qualityChecks, parts, stock] = await Promise.all([
     prisma.estimate.findMany({
       where: { organizationId: user.organizationId, jobCardId, status: 'APPROVED' },
       orderBy: [{ kind: 'asc' }, { createdAt: 'asc' }],
@@ -311,6 +314,7 @@ export async function getRepairWorkspace(user: AuthenticatedUser, jobCardId: str
     }),
     getStockByPart(user.organizationId, jobCard.branchId),
   ]);
+  const partUsages = await withNetQuantities(prisma, user.organizationId, recordedUsages);
 
   const approvedLines = approvedEstimates.flatMap((estimate) =>
     estimate.items.map((item) => {
@@ -331,7 +335,7 @@ export async function getRepairWorkspace(user: AuthenticatedUser, jobCardId: str
           progress: (recorded.length > 0 ? 'DONE' : 'NOT_STARTED') as LineProgress,
         };
       }
-      const usedMilli = partUsages.filter((u) => u.estimateItemId === item.id).reduce((sum, u) => sum + signedToMilli(u.quantity), 0);
+      const usedMilli = partUsages.filter((u) => u.estimateItemId === item.id).reduce((sum, u) => sum + u.netMilli, 0);
       return {
         id: item.id,
         estimateNumber: estimate.estimateNumber,
@@ -347,7 +351,7 @@ export async function getRepairWorkspace(user: AuthenticatedUser, jobCardId: str
     }),
   );
 
-  const partLine = (u: (typeof partUsages)[number]) => multiplyQuantity(u.quantity.toString(), u.unitPrice.toString());
+  const partLine = (u: (typeof partUsages)[number]) => multiplyQuantity(milliToString(u.netMilli), u.unitPrice.toString());
   const totals = {
     approvedFils: approvedEstimates.reduce((sum, e) => sum + toFils(e.subtotal.toString()), 0),
     partsFils: partUsages.filter((u) => u.estimateItemId).reduce((sum, u) => sum + partLine(u), 0),
@@ -402,14 +406,86 @@ export async function getIncompleteApprovedLines(
       select: { id: true, itemType: true, description: true, quantity: true },
     }),
     client.labour.findMany({ where: { organizationId, jobCardId, estimateItemId: { not: null } }, select: { estimateItemId: true } }),
-    client.partUsage.findMany({
-      where: { organizationId, jobCardId, estimateItemId: { not: null } },
-      select: { estimateItemId: true, quantity: true },
-    }),
+    client.partUsage
+      .findMany({
+        where: { organizationId, jobCardId, estimateItemId: { not: null } },
+        select: { id: true, estimateItemId: true, quantity: true },
+      })
+      .then((rows) => withNetQuantities(client, organizationId, rows)),
   ]);
   return items.filter((item) => {
     if (item.itemType === 'LABOUR') return !labours.some((l) => l.estimateItemId === item.id);
-    const fitted = usages.filter((u) => u.estimateItemId === item.id).reduce((sum, u) => sum + signedToMilli(u.quantity), 0);
+    const fitted = usages.filter((u) => u.estimateItemId === item.id).reduce((sum, u) => sum + u.netMilli, 0);
     return fitted < signedToMilli(item.quantity);
+  });
+}
+
+const partReturnSchema = z.object({
+  quantity: z
+    .string({ error: 'Enter the quantity taken back.' })
+    .trim()
+    .refine((value) => /^\d+(\.\d{1,3})?$/.test(value) && Number(value) > 0, 'Quantity must be a positive number (up to 3 decimals).'),
+  reason: z.string({ error: 'Say why the part is being taken back.' }).trim().min(3, 'Say why the part is being taken back.').max(300),
+});
+
+/**
+ * Corrects a part recorded on a job — wrong part, or fewer used than
+ * recorded — by taking it back into stock. Writes a JOB_RETURN ledger row
+ * linked to the PartUsage; nothing is deleted or edited, so the original
+ * usage, the return and who made each stay in the history. The usage's net
+ * quantity (fitted minus returns) is what repair progress, the quality check
+ * and billing see. Only while the job is in repair, so work that already
+ * passed QC or was invoiced can't be changed underneath it.
+ */
+export async function returnPartFromJob(user: AuthenticatedUser, jobCardId: string, partUsageId: string, rawInput: unknown) {
+  const input = parseInput(partReturnSchema, rawInput);
+
+  return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'part_usage.return');
+    const jobCard = await lockJob(tx, user.organizationId, jobCardId);
+    requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
+    requirePermission(user, 'inventory.issue', { branchId: jobCard.branchId });
+    if (normalizeStatus(jobCard.status) !== 'REPAIR') {
+      throw new DomainError('Parts can only be taken back while the job is in repair.');
+    }
+
+    const usage = await tx.partUsage.findFirst({
+      where: { id: partUsageId, organizationId: user.organizationId, jobCardId: jobCard.id },
+      include: { part: { select: { name: true, sku: true } } },
+    });
+    if (!usage) throw new NotFoundError('part record');
+    const quantityMilli = toMilli(input.quantity);
+    // The ledger movement locks the part row; take the lock first so the
+    // "how many are left on the job" check can't race a concurrent return.
+    await tx.$queryRaw`SELECT id FROM parts WHERE id = ${usage.partId}::uuid FOR UPDATE`;
+    const [current] = await withNetQuantities(tx, user.organizationId, [usage]);
+    if (current.netMilli <= 0) throw new DomainError('This part has already been taken back in full.', 'quantity');
+    if (quantityMilli > current.netMilli) {
+      throw new DomainError(`Only ${formatMilli(current.netMilli)} of this part is still on the job.`, 'quantity');
+    }
+
+    const ledger = await postMovement(tx, {
+      organizationId: user.organizationId,
+      branchId: jobCard.branchId,
+      partId: usage.partId,
+      type: 'JOB_RETURN',
+      quantityMilli,
+      unitCost: usage.unitCost.toString(),
+      partUsageId: usage.id,
+      performedByUserId: user.id,
+      note: `Taken back from job ${jobCard.jobNumber}: ${input.reason}`,
+    });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: jobCard.branchId,
+      actorUserId: user.id,
+      action: 'part_usage.returned',
+      entityType: 'PartUsage',
+      entityId: usage.id,
+      beforeData: { netQuantity: milliToString(current.netMilli) },
+      afterData: { netQuantity: milliToString(current.netMilli - quantityMilli), returned: milliToString(quantityMilli) },
+      metadata: { jobCardId: jobCard.id, sku: usage.part.sku, reason: input.reason, inventoryTransactionId: ledger.id },
+    });
+    return ledger;
   });
 }

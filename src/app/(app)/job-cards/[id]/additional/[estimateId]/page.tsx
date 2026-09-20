@@ -26,7 +26,11 @@ const METHOD_LABEL: Record<ApprovalMethod, string> = {
 };
 
 /** An ADDITIONAL work request: priced, sent and decided separately from the approved quotation. */
-export default async function AdditionalWorkPage({ params }: { params: Promise<{ id: string; estimateId: string }> }) {
+export default async function AdditionalWorkPage({
+  params,
+}: {
+  params: Promise<{ id: string; estimateId: string }>;
+}) {
   const user = await requireUser();
   const { id, estimateId } = await params;
   let workspace;
@@ -43,14 +47,19 @@ export default async function AdditionalWorkPage({ params }: { params: Promise<{
   const customer = jobCard.vehicle.customer;
   const decision = estimate.approvals[0];
   const expired =
-    estimate.status === 'SENT' && estimate.validUntil !== null && estimate.validUntil.toISOString().slice(0, 10) < localDateString();
+    estimate.status === 'SENT' &&
+    estimate.validUntil !== null &&
+    estimate.validUntil.toISOString().slice(0, 10) < localDateString();
   const defaultVatRate = resolveDefaultVatRate(user.organizationId);
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <JobContextHeader jobCard={jobCard} section="Additional work" />
 
-      <Link href={`/job-cards/${jobCard.id}`} className="inline-flex w-fit items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+      <Link
+        href={`/job-cards/${jobCard.id}`}
+        className="inline-flex w-fit items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+      >
         <ArrowLeft className="size-4" />
         Back to the repair
       </Link>
@@ -71,11 +80,13 @@ export default async function AdditionalWorkPage({ params }: { params: Promise<{
           className="xl:col-span-8"
         >
           <Panel className="border-warning/30 bg-warning/5">
-            <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Found during the repair</p>
+            <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+              Found during the repair
+            </p>
             <p className="mt-2 text-sm whitespace-pre-wrap">{estimate.notes}</p>
             <p className="mt-3 text-xs text-muted-foreground">
-              This is separate from the approved quotation. Nothing here is charged or becomes approved work until the customer
-              approves it.
+              This is separate from the approved quotation. Nothing here is charged or becomes
+              approved work until the customer approves it.
             </p>
           </Panel>
 
@@ -87,7 +98,11 @@ export default async function AdditionalWorkPage({ params }: { params: Promise<{
                 customerName={customer.name}
                 recommendation={null}
                 defaultVatRate={defaultVatRate}
-                initialValidUntil={estimate.validUntil ? estimate.validUntil.toISOString().slice(0, 10) : localDateString()}
+                initialValidUntil={
+                  estimate.validUntil
+                    ? estimate.validUntil.toISOString().slice(0, 10)
+                    : localDateString()
+                }
                 minValidUntil={localDateString()}
                 initialLines={estimate.items
                   .filter((item) => item.itemType !== 'OTHER')
@@ -113,9 +128,22 @@ export default async function AdditionalWorkPage({ params }: { params: Promise<{
         <Stack gap="xl" className="xl:col-span-4">
           {decision ? (
             <Section title="Customer decision">
-              <Panel className={cn(decision.status === 'APPROVED' ? 'border-success/30 bg-success/5' : 'border-danger/30 bg-danger/5')}>
-                <p className={cn('text-lg font-semibold', decision.status === 'APPROVED' ? 'text-success' : 'text-danger')}>
-                  {decision.status === 'APPROVED' ? 'Approved — added to the approved work' : 'Rejected — not to be done'}
+              <Panel
+                className={cn(
+                  decision.status === 'APPROVED'
+                    ? 'border-success/30 bg-success/5'
+                    : 'border-danger/30 bg-danger/5',
+                )}
+              >
+                <p
+                  className={cn(
+                    'text-lg font-semibold',
+                    decision.status === 'APPROVED' ? 'text-success' : 'text-danger',
+                  )}
+                >
+                  {decision.status === 'APPROVED'
+                    ? 'Approved — added to the approved work'
+                    : 'Rejected — not to be done'}
                 </p>
                 <dl className="mt-4 grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2 text-sm">
                   <dt className="text-muted-foreground">Decided by</dt>
@@ -139,14 +167,28 @@ export default async function AdditionalWorkPage({ params }: { params: Promise<{
 
           {estimate.status === 'SENT' && canEdit && !expired ? (
             <>
-              <Section title="Waiting for the customer" description={`${customer.name} can approve or reject on their secure link.`}>
+              <Section
+                title="Waiting for the customer"
+                description={`${customer.name} can approve or reject on their secure link.`}
+              >
                 <Panel>
-                  <NewLinkButton jobCardId={jobCard.id} estimateId={estimate.id} customerName={customer.name} />
+                  <NewLinkButton
+                    jobCardId={jobCard.id}
+                    estimateId={estimate.id}
+                    customerName={customer.name}
+                  />
                 </Panel>
               </Section>
-              <Section title="Record the decision" description="If the customer answers in person, by phone or by message.">
+              <Section
+                title="Record the decision"
+                description="If the customer answers in person, by phone or by message."
+              >
                 <Panel>
-                  <RecordDecisionForm jobCardId={jobCard.id} estimateId={estimate.id} />
+                  <RecordDecisionForm
+                    jobCardId={jobCard.id}
+                    estimateId={estimate.id}
+                    customerName={customer.name}
+                  />
                 </Panel>
               </Section>
             </>

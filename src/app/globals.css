@@ -74,6 +74,32 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /*
+   * Elevation. Cards sit on the page rather than being outlined on it:
+   * a hairline plus a soft, low shadow reads as a physical card and keeps
+   * long screens from turning into a stack of identical rectangles.
+   *   card   resting surface
+   *   raised the one panel that wants attention (next action, totals)
+   *   float  menus, dialogs, anything over the page
+   */
+  --shadow-card: 0 1px 2px -1px var(--shadow-tint), 0 2px 6px -2px var(--shadow-tint);
+  --shadow-raised: 0 2px 4px -2px var(--shadow-tint), 0 8px 20px -6px var(--shadow-tint-strong);
+  --shadow-float: 0 8px 12px -6px var(--shadow-tint), 0 20px 40px -12px var(--shadow-tint-strong);
+
+  /*
+   * Controls. A button is a physical object: lit from above (the inset
+   * highlight), casting a small shadow. The primary button's shadow is
+   * tinted with the brand violet so it glows rather than greys.
+   */
+  --shadow-control: 0 1px 2px var(--shadow-tint), inset 0 1px 0 rgb(255 255 255 / 0.6);
+  --shadow-primary: 0 1px 2px rgb(76 29 149 / 0.3), 0 4px 12px -4px rgb(124 58 237 / 0.45),
+    inset 0 1px 0 rgb(255 255 255 / 0.22);
+  --shadow-primary-hover: 0 2px 4px rgb(76 29 149 / 0.32), 0 10px 22px -6px rgb(124 58 237 / 0.5),
+    inset 0 1px 0 rgb(255 255 255 / 0.26);
+  --shadow-inset-field: inset 0 1px 2px rgb(20 20 40 / 0.06);
+  /* The violet halo used for brand marks and the signed-in avatar. */
+  --shadow-glow: 0 2px 10px -2px rgb(124 58 237 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.25);
 }
 
 /*
@@ -87,11 +113,16 @@
  * separate from the brand accent — see components/shared/job-status-badge.
  */
 :root {
-  --background: #f8f8fa;
-  --foreground: #18181b;
+  --background: #f4f5f8;
+  --foreground: #14141a;
   --card: #ffffff;
-  --card-foreground: #18181b;
+  --card-foreground: #14141a;
   --surface: #ffffff;
+  --ground-wash: rgb(124 58 237 / 0.06);
+  --scrollbar-thumb: rgb(20 20 40 / 0.16);
+  --scrollbar-thumb-hover: rgb(20 20 40 / 0.3);
+  --shadow-tint: rgb(20 20 40 / 0.07);
+  --shadow-tint-strong: rgb(20 20 40 / 0.1);
   --popover: #ffffff;
   --popover-foreground: #18181b;
   --primary: #7c3aed;
@@ -100,7 +131,7 @@
   --secondary: #f1f1f5;
   --secondary-foreground: #18181b;
   --muted: #f1f1f5;
-  --muted-foreground: #64748b;
+  --muted-foreground: #5b6472;
   --accent: #ede9fe;
   --accent-foreground: #5b21b6;
   --destructive: #dc2626;
@@ -112,7 +143,7 @@
   --warning-foreground: #ffffff;
   --info: #2563eb;
   --info-foreground: #ffffff;
-  --border: #e4e4e9;
+  --border: #e6e7ee;
   --input: #cbd5e1;
   --ring: rgb(124 58 237 / 0.55);
   --chart-1: #7c3aed;
@@ -120,7 +151,7 @@
   --chart-3: #64748b;
   --chart-4: #cbd5e1;
   --chart-5: #111118;
-  --radius: 0.5rem;
+  --radius: 0.75rem;
   --sidebar: #111118;
   --sidebar-foreground: #f4f4f5;
   --sidebar-primary: #7c3aed;
@@ -136,6 +167,13 @@
   --foreground: #f4f4f5;
   --card: #18181f;
   --card-foreground: #f4f4f5;
+  --ground-wash: rgb(139 92 246 / 0.1);
+  --scrollbar-thumb: rgb(255 255 255 / 0.16);
+  --scrollbar-thumb-hover: rgb(255 255 255 / 0.3);
+  --shadow-tint: rgb(0 0 0 / 0.4);
+  --shadow-tint-strong: rgb(0 0 0 / 0.55);
+  --shadow-control: 0 1px 2px rgb(0 0 0 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --shadow-inset-field: inset 0 1px 2px rgb(0 0 0 / 0.25);
   --surface: #18181f;
   --popover: #18181f;
   --popover-foreground: #f4f4f5;
@@ -179,8 +217,48 @@
   * {
     @apply border-border outline-ring/50;
   }
+
+  /*
+   * Scrollbars. The platform default is a wide grey rail that dates the
+   * whole interface; this is a thin floating thumb that only shows where
+   * there is something to scroll. The sidebar hides its bar entirely
+   * (`.scrollbar-none`) — it still scrolls by wheel and touch.
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    background-clip: content-box;
+    border: 3px solid transparent;
+    border-radius: 9999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
   body {
     @apply bg-background text-foreground antialiased;
+    background-image: radial-gradient(1200px 600px at 78% -8%, var(--ground-wash), transparent 70%);
+    background-attachment: fixed;
   }
   html {
     @apply font-sans;

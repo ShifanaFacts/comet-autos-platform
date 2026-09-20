@@ -11,6 +11,7 @@ import {
   Cog,
   Truck,
   ShoppingCart,
+  History,
   Receipt,
   Wallet,
   ReceiptText,
@@ -29,6 +30,10 @@ export interface NavItem {
   label: string;
   href: string;
   icon: LucideIcon;
+  /** Permission needed to see the item (the page itself still checks on the server). */
+  permission?: string;
+  /** Module not built yet: shown muted with a "Soon" tag; the route shows a placeholder. */
+  soon?: boolean;
 }
 
 export interface NavGroup {
@@ -36,64 +41,130 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-// Structure matches section 4/28 of the build instructions. Only Dashboard,
-// Check-In, Job Cards, Customers and Vehicles have real implementations in
-// this phase — everything else renders a "not built yet" placeholder (see
-// components/shell/coming-soon.tsx) rather than a 404, so navigation stays
-// honest about what exists without faking data. See PROJECT-STATUS.md for
-// the module-by-module roadmap.
+/*
+ * The sidebar, grouped by how the workshop works. Items a user has no
+ * permission for are not shown (hiding is convenience only — every page and
+ * action enforces permissions on the server). Modules not built yet stay
+ * listed, marked "Soon", so nothing silently disappears.
+ */
 export const NAV_GROUPS: NavGroup[] = [
   { label: null, items: [{ label: 'Dashboard', href: '/', icon: LayoutDashboard }] },
   {
     label: 'Workshop',
     items: [
-      { label: 'Appointments', href: '/appointments', icon: CalendarDays },
-      { label: 'Check-In', href: '/check-in', icon: LogIn },
-      { label: 'Job Cards', href: '/job-cards', icon: ClipboardList },
-      { label: 'Inspections', href: '/inspections', icon: ClipboardCheck },
-      { label: 'Estimates', href: '/estimates', icon: FileText },
-      { label: 'Approvals', href: '/approvals', icon: BadgeCheck },
+      { label: 'Job Cards', href: '/job-cards', icon: ClipboardList, permission: 'job_card.view' },
+      { label: 'Check-In', href: '/check-in', icon: LogIn, permission: 'job_card.create' },
+      {
+        label: 'Appointments',
+        href: '/appointments',
+        icon: CalendarDays,
+        permission: 'job_card.view',
+      },
+      {
+        label: 'Inspections',
+        href: '/inspections',
+        icon: ClipboardCheck,
+        permission: 'job_card.view',
+      },
+      { label: 'Estimates', href: '/estimates', icon: FileText, permission: 'job_card.view' },
+      { label: 'Approvals', href: '/approvals', icon: BadgeCheck, permission: 'job_card.view' },
     ],
   },
   {
     label: 'Customers',
     items: [
-      { label: 'Customers', href: '/customers', icon: Users },
-      { label: 'Vehicles', href: '/vehicles', icon: Car },
+      { label: 'Customers', href: '/customers', icon: Users, permission: 'customer.view' },
+      { label: 'Vehicles', href: '/vehicles', icon: Car, permission: 'vehicle.view' },
     ],
   },
   {
     label: 'Inventory',
     items: [
-      { label: 'Parts', href: '/inventory/parts', icon: Cog },
-      { label: 'Suppliers', href: '/inventory/suppliers', icon: Truck },
-      { label: 'Purchases', href: '/inventory/purchases', icon: ShoppingCart },
+      { label: 'Parts', href: '/inventory/parts', icon: Cog, permission: 'inventory.view' },
+      {
+        label: 'Purchases',
+        href: '/inventory/purchases',
+        icon: ShoppingCart,
+        permission: 'inventory.view',
+      },
+      {
+        label: 'Suppliers',
+        href: '/inventory/suppliers',
+        icon: Truck,
+        permission: 'inventory.view',
+      },
+      {
+        label: 'Stock movements',
+        href: '/inventory/movements',
+        icon: History,
+        permission: 'inventory.view',
+      },
     ],
   },
   {
     label: 'Finance',
     items: [
-      { label: 'Invoices', href: '/finance/invoices', icon: Receipt },
-      { label: 'Payments', href: '/finance/payments', icon: Wallet },
-      { label: 'Expenses', href: '/finance/expenses', icon: ReceiptText },
-      { label: 'Accounting', href: '/finance/accounting', icon: Calculator },
-      { label: 'VAT', href: '/finance/vat', icon: Percent },
+      { label: 'Invoices', href: '/finance/invoices', icon: Receipt, permission: 'invoice.view' },
+      { label: 'Payments', href: '/finance/payments', icon: Wallet, permission: 'invoice.view' },
+      {
+        label: 'Expenses',
+        href: '/finance/expenses',
+        icon: ReceiptText,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Accounting',
+        href: '/finance/accounting',
+        icon: Calculator,
+        permission: 'accounting.view',
+        soon: true,
+      },
+      {
+        label: 'VAT',
+        href: '/finance/vat',
+        icon: Percent,
+        permission: 'accounting.view',
+        soon: true,
+      },
     ],
   },
   {
-    label: 'HR',
+    label: 'Team',
     items: [
-      { label: 'Employees', href: '/hr/employees', icon: IdCard },
-      { label: 'Attendance', href: '/hr/attendance', icon: CalendarCheck },
-      { label: 'Leave', href: '/hr/leave', icon: CalendarOff },
-      { label: 'Payroll', href: '/hr/payroll', icon: Banknote },
+      {
+        label: 'Employees',
+        href: '/hr/employees',
+        icon: IdCard,
+        permission: 'payroll.view',
+      },
+      {
+        label: 'Attendance',
+        href: '/hr/attendance',
+        icon: CalendarCheck,
+        permission: 'payroll.view',
+        soon: true,
+      },
+      {
+        label: 'Leave',
+        href: '/hr/leave',
+        icon: CalendarOff,
+        permission: 'payroll.view',
+        soon: true,
+      },
+      {
+        label: 'Payroll',
+        href: '/hr/payroll',
+        icon: Banknote,
+        permission: 'payroll.view',
+        soon: true,
+      },
     ],
   },
   {
-    label: null,
+    label: 'More',
     items: [
-      { label: 'Reports', href: '/reports', icon: BarChart3 },
-      { label: 'Settings', href: '/settings', icon: Settings },
+      { label: 'Reports', href: '/reports', icon: BarChart3, soon: true },
+      { label: 'Settings', href: '/settings', icon: Settings, soon: true },
     ],
   },
 ];

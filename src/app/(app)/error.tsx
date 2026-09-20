@@ -1,27 +1,66 @@
 'use client';
 
-import { useEffect } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import Link from 'next/link';
+import { useEffect, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { Home, Loader2, RotateCw, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-// Section 24: never show a raw technical error to staff. Next.js already
-// strips stack traces/details from what reaches the client in production;
-// this is the friendly presentation layer on top of that.
-export default function AppError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+/**
+ * Shown when a page fails to load. Never the technical error itself (Next.js
+ * strips it in production; it is logged on the server) — a plain
+ * explanation, reassurance that nothing was lost, and a way forward.
+ */
+export default function AppError({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
   useEffect(() => {
     console.error(error);
   }, [error]);
 
+  function retry() {
+    startTransition(() => {
+      router.refresh();
+      reset();
+    });
+  }
+
   return (
-    <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border px-6 py-16 text-center">
-      <AlertTriangle className="size-6 text-muted-foreground" />
-      <div>
-        <p className="text-sm font-medium">Something went wrong loading this page.</p>
-        <p className="mt-1 text-sm text-muted-foreground">Please try again — if it keeps happening, let the team know.</p>
+    <div className="mx-auto flex max-w-lg flex-col items-center gap-5 px-6 py-20 text-center">
+      <span className="flex size-12 items-center justify-center rounded-full bg-warning/10 text-warning">
+        <TriangleAlert className="size-6" />
+      </span>
+      <div className="flex flex-col gap-2">
+        <h1 className="text-xl font-semibold tracking-tight">This page couldn&apos;t be loaded</h1>
+        <p className="text-sm text-muted-foreground">
+          The connection to the workshop system may have dropped for a moment. Nothing you saved has
+          been lost. Try again — if it keeps happening, tell the workshop manager
+          {error.digest ? (
+            <>
+              {' '}
+              and quote reference <span className="font-mono text-foreground">{error.digest}</span>
+            </>
+          ) : null}
+          .
+        </p>
       </div>
-      <Button size="sm" onClick={reset}>
-        Try again
-      </Button>
+      <div className="flex flex-wrap justify-center gap-3">
+        <Button size="lg" onClick={retry} disabled={isPending}>
+          {isPending ? <Loader2 className="animate-spin" /> : <RotateCw />}
+          Try again
+        </Button>
+        <Button size="lg" variant="outline" nativeButton={false} render={<Link href="/" />}>
+          <Home />
+          Dashboard
+        </Button>
+      </div>
     </div>
   );
 }

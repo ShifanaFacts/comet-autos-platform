@@ -18,7 +18,11 @@ export function proxy(request: NextRequest) {
 
   const hasSessionCookie = request.cookies.has(SESSION_COOKIE_NAME);
   if (!hasSessionCookie) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    // Come back to the same page after signing in.
+    const login = new URL('/login', request.url);
+    const back = request.nextUrl.pathname + request.nextUrl.search;
+    if (back !== '/') login.searchParams.set('next', back);
+    return NextResponse.redirect(login);
   }
 
   return NextResponse.next();

@@ -8,7 +8,7 @@ import { BrandMark } from '@/components/shell/brand-mark';
 
 const COLLAPSE_STORAGE_KEY = 'comet:sidebar-collapsed';
 
-export function SidebarNav() {
+export function SidebarNav({ allowedHrefs }: { allowedHrefs: string[] }) {
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
@@ -40,27 +40,47 @@ export function SidebarNav() {
   return (
     <aside
       className={cn(
-        'sticky top-0 hidden h-screen shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex',
+        'sticky top-0 hidden h-screen shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex',
+        'transition-[width] duration-200 ease-out motion-reduce:transition-none',
         collapsed ? 'w-[72px]' : 'w-64',
       )}
     >
-      <div className={cn('flex h-16 shrink-0 items-center border-b border-sidebar-border', collapsed ? 'justify-center' : 'px-6')}>
+      {/* A violet bloom behind the brand keeps the rail from reading as a flat slab. */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -top-28 left-1/2 size-64 -translate-x-1/2 rounded-full bg-sidebar-primary/25 blur-3xl"
+      />
+      <div
+        className={cn(
+          'relative flex h-16 shrink-0 items-center border-b border-sidebar-border',
+          collapsed ? 'justify-center' : 'px-5',
+        )}
+      >
         <BrandMark collapsed={collapsed} />
       </div>
 
-      <NavList collapsed={collapsed} />
+      <NavList allowedHrefs={allowedHrefs} collapsed={collapsed} />
 
-      <div className={cn('shrink-0 border-t border-sidebar-border py-3', collapsed ? 'px-3' : 'px-4')}>
+      <div
+        className={cn(
+          'relative shrink-0 border-t border-sidebar-border py-3',
+          collapsed ? 'px-3' : 'px-4',
+        )}
+      >
         <button
           type="button"
           onClick={toggle}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className={cn(
-            'flex h-9 w-full items-center gap-3 rounded-md px-3 text-sm text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
+            'flex h-9 w-full items-center gap-3 rounded-lg px-3 text-sm text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
             collapsed && 'justify-center px-0',
           )}
         >
-          {collapsed ? <PanelLeftOpen className="size-[18px]" /> : <PanelLeftClose className="size-[18px]" />}
+          {collapsed ? (
+            <PanelLeftOpen className="size-[18px]" />
+          ) : (
+            <PanelLeftClose className="size-[18px]" />
+          )}
           {!collapsed ? 'Collapse' : null}
         </button>
       </div>

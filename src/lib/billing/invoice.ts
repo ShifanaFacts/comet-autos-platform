@@ -7,9 +7,12 @@ import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { allocateDocumentNumber } from '@/lib/numbering';
 import { DomainError, NotFoundError } from '@/lib/errors';
+import { claimRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull } from '@/lib/normalize';
 import { calculateLine, calculateTotals, filsToString, formatMilli, milliToString, signedToMilli, toFils, type LineAmounts } from '@/lib/money';
+import { withNetQuantities } from '@/lib/inventory/stock';
+import { prepareSignature, recordSignature } from '@/lib/media/signatures';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { localDateString, parseCalendarDate, parseLocalDateTime } from '@/lib/format';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
@@ -63,7 +66,9 @@ async function loadBillingSources(client: Prisma.TransactionClient, organization
       include: { part: { select: { name: true, sku: true } } },
     }),
   ]);
-  return { lines, labours, usages };
+  // Parts are billed on their net quantity: fitted minus anything taken back into stock.
+  const netUsages = (await withNetQuantities(client, organizationId, usages)).filter((u) => u.netMilli > 0);
+  return { lines, labours, usages: netUsages };
 }
 
 /** What would be billed for this job, and every approved-vs-actual difference. Pure calculation — writes nothing. */
@@ -88,7 +93,7 @@ export async function buildBilling(client: Prisma.TransactionClient, organizatio
             .filter((u) => u.estimateItemId === line.id)
             .map((u) => ({
               source: { partUsageId: u.id } as BillingSource,
-              qty: signedToMilli(u.quantity),
+              qty: u.netMilli,
               actualPrice: u.unitPrice.toString(),
               label: `${u.part.name} (${u.part.sku})`,
             }));
@@ -132,7 +137,7 @@ export async function buildBilling(client: Prisma.TransactionClient, organizatio
     notes.push({ kind: 'EXCLUDED', message: `Labour "${labour.description}" (${labour.hours} h) is not approved work — not billed.` });
   }
   for (const usage of usages.filter((u) => !u.estimateItemId)) {
-    notes.push({ kind: 'EXCLUDED', message: `Part ${usage.part.name} × ${usage.quantity} is not approved work — not billed.` });
+    notes.push({ kind: 'EXCLUDED', message: `Part ${usage.part.name} × ${formatMilli(usage.netMilli)} is not approved work — not billed.` });
   }
 
   return { billable, notes, totals: calculateTotals(billable.map((line) => line.amounts)) };
@@ -150,6 +155,48 @@ export type PaymentState = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
 
 export function paymentState(status: InvoiceStatus): PaymentState {
   return status === 'PAID' ? 'PAID' : status === 'PARTIALLY_PAID' ? 'PARTIALLY_PAID' : 'UNPAID';
+}
+
+type PaymentLike = {
+  id: string;
+  amount: { toString(): string };
+  status: string;
+  reversalOfPaymentId: string | null;
+  receivedAt: Date;
+};
+
+/** Paid, balance and state of an invoice — the one rule the staff screens, customer pages and documents share. */
+export function invoiceBalance(invoice: { totalAmount: { toString(): string }; status: InvoiceStatus; payments: PaymentLike[] }) {
+  const paid = paidFils(invoice.payments);
+  const total = toFils(invoice.totalAmount.toString());
+  return {
+    total: filsToString(total),
+    paid: filsToString(paid),
+    balance: filsToString(Math.max(total - paid, 0)),
+    state: paymentState(invoice.status),
+  };
+}
+
+/**
+ * The balance just before and just after one payment, for its receipt:
+ * payments that count (completed, not reversed) received before it, in
+ * order, are deducted first.
+ */
+export function receiptBalances(
+  invoice: { totalAmount: { toString(): string }; payments: PaymentLike[] },
+  paymentId: string,
+) {
+  const ordered = [...invoice.payments].sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime() || a.id.localeCompare(b.id));
+  const index = ordered.findIndex((p) => p.id === paymentId);
+  if (index < 0) throw new NotFoundError('payment');
+  const total = toFils(invoice.totalAmount.toString());
+  const paidBefore = paidFils(ordered.slice(0, index));
+  const paidThrough = paidFils(ordered.slice(0, index + 1));
+  return {
+    previousBalance: filsToString(Math.max(total - paidBefore, 0)),
+    remainingBalance: filsToString(Math.max(total - paidThrough, 0)),
+    paidToDate: filsToString(paidThrough),
+  };
 }
 
 async function lockJob(tx: Prisma.TransactionClient, organizationId: string, jobCardId: string) {
@@ -288,14 +335,8 @@ export async function getJobInvoice(user: AuthenticatedUser, jobCardId: string) 
   });
   if (!invoice) return null;
   requirePermission(user, 'invoice.view', { branchId: invoice.branchId });
-  const paid = paidFils(invoice.payments);
-  const total = toFils(invoice.totalAmount.toString());
-  return {
-    ...invoice,
-    paidAmount: filsToString(paid),
-    balanceDue: filsToString(Math.max(total - paid, 0)),
-    paymentState: paymentState(invoice.status),
-  };
+  const balance = invoiceBalance(invoice);
+  return { ...invoice, paidAmount: balance.paid, balanceDue: balance.balance, paymentState: balance.state };
 }
 
 export type JobInvoice = NonNullable<Awaited<ReturnType<typeof getJobInvoice>>>;
@@ -324,6 +365,7 @@ export async function recordPayment(user: AuthenticatedUser, jobCardId: string, 
   if (receivedAt.getTime() > Date.now() + 5 * 60 * 1000) throw new DomainError("A payment can't be dated in the future.", 'receivedAt');
 
   return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'payment.record');
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
     requirePermission(user, 'payment.create', { branchId: jobCard.branchId });
     const invoice = await tx.invoice.findFirst({
@@ -400,7 +442,12 @@ export async function recordPayment(user: AuthenticatedUser, jobCardId: string, 
   });
 }
 
-const deliverySchema = z.object({ notes: z.string().trim().max(2000).optional() });
+const deliverySchema = z.object({
+  notes: z.string().trim().max(2000).optional(),
+  /** Optional handover signature (PNG data URL from the signature pad) and who signed. */
+  signature: z.string().max(2_000_000).optional(),
+  signerName: z.string().trim().max(120).optional(),
+});
 
 /**
  * PAID → DELIVERED: hands the vehicle back. Only a fully paid job can be
@@ -408,6 +455,7 @@ const deliverySchema = z.object({ notes: z.string().trim().max(2000).optional() 
  */
 export async function deliverVehicle(user: AuthenticatedUser, jobCardId: string, rawInput: unknown) {
   const input = parseInput(deliverySchema, rawInput);
+  const signature = await prepareSignature(input.signature, user.organizationId, jobCardId);
   return prisma.$transaction(async (tx) => {
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
     requirePermission(user, 'job_card.close', { branchId: jobCard.branchId });
@@ -437,6 +485,21 @@ export async function deliverVehicle(user: AuthenticatedUser, jobCardId: string,
       source: 'workflow',
       metadata: { invoiceId: invoice.id },
     });
+    if (signature) {
+      await recordSignature(tx, {
+        prepared: signature,
+        organizationId: user.organizationId,
+        branchId: jobCard.branchId,
+        jobCardId: jobCard.id,
+        context: 'DELIVERY_HANDOVER',
+        signerType: 'CUSTOMER',
+        signerName: input.signerName || jobCard.vehicle.customer.name,
+        customerId: jobCard.vehicle.customer.id,
+        capturedByUserId: user.id,
+        fileOwnerUserId: user.id,
+        auditActorUserId: user.id,
+      });
+    }
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
       branchId: jobCard.branchId,
@@ -444,7 +507,7 @@ export async function deliverVehicle(user: AuthenticatedUser, jobCardId: string,
       action: 'job_card.delivered',
       entityType: 'JobCard',
       entityId: jobCard.id,
-      afterData: { deliveredAt: deliveredAt.toISOString(), deliveredByUserId: user.id, notes: emptyToNull(input.notes) },
+      afterData: { deliveredAt: deliveredAt.toISOString(), deliveredByUserId: user.id, notes: emptyToNull(input.notes), handoverSigned: Boolean(signature) },
     });
   });
 }

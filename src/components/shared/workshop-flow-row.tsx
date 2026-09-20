@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import type { WorkflowStatus } from '@/lib/workshop/stages';
+import { JOB_STATUS_TONE, TONE_CLASSES } from '@/lib/workshop/status-tone';
 
 export interface FlowStage {
   key: string;
@@ -7,26 +9,6 @@ export interface FlowStage {
   status: string;
   count: number;
 }
-
-// Ties each workflow stage to what it means for the business, using the
-// brand's semantic palette intentionally (violet = core commercial
-// checkpoints, blue = under assessment, amber = active work, green = done) —
-// per the design system's "violet for workflow progress" rule, rather than
-// an arbitrary gradient.
-const STAGE_TONE: Record<string, { bar: string; text: string }> = {
-  arrived: { bar: 'bg-foreground/40', text: 'text-foreground' },
-  inspection: { bar: 'bg-info', text: 'text-info' },
-  diagnosis: { bar: 'bg-info', text: 'text-info' },
-  estimate: { bar: 'bg-primary', text: 'text-primary' },
-  waiting: { bar: 'bg-warning', text: 'text-warning' },
-  approved: { bar: 'bg-primary', text: 'text-primary' },
-  repair: { bar: 'bg-warning', text: 'text-warning' },
-  qc: { bar: 'bg-warning', text: 'text-warning' },
-  ready: { bar: 'bg-success', text: 'text-success' },
-  invoiced: { bar: 'bg-primary', text: 'text-primary' },
-  paid: { bar: 'bg-success', text: 'text-success' },
-  delivered: { bar: 'bg-foreground/40', text: 'text-foreground' },
-};
 
 /**
  * The workshop pipeline: one column per workflow stage, each with a live
@@ -37,29 +19,41 @@ export function WorkshopFlowRow({ stages }: { stages: FlowStage[] }) {
   return (
     <ol className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-4 lg:grid-cols-6">
       {stages.map((stage) => {
-        const tone = STAGE_TONE[stage.key];
+        const tone = TONE_CLASSES[JOB_STATUS_TONE[stage.status as WorkflowStatus]];
         const active = stage.count > 0;
         return (
           <li key={stage.key} className="min-w-0">
             <Link
               href={`/job-cards?status=${stage.status}`}
-              className="group flex flex-col gap-3 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+              className={cn(
+                'group flex flex-col gap-2.5 rounded-lg p-2.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
+                'transition-colors duration-150 hover:bg-muted/60 motion-reduce:transition-none',
+              )}
             >
+              {/* The rule carries the stage's colour only where vehicles are actually sitting. */}
               <span
-                className={cn('h-1 rounded-full', active ? tone.bar : 'bg-border')}
+                className={cn(
+                  'h-1.5 rounded-full transition-opacity',
+                  active ? cn(tone.dot, 'opacity-90 group-hover:opacity-100') : 'bg-border',
+                )}
                 aria-hidden
               />
               <span className="flex flex-col gap-1">
                 <span
                   className={cn(
-                    'text-2xl leading-none font-semibold tabular-nums',
-                    active ? tone.text : 'text-foreground/25',
+                    'text-[26px] leading-none font-semibold tracking-[-0.02em] tabular-nums',
+                    active ? tone.text : 'text-foreground/20',
                   )}
                 >
                   {stage.count}
                 </span>
                 <span
-                  className="truncate text-xs text-muted-foreground group-hover:text-foreground"
+                  className={cn(
+                    'truncate text-xs transition-colors',
+                    active
+                      ? 'font-medium text-foreground/80 group-hover:text-foreground'
+                      : 'text-muted-foreground/70',
+                  )}
                   title={stage.label}
                 >
                   {stage.label}

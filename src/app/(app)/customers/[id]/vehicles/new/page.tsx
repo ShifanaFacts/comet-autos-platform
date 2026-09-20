@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
-import { requireUser, requirePermission } from '@/lib/auth/authorize';
+import { requireUser, hasPermission } from '@/lib/auth/authorize';
+import { AccessDenied } from '@/components/shared/access-denied';
 import { NotFoundError } from '@/lib/errors';
 import { getCustomerDetail } from '@/lib/customers/service';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -14,7 +15,15 @@ export default async function NewVehiclePage({
   searchParams: Promise<{ new?: string }>;
 }) {
   const user = await requireUser();
-  requirePermission(user, 'vehicle.create');
+  if (
+    !hasPermission(
+      user,
+      'vehicle.create',
+      user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
+    )
+  ) {
+    return <AccessDenied what="adding vehicles" />;
+  }
   const { id } = await params;
   const isNewCustomer = (await searchParams).new === '1';
   let detail;
@@ -33,7 +42,8 @@ export default async function NewVehiclePage({
         title="Add vehicle"
         description={
           <>
-            Owner: <span className="font-medium text-foreground">{customer.name}</span> · {customer.phone}
+            Owner: <span className="font-medium text-foreground">{customer.name}</span> ·{' '}
+            {customer.phone}
           </>
         }
       />

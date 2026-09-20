@@ -18,5 +18,5 @@ export async function runAction<T>(body: () => Promise<T>): Promise<ActionResult
 
 /** Drops the data payload (e.g. Prisma rows with Dates) before a result crosses to the client. */
 export function toClientResult(result: ActionResult<unknown>): ActionResult {
-  return { ok: result.ok, error: result.error, fieldErrors: result.fieldErrors };
+  return { ok: result.ok, error: result.error, fieldErrors: result.fieldErrors, duplicate: result.duplicate };
 }

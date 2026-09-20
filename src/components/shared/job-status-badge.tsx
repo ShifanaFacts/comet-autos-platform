@@ -1,37 +1,36 @@
 import { cn } from '@/lib/utils';
 import type { JobCardStatus } from '@/generated/prisma/enums';
-import { JOB_STATUS_LABEL, normalizeStatus, type WorkflowStatus } from '@/lib/workshop/stages';
+import { JOB_STATUS_LABEL } from '@/lib/workshop/stages';
+import { jobStatusTone, TONE_CLASSES } from '@/lib/workshop/status-tone';
 
-// Status colors are semantic (success/warning/danger/info/neutral) and
-// deliberately independent of the brand accent — violet is reserved for
-// REPAIR, the one "work is actively happening" state.
-const STATUS_CLASSES: Record<WorkflowStatus, string> = {
-  ARRIVED: 'bg-muted text-foreground/70',
-  INSPECTION: 'bg-info/10 text-info',
-  DIAGNOSIS: 'bg-info/10 text-info',
-  ESTIMATE: 'bg-info/10 text-info',
-  WAITING_APPROVAL: 'bg-warning/10 text-warning',
-  APPROVED: 'bg-success/10 text-success',
-  REJECTED: 'bg-danger/10 text-danger',
-  REPAIR: 'bg-primary/10 text-primary',
-  QUALITY_CHECK: 'bg-primary/10 text-primary',
-  READY: 'bg-success/10 text-success',
-  INVOICED: 'bg-success/10 text-success',
-  PAID: 'bg-success/10 text-success',
-  DELIVERED: 'bg-muted text-muted-foreground',
-  ON_HOLD: 'bg-warning/10 text-warning',
-  CANCELLED: 'bg-danger/10 text-danger',
-};
-
-export function JobStatusBadge({ status, className }: { status: JobCardStatus; className?: string }) {
+/**
+ * A job's status, the same everywhere: a dot and the plain-language label on
+ * a soft background whose colour means something (see status-tone.ts). The
+ * label always carries the meaning, so colour is never the only signal.
+ */
+export function JobStatusBadge({
+  status,
+  size = 'sm',
+  className,
+}: {
+  status: JobCardStatus;
+  size?: 'sm' | 'lg';
+  className?: string;
+}) {
+  const tone = TONE_CLASSES[jobStatusTone(status)];
   return (
     <span
       className={cn(
-        'inline-flex h-6 w-fit shrink-0 items-center rounded-full px-2.5 text-xs font-medium whitespace-nowrap',
-        STATUS_CLASSES[normalizeStatus(status)],
+        'inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full font-medium whitespace-nowrap',
+        size === 'lg' ? 'h-8 px-3.5 text-sm' : 'h-6 px-2.5 text-xs',
+        tone.badge,
         className,
       )}
     >
+      <span
+        className={cn('shrink-0 rounded-full', size === 'lg' ? 'size-2' : 'size-1.5', tone.dot)}
+        aria-hidden
+      />
       {JOB_STATUS_LABEL[status]}
     </span>
   );

@@ -6,10 +6,17 @@ import { KeyRound, Loader2, Receipt, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Field, FormError, NativeSelect, TextField, TextareaField } from '@/components/forms/fields';
+import {
+  Field,
+  FormError,
+  NativeSelect,
+  TextField,
+  TextareaField,
+} from '@/components/forms/fields';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import { ConfirmAction } from '@/components/shared/confirm-action';
+import { SignaturePad } from '@/components/media/signature-pad';
 import type { ActionResult } from '@/lib/errors';
 import { formatMoney } from '@/lib/format';
 import { createInvoiceAction, deliverVehicleAction, recordPaymentAction } from '../actions';
@@ -54,17 +61,28 @@ const METHODS = [
   { value: 'ONLINE', label: 'Online' },
 ];
 
-export function PaymentForm({ jobCardId, balance, now }: { jobCardId: string; balance: string; now: string }) {
+export function PaymentForm({
+  jobCardId,
+  balance,
+  now,
+}: {
+  jobCardId: string;
+  balance: string;
+  now: string;
+}) {
   const formRef = useRef<HTMLFormElement>(null);
   const [amount, setAmount] = useState(balance);
-  const [state, onSubmit, isPending] = useFormAction<ActionResult>(async (prev, formData) => {
-    const result = await recordPaymentAction(jobCardId, prev, formData);
-    if (result.ok) {
-      toast.success('Payment recorded');
-      formRef.current?.reset();
-    }
-    return result;
-  }, { ok: false });
+  const [state, onSubmit, isPending] = useFormAction<ActionResult>(
+    async (prev, formData) => {
+      const result = await recordPaymentAction(jobCardId, prev, formData);
+      if (result.ok) {
+        toast.success('Payment recorded');
+        formRef.current?.reset();
+      }
+      return result;
+    },
+    { ok: false },
+  );
   const errors = state.fieldErrors ?? {};
 
   return (
@@ -82,7 +100,13 @@ export function PaymentForm({ jobCardId, balance, now }: { jobCardId: string; ba
           className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
         />
         <Field label="Method" htmlFor="method" required error={errors.method}>
-          <NativeSelect id="method" name="method" required defaultValue="CASH" className="h-11 text-base md:text-sm">
+          <NativeSelect
+            id="method"
+            name="method"
+            required
+            defaultValue="CASH"
+            className="h-11 text-base md:text-sm"
+          >
             {METHODS.map((method) => (
               <option key={method.value} value={method.value}>
                 {method.label}
@@ -91,7 +115,15 @@ export function PaymentForm({ jobCardId, balance, now }: { jobCardId: string; ba
           </NativeSelect>
         </Field>
         <Field label="Received" htmlFor="receivedAt" required error={errors.receivedAt}>
-          <Input id="receivedAt" name="receivedAt" type="datetime-local" required defaultValue={now} max={now} className="h-11 text-base md:text-sm" />
+          <Input
+            id="receivedAt"
+            name="receivedAt"
+            type="datetime-local"
+            required
+            defaultValue={now}
+            max={now}
+            className="h-11 text-base md:text-sm"
+          />
         </Field>
         <TextField
           label="Reference"
@@ -101,7 +133,12 @@ export function PaymentForm({ jobCardId, balance, now }: { jobCardId: string; ba
           className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
         />
       </div>
-      <TextareaField label="Notes" name="notes" error={errors.notes} className="[&_textarea]:min-h-16" />
+      <TextareaField
+        label="Notes"
+        name="notes"
+        error={errors.notes}
+        className="[&_textarea]:min-h-16"
+      />
       <FormError message={Object.keys(errors).length ? undefined : state.error} />
       <div className="border-t border-border pt-4">
         <SubmitButton pending={isPending} size="lg" className="h-11" pendingLabel="Recording…">
@@ -113,12 +150,22 @@ export function PaymentForm({ jobCardId, balance, now }: { jobCardId: string; ba
   );
 }
 
-export function DeliveryForm({ jobCardId }: { jobCardId: string }) {
-  const [state, onSubmit, isPending] = useFormAction<ActionResult>(async (prev, formData) => {
-    const result = await deliverVehicleAction(jobCardId, prev, formData);
-    if (result.ok) toast.success('Vehicle delivered');
-    return result;
-  }, { ok: false });
+export function DeliveryForm({
+  jobCardId,
+  customerName,
+}: {
+  jobCardId: string;
+  customerName: string;
+}) {
+  const [signed, setSigned] = useState(false);
+  const [state, onSubmit, isPending] = useFormAction<ActionResult>(
+    async (prev, formData) => {
+      const result = await deliverVehicleAction(jobCardId, prev, formData);
+      if (result.ok) toast.success('Vehicle delivered');
+      return result;
+    },
+    { ok: false },
+  );
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-6">
       <TextareaField
@@ -127,8 +174,29 @@ export function DeliveryForm({ jobCardId }: { jobCardId: string }) {
         placeholder="e.g. Keys and old parts handed to the customer. Next service due at 70,000 km."
         className="[&_textarea]:min-h-20 [&_textarea]:text-base md:[&_textarea]:text-sm"
       />
+      <div className="flex flex-col gap-4 border-t border-border pt-5">
+        <SignaturePad
+          label="Handover signature"
+          optionalNote="Optional — the vehicle can be delivered without one."
+          onChange={(value) => setSigned(value !== null)}
+        />
+        {signed ? (
+          <TextField
+            label="Who signed"
+            name="signerName"
+            defaultValue={customerName}
+            hint="The person collecting the vehicle."
+            className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
+          />
+        ) : null}
+      </div>
       <FormError message={state.error} />
-      <SubmitButton pending={isPending} size="lg" className="h-11 self-start" pendingLabel="Recording…">
+      <SubmitButton
+        pending={isPending}
+        size="lg"
+        className="h-11 self-start"
+        pendingLabel="Recording…"
+      >
         <KeyRound />
         Deliver vehicle
       </SubmitButton>

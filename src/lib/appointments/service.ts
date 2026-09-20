@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
+import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull } from '@/lib/normalize';
 import { localDayRange, parseLocalDateTime } from '@/lib/format';
@@ -57,6 +58,7 @@ export async function createAppointment(user: AuthenticatedUser, rawInput: unkno
   }
 
   return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'appointment.create');
     const vehicle = await tx.vehicle.findFirst({
       where: { id: input.vehicleId, organizationId: user.organizationId, isActive: true },
       select: { id: true, customerId: true },
@@ -84,6 +86,7 @@ export async function createAppointment(user: AuthenticatedUser, rawInput: unkno
       entityId: appointment.id,
       afterData: { vehicleId: vehicle.id, scheduledAt: scheduledAt.toISOString() },
     });
+    await settleRequestKey(tx, user, rawInput, appointment.id);
     return appointment;
   });
 }

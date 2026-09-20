@@ -1,11 +1,26 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { CheckCircle2, Plus, TriangleAlert, XCircle } from 'lucide-react';
+import { CheckCircle2, Plus, TriangleAlert, Undo2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { Field, FormError, NativeSelect, TextField, TextareaField } from '@/components/forms/fields';
+import {
+  Field,
+  FormError,
+  NativeSelect,
+  TextField,
+  TextareaField,
+} from '@/components/forms/fields';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import type { EmployeeOption } from '@/components/workshop/technician-form';
 import type { ActionResult } from '@/lib/errors';
 import { calculateLabour, filsToString, formatMilli, multiplyQuantity } from '@/lib/money';
@@ -16,6 +31,7 @@ import {
   recordLabourAction,
   recordPartUsageAction,
   recordQualityCheckAction,
+  returnPartAction,
 } from '../actions';
 
 export interface PartOption {
@@ -37,24 +53,47 @@ export interface ApprovedLineOption {
 }
 
 /** Resets the form after a successful save so the next entry starts clean. */
-function useResettingAction(action: (prev: ActionResult, formData: FormData) => Promise<ActionResult>, message: string, onSuccess?: () => void) {
+function useResettingAction(
+  action: (prev: ActionResult, formData: FormData) => Promise<ActionResult>,
+  message: string,
+  onSuccess?: () => void,
+) {
   const formRef = useRef<HTMLFormElement>(null);
-  const [state, onSubmit, isPending] = useFormAction<ActionResult>(async (prev, formData) => {
-    const result = await action(prev, formData);
-    if (result.ok) {
-      toast.success(message);
-      formRef.current?.reset();
-      onSuccess?.();
-    }
-    return result;
-  }, { ok: false });
+  const [state, onSubmit, isPending] = useFormAction<ActionResult>(
+    async (prev, formData) => {
+      const result = await action(prev, formData);
+      if (result.ok) {
+        toast.success(message);
+        formRef.current?.reset();
+        onSuccess?.();
+      }
+      return result;
+    },
+    { ok: false },
+  );
   return { formRef, state, onSubmit, isPending };
 }
 
-function EmployeeSelect({ employees, defaultEmployeeId, label, error }: { employees: EmployeeOption[]; defaultEmployeeId: string | null; label: string; error?: string }) {
+function EmployeeSelect({
+  employees,
+  defaultEmployeeId,
+  label,
+  error,
+}: {
+  employees: EmployeeOption[];
+  defaultEmployeeId: string | null;
+  label: string;
+  error?: string;
+}) {
   return (
     <Field label={label} htmlFor="employeeId" required error={error}>
-      <NativeSelect id="employeeId" name="employeeId" defaultValue={defaultEmployeeId ?? ''} required className="h-11 text-base md:text-sm">
+      <NativeSelect
+        id="employeeId"
+        name="employeeId"
+        defaultValue={defaultEmployeeId ?? ''}
+        required
+        className="h-11 text-base md:text-sm"
+      >
         <option value="" disabled>
           Choose…
         </option>
@@ -73,8 +112,8 @@ function AdditionalWarning() {
   return (
     <p className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-sm text-warning">
       <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-      Recorded as additional work. It is not part of the approved quotation and won&apos;t be charged unless the customer
-      approves an additional work request.
+      Recorded as additional work. It is not part of the approved quotation and won&apos;t be
+      charged unless the customer approves an additional work request.
     </p>
   );
 }
@@ -106,7 +145,8 @@ export function PartUsageForm({
   const errors = state.fieldErrors ?? {};
   const part = parts.find((p) => p.id === partId);
   const preview = useMemo(() => {
-    if (!part?.sellingPrice || !/^\d+(\.\d{1,3})?$/.test(quantity) || Number(quantity) <= 0) return null;
+    if (!part?.sellingPrice || !/^\d+(\.\d{1,3})?$/.test(quantity) || Number(quantity) <= 0)
+      return null;
     return filsToString(multiplyQuantity(quantity, part.sellingPrice));
   }, [part, quantity]);
 
@@ -114,19 +154,40 @@ export function PartUsageForm({
     <form ref={formRef} onSubmit={onSubmit} className="flex flex-col gap-6">
       <div className="grid gap-6 md:grid-cols-2">
         <Field label="Part" htmlFor="partId" required error={errors.partId}>
-          <NativeSelect id="partId" name="partId" required value={partId} onChange={(e) => setPartId(e.target.value)} className="h-11 text-base md:text-sm">
+          <NativeSelect
+            id="partId"
+            name="partId"
+            required
+            value={partId}
+            onChange={(e) => setPartId(e.target.value)}
+            className="h-11 text-base md:text-sm"
+          >
             <option value="" disabled>
               Choose a part…
             </option>
             {parts.map((p) => (
               <option key={p.id} value={p.id} disabled={p.stockMilli <= 0}>
-                {p.name} · {p.sku} — {p.stockMilli > 0 ? `${formatMilli(p.stockMilli)} ${p.unitOfMeasure} in stock` : 'out of stock'}
+                {p.name} · {p.sku} —{' '}
+                {p.stockMilli > 0
+                  ? `${formatMilli(p.stockMilli)} ${p.unitOfMeasure} in stock`
+                  : 'out of stock'}
               </option>
             ))}
           </NativeSelect>
         </Field>
-        <Field label="For approved work" htmlFor="estimateItemId" error={errors.estimateItemId} hint="Which approved line this part fulfils.">
-          <NativeSelect id="estimateItemId" name="estimateItemId" value={lineId} onChange={(e) => setLineId(e.target.value)} className="h-11 text-base md:text-sm">
+        <Field
+          label="For approved work"
+          htmlFor="estimateItemId"
+          error={errors.estimateItemId}
+          hint="Which approved line this part fulfils."
+        >
+          <NativeSelect
+            id="estimateItemId"
+            name="estimateItemId"
+            value={lineId}
+            onChange={(e) => setLineId(e.target.value)}
+            className="h-11 text-base md:text-sm"
+          >
             {approvedLines.map((line) => (
               <option key={line.id} value={line.id}>
                 {line.description} ({line.done ? 'done' : `${line.remaining} to fit`})
@@ -145,10 +206,21 @@ export function PartUsageForm({
           error={errors.quantity}
           className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
         />
-        <EmployeeSelect employees={employees} defaultEmployeeId={defaultEmployeeId} label="Fitted by" error={errors.employeeId} />
+        <EmployeeSelect
+          employees={employees}
+          defaultEmployeeId={defaultEmployeeId}
+          label="Fitted by"
+          error={errors.employeeId}
+        />
       </div>
       {lineId === '' ? <AdditionalWarning /> : null}
-      <FormError message={errors.partId || errors.quantity || errors.estimateItemId || errors.employeeId ? undefined : state.error} />
+      <FormError
+        message={
+          errors.partId || errors.quantity || errors.estimateItemId || errors.employeeId
+            ? undefined
+            : state.error
+        }
+      />
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-4">
         <p className="text-sm text-muted-foreground">
           {part && preview
@@ -180,7 +252,11 @@ export function LabourForm({
   const [description, setDescription] = useState(first?.description ?? '');
   const [hours, setHours] = useState('');
   const [rate, setRate] = useState(first?.unitPrice ?? '');
-  const { formRef, state, onSubmit, isPending } = useResettingAction(recordLabourAction.bind(null, jobCardId), 'Labour recorded', () => setHours(''));
+  const { formRef, state, onSubmit, isPending } = useResettingAction(
+    recordLabourAction.bind(null, jobCardId),
+    'Labour recorded',
+    () => setHours(''),
+  );
   const errors = state.fieldErrors ?? {};
   const amount = useMemo(() => {
     try {
@@ -202,8 +278,19 @@ export function LabourForm({
   return (
     <form ref={formRef} onSubmit={onSubmit} className="flex flex-col gap-6">
       <div className="grid gap-6 md:grid-cols-2">
-        <Field label="For approved work" htmlFor="labourLine" error={errors.estimateItemId} hint="Fills in the approved description and rate.">
-          <NativeSelect id="labourLine" name="estimateItemId" value={lineId} onChange={(e) => chooseLine(e.target.value)} className="h-11 text-base md:text-sm">
+        <Field
+          label="For approved work"
+          htmlFor="labourLine"
+          error={errors.estimateItemId}
+          hint="Fills in the approved description and rate."
+        >
+          <NativeSelect
+            id="labourLine"
+            name="estimateItemId"
+            value={lineId}
+            onChange={(e) => chooseLine(e.target.value)}
+            className="h-11 text-base md:text-sm"
+          >
             {approvedLines.map((line) => (
               <option key={line.id} value={line.id}>
                 {line.description} ({line.done ? 'recorded' : `${line.remaining} h approved`})
@@ -212,7 +299,12 @@ export function LabourForm({
             <option value="">Additional work — not approved</option>
           </NativeSelect>
         </Field>
-        <EmployeeSelect employees={employees} defaultEmployeeId={defaultEmployeeId} label="Technician" error={errors.employeeId} />
+        <EmployeeSelect
+          employees={employees}
+          defaultEmployeeId={defaultEmployeeId}
+          label="Technician"
+          error={errors.employeeId}
+        />
         <TextField
           label="Work performed"
           name="description"
@@ -250,8 +342,11 @@ export function LabourForm({
         <p className="text-sm text-muted-foreground">
           {amount ? (
             <>
-              Billable amount <span className="font-semibold text-foreground tabular-nums">{formatMoney(amount)}</span> (checked
-              again on the server)
+              Billable amount{' '}
+              <span className="font-semibold text-foreground tabular-nums">
+                {formatMoney(amount)}
+              </span>{' '}
+              (checked again on the server)
             </>
           ) : (
             'Billable amount = hours × rate.'
@@ -280,7 +375,9 @@ export function QualityCheckForm({
   const [result, setResult] = useState<'PASSED' | 'FAILED' | null>(null);
   const { formRef, state, onSubmit, isPending } = useResettingAction(
     recordQualityCheckAction.bind(null, jobCardId),
-    result === 'PASSED' ? 'Quality check passed — ready for collection' : 'Quality check failed — sent back to repair',
+    result === 'PASSED'
+      ? 'Quality check passed — ready for collection'
+      : 'Quality check failed — sent back to repair',
     () => setResult(null),
   );
   const errors = state.fieldErrors ?? {};
@@ -290,8 +387,9 @@ export function QualityCheckForm({
       {remainingCount > 0 ? (
         <p className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-sm text-warning">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-          {remainingCount} approved line{remainingCount === 1 ? ' is' : 's are'} not complete. The job can only pass once all
-          approved work is done — you can still fail it and send it back to repair.
+          {remainingCount} approved line{remainingCount === 1 ? ' is' : 's are'} not complete. The
+          job can only pass once all approved work is done — you can still fail it and send it back
+          to repair.
         </p>
       ) : null}
       <input type="hidden" name="result" value={result ?? ''} />
@@ -313,14 +411,23 @@ export function QualityCheckForm({
                 : 'border-border bg-background text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
             )}
           >
-            {value === 'PASSED' ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
+            {value === 'PASSED' ? (
+              <CheckCircle2 className="size-4" />
+            ) : (
+              <XCircle className="size-4" />
+            )}
             {value === 'PASSED' ? 'Pass' : 'Fail'}
           </button>
         ))}
       </div>
       {errors.result ? <p className="text-xs text-destructive">{errors.result}</p> : null}
       <div className="grid gap-6 md:grid-cols-2">
-        <EmployeeSelect employees={employees} defaultEmployeeId={defaultEmployeeId} label="Checked by" error={errors.employeeId} />
+        <EmployeeSelect
+          employees={employees}
+          defaultEmployeeId={defaultEmployeeId}
+          label="Checked by"
+          error={errors.employeeId}
+        />
       </div>
       {result === 'FAILED' ? (
         <TextareaField
@@ -349,7 +456,11 @@ export function QualityCheckForm({
           disabled={!result}
           pendingLabel="Saving…"
         >
-          {result === 'FAILED' ? 'Record failure & send back to repair' : result === 'PASSED' ? 'Pass & mark ready for collection' : 'Choose pass or fail'}
+          {result === 'FAILED'
+            ? 'Record failure & send back to repair'
+            : result === 'PASSED'
+              ? 'Pass & mark ready for collection'
+              : 'Choose pass or fail'}
         </SubmitButton>
       </div>
     </form>
@@ -357,7 +468,10 @@ export function QualityCheckForm({
 }
 
 export function AdditionalWorkForm({ jobCardId }: { jobCardId: string }) {
-  const [state, onSubmit, isPending] = useFormAction<ActionResult>(createAdditionalEstimateAction.bind(null, jobCardId), { ok: false });
+  const [state, onSubmit, isPending] = useFormAction<ActionResult>(
+    createAdditionalEstimateAction.bind(null, jobCardId),
+    { ok: false },
+  );
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
       <TextareaField
@@ -370,9 +484,99 @@ export function AdditionalWorkForm({ jobCardId }: { jobCardId: string }) {
         className="[&_textarea]:min-h-20 [&_textarea]:text-base md:[&_textarea]:text-sm"
       />
       <FormError message={state.fieldErrors?.notes ? undefined : state.error} />
-      <SubmitButton pending={isPending} variant="outline" size="lg" className="h-11 self-start" pendingLabel="Opening…">
+      <SubmitButton
+        pending={isPending}
+        variant="outline"
+        size="lg"
+        className="h-11 self-start"
+        pendingLabel="Opening…"
+      >
         Price additional work
       </SubmitButton>
     </form>
+  );
+}
+
+/**
+ * Takes a part recorded on this job back into stock — wrong part, or fewer
+ * used than recorded. Posts a return to the stock history; the original
+ * record is kept, so the correction is visible.
+ */
+export function ReturnPartButton({
+  jobCardId,
+  partUsageId,
+  partName,
+  onJobMilli,
+  unit,
+}: {
+  jobCardId: string;
+  partUsageId: string;
+  partName: string;
+  onJobMilli: number;
+  unit: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [state, onSubmit, isPending] = useFormAction<ActionResult>(
+    async (prev, formData) => {
+      const result = await returnPartAction(jobCardId, partUsageId, prev, formData);
+      if (result.ok) {
+        toast.success('Part taken back into stock');
+        setOpen(false);
+      }
+      return result;
+    },
+    { ok: false },
+  );
+  const errors = state.fieldErrors ?? {};
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <Button variant="ghost" size="sm" className="h-11 text-muted-foreground sm:h-8">
+            <Undo2 />
+            Take back
+          </Button>
+        }
+      />
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Take {partName} back into stock?</DialogTitle>
+          <DialogDescription>
+            {formatMilli(onJobMilli)} {unit} is recorded on this job. The return is added to the
+            stock history and the job; the original record is kept.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={onSubmit} className="flex flex-col gap-5">
+          <TextField
+            label={`Quantity (${unit})`}
+            name="quantity"
+            inputMode="decimal"
+            required
+            defaultValue={formatMilli(onJobMilli)}
+            error={errors.quantity}
+            className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
+          />
+          <TextField
+            label="Reason"
+            name="reason"
+            required
+            error={errors.reason}
+            placeholder="e.g. Wrong part — fits the 2019 model only"
+            className="[&_input]:h-11"
+          />
+          <FormError message={Object.keys(errors).length ? undefined : state.error} />
+          <SubmitButton
+            pending={isPending}
+            size="lg"
+            className="h-11 self-start"
+            pendingLabel="Saving…"
+          >
+            <Undo2 />
+            Take back into stock
+          </SubmitButton>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

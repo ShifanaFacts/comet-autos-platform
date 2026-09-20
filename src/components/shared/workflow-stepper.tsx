@@ -13,7 +13,7 @@ export function WorkflowStepper({ effectiveStatus }: { effectiveStatus: JobCardS
         const isDone = index < currentIndex;
         const isCurrent = index === currentIndex;
         return (
-          <li key={stage.key} className="flex flex-1 items-center last:flex-none">
+          <li key={stage.key} className="flex min-w-0 flex-1 items-center last:flex-none">
             <div className="flex flex-col items-center gap-1.5">
               <span
                 className={cn(
@@ -27,7 +27,7 @@ export function WorkflowStepper({ effectiveStatus }: { effectiveStatus: JobCardS
               </span>
               <span
                 className={cn(
-                  'text-center text-[11px] leading-tight whitespace-nowrap',
+                  'text-center text-[11px] leading-tight text-balance',
                   isCurrent ? 'font-semibold text-foreground' : 'text-muted-foreground',
                 )}
               >
@@ -35,7 +35,12 @@ export function WorkflowStepper({ effectiveStatus }: { effectiveStatus: JobCardS
               </span>
             </div>
             {index < WORKFLOW_STAGES.length - 1 ? (
-              <div className={cn('mx-1.5 h-px flex-1 translate-y-[-9px]', isDone ? 'bg-primary' : 'bg-border')} />
+              <div
+                className={cn(
+                  'mx-1.5 h-px flex-1 translate-y-[-9px]',
+                  isDone ? 'bg-primary' : 'bg-border',
+                )}
+              />
             ) : null}
           </li>
         );

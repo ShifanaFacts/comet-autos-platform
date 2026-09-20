@@ -1,0 +1,289 @@
+import { z } from 'zod';
+import type { Prisma } from '@/generated/prisma/client';
+import { prisma } from '@/lib/prisma';
+import type { AuthenticatedUser } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/authorize';
+import { writeAuditLog } from '@/lib/audit';
+import { DomainError, NotFoundError } from '@/lib/errors';
+import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
+import { parseInput } from '@/lib/form-data';
+import { emptyToNull, normalizePhone } from '@/lib/normalize';
+import { filsToString, toFils } from '@/lib/money';
+import { resolveDefaultVatRate } from '@/lib/tax';
+import { getStockByPart, resolveInventoryBranch, stockState } from '@/lib/inventory/stock';
+import { receivedValueFils } from '@/lib/inventory/purchases';
+
+/*
+ * Suppliers. The outstanding amount uses what the schema can already
+ * represent: the value of stock received from the supplier (cost + VAT, on
+ * received quantities) minus completed SupplierPayments. Supplier payments
+ * are not recorded by the app yet, so today it equals the received value.
+ */
+
+const supplierSchema = z.object({
+  name: z
+    .string({ error: 'Enter the supplier name.' })
+    .trim()
+    .min(2, 'Enter the supplier name.')
+    .max(120),
+  contactName: z.string().trim().max(120).optional(),
+  phone: z
+    .string()
+    .trim()
+    .max(30)
+    .optional()
+    .refine((value) => !value || /^[+\d][\d\s()-]{5,}$/.test(value), 'Enter a valid phone number.'),
+  email: z.union([z.literal(''), z.email('Enter a valid email address.')]).optional(),
+  address: z.string().trim().max(300).optional(),
+  isActive: z.enum(['true', 'false']).optional(),
+});
+
+function supplierData(input: z.infer<typeof supplierSchema>) {
+  return {
+    name: input.name.replace(/\s+/g, ' '),
+    contactName: emptyToNull(input.contactName),
+    phone: input.phone ? normalizePhone(input.phone) : null,
+    email: emptyToNull(input.email)?.toLowerCase() ?? null,
+    address: emptyToNull(input.address),
+  };
+}
+
+async function assertNameFree(organizationId: string, name: string, exceptId?: string, client: Prisma.TransactionClient = prisma) {
+  const clash = await client.supplier.findFirst({
+    where: {
+      organizationId,
+      name: { equals: name.replace(/\s+/g, ' '), mode: 'insensitive' },
+      ...(exceptId ? { id: { not: exceptId } } : {}),
+    },
+    select: { id: true },
+  });
+  if (clash) throw new DomainError('A supplier with this name already exists.', 'name');
+}
+
+export async function createSupplier(user: AuthenticatedUser, rawInput: unknown) {
+  const input = parseInput(supplierSchema, rawInput);
+  requirePermission(user, 'inventory.manage');
+  return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'supplier.create');
+    await assertNameFree(user.organizationId, input.name, undefined, tx);
+    const supplier = await tx.supplier.create({
+      data: { organizationId: user.organizationId, ...supplierData(input) },
+    });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      actorUserId: user.id,
+      action: 'supplier.created',
+      entityType: 'Supplier',
+      entityId: supplier.id,
+      afterData: supplierData(input),
+    });
+    await settleRequestKey(tx, user, rawInput, supplier.id);
+    return supplier;
+  });
+}
+
+export async function updateSupplier(
+  user: AuthenticatedUser,
+  supplierId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(supplierSchema, rawInput);
+  requirePermission(user, 'inventory.manage');
+  const before = await prisma.supplier.findFirst({
+    where: { id: supplierId, organizationId: user.organizationId },
+  });
+  if (!before) throw new NotFoundError('supplier');
+  await assertNameFree(user.organizationId, input.name, supplierId);
+  return prisma.$transaction(async (tx) => {
+    const supplier = await tx.supplier.update({
+      where: { id: supplierId },
+      data: {
+        ...supplierData(input),
+        isActive: input.isActive ? input.isActive === 'true' : before.isActive,
+      },
+    });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      actorUserId: user.id,
+      action: 'supplier.updated',
+      entityType: 'Supplier',
+      entityId: supplier.id,
+      beforeData: {
+        name: before.name,
+        contactName: before.contactName,
+        phone: before.phone,
+        email: before.email,
+        address: before.address,
+        isActive: before.isActive,
+      },
+      afterData: {
+        name: supplier.name,
+        contactName: supplier.contactName,
+        phone: supplier.phone,
+        email: supplier.email,
+        address: supplier.address,
+        isActive: supplier.isActive,
+      },
+    });
+    return supplier;
+  });
+}
+
+const RECEIVED: ('RECEIVED' | 'PARTIALLY_RECEIVED')[] = ['RECEIVED', 'PARTIALLY_RECEIVED'];
+
+/** Received value, paid and outstanding for a set of suppliers, in fils. */
+async function balances(organizationId: string, supplierIds: string[]) {
+  const defaultVat = resolveDefaultVatRate(organizationId);
+  const purchases = await prisma.purchase.findMany({
+    where: { organizationId, supplierId: { in: supplierIds }, status: { in: RECEIVED } },
+    select: {
+      supplierId: true,
+      items: { select: { quantityReceived: true, unitCost: true, taxRate: true } },
+      supplierPayments: {
+        select: { id: true, amount: true, status: true, reversalOfSupplierPaymentId: true },
+      },
+    },
+  });
+  const result = new Map<string, { receivedFils: number; paidFils: number }>();
+  for (const purchase of purchases) {
+    const entry = result.get(purchase.supplierId) ?? { receivedFils: 0, paidFils: 0 };
+    entry.receivedFils += receivedValueFils(purchase.items, defaultVat);
+    const reversed = new Set(
+      purchase.supplierPayments.map((p) => p.reversalOfSupplierPaymentId).filter(Boolean),
+    );
+    entry.paidFils += purchase.supplierPayments
+      .filter(
+        (p) => p.status === 'COMPLETED' && !p.reversalOfSupplierPaymentId && !reversed.has(p.id),
+      )
+      .reduce((sum, p) => sum + toFils(p.amount.toString()), 0);
+    result.set(purchase.supplierId, entry);
+  }
+  return result;
+}
+
+const money = (entry: { receivedFils: number; paidFils: number } | undefined) => ({
+  received: filsToString(entry?.receivedFils ?? 0),
+  paid: filsToString(entry?.paidFils ?? 0),
+  outstanding: filsToString((entry?.receivedFils ?? 0) - (entry?.paidFils ?? 0)),
+});
+
+export async function listSuppliers(user: AuthenticatedUser, query: string) {
+  requirePermission(user, 'inventory.view');
+  const q = query.trim();
+  const suppliers = await prisma.supplier.findMany({
+    where: {
+      organizationId: user.organizationId,
+      ...(q
+        ? {
+            OR: [
+              { name: { contains: q, mode: 'insensitive' } },
+              { contactName: { contains: q, mode: 'insensitive' } },
+              { phone: { contains: q } },
+              { email: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    },
+    orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+    include: {
+      _count: { select: { parts: true, purchases: true } },
+      purchases: {
+        where: { status: { not: 'CANCELLED' } },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: { createdAt: true },
+      },
+    },
+  });
+  const totals = await balances(
+    user.organizationId,
+    suppliers.map((s) => s.id),
+  );
+  return suppliers.map((supplier) => ({
+    ...supplier,
+    lastPurchaseAt: supplier.purchases[0]?.createdAt ?? null,
+    balance: money(totals.get(supplier.id)),
+  }));
+}
+
+export async function getSupplierDetail(user: AuthenticatedUser, supplierId: string) {
+  requirePermission(user, 'inventory.view');
+  const supplier = await prisma.supplier.findFirst({
+    where: { id: supplierId, organizationId: user.organizationId },
+  });
+  if (!supplier) throw new NotFoundError('supplier');
+  const branch = await resolveInventoryBranch(user);
+
+  const [preferredParts, purchases, purchasedLines, stock, totals] = await Promise.all([
+    prisma.part.findMany({
+      where: { organizationId: user.organizationId, preferredSupplierId: supplier.id },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.purchase.findMany({
+      where: { organizationId: user.organizationId, supplierId: supplier.id },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: { _count: { select: { items: true } } },
+    }),
+    prisma.purchaseItem.findMany({
+      where: {
+        organizationId: user.organizationId,
+        purchase: { supplierId: supplier.id, status: { in: RECEIVED } },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        part: true,
+        purchase: { select: { purchaseNumber: true, supplierInvoiceDate: true, createdAt: true } },
+      },
+    }),
+    getStockByPart(user.organizationId, branch.id),
+    balances(user.organizationId, [supplier.id]),
+  ]);
+
+  // Supplier parts: parts this supplier is preferred for, plus anything bought from them, with the last cost paid.
+  const parts = new Map<
+    string,
+    {
+      part: (typeof preferredParts)[number];
+      preferred: boolean;
+      lastCost: string | null;
+      lastPurchase: string | null;
+    }
+  >();
+  for (const part of preferredParts)
+    parts.set(part.id, { part, preferred: true, lastCost: null, lastPurchase: null });
+  for (const line of purchasedLines) {
+    const entry = parts.get(line.partId) ?? {
+      part: line.part,
+      preferred: false,
+      lastCost: null,
+      lastPurchase: null,
+    };
+    if (entry.lastCost === null) {
+      entry.lastCost = line.unitCost.toString();
+      entry.lastPurchase = line.purchase.purchaseNumber;
+    }
+    parts.set(line.partId, entry);
+  }
+
+  return {
+    supplier,
+    parts: [...parts.values()]
+      .map((entry) => {
+        const onHandMilli = stock.get(entry.part.id) ?? 0;
+        return { ...entry, onHandMilli, state: stockState(onHandMilli, entry.part.reorderLevel) };
+      })
+      .sort((a, b) => a.part.name.localeCompare(b.part.name)),
+    purchases,
+    balance: money(totals.get(supplier.id)),
+  };
+}
+
+export async function getSupplierForEdit(user: AuthenticatedUser, supplierId: string) {
+  requirePermission(user, 'inventory.manage');
+  const supplier = await prisma.supplier.findFirst({
+    where: { id: supplierId, organizationId: user.organizationId },
+  });
+  if (!supplier) throw new NotFoundError('supplier');
+  return supplier;
+}

@@ -43,13 +43,15 @@ export function GlobalSearch() {
     return () => clearTimeout(timeout);
   }, [open]);
 
-const trimmed = query.trim();
+  const trimmed = query.trim();
   const hasQuery = trimmed.length >= 2;
 
   useEffect(() => {
     if (!hasQuery) return;
     const timeout = setTimeout(() => {
-      globalSearch(trimmed).then(setResults).catch(() => setResults(EMPTY));
+      globalSearch(trimmed)
+        .then(setResults)
+        .catch(() => setResults(EMPTY));
     }, 200);
     return () => clearTimeout(timeout);
   }, [trimmed, hasQuery]);
@@ -62,7 +64,11 @@ const trimmed = query.trim();
     router.push(href);
   }
 
-  const hasResults = displayedResults.customers.length + displayedResults.vehicles.length + displayedResults.jobCards.length > 0;
+  const hasResults =
+    displayedResults.customers.length +
+      displayedResults.vehicles.length +
+      displayedResults.jobCards.length >
+    0;
 
   return (
     <>
@@ -79,7 +85,10 @@ const trimmed = query.trim();
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="top-[20%] max-w-lg translate-y-0 gap-0 p-0" showCloseButton={false}>
+        <DialogContent
+          className="top-[20%] max-w-lg translate-y-0 gap-0 p-0"
+          showCloseButton={false}
+        >
           <DialogTitle className="sr-only">Search</DialogTitle>
           <div className="flex items-center gap-2 border-b border-border px-3">
             <Search className="size-4 shrink-0 text-muted-foreground" />
@@ -98,7 +107,9 @@ const trimmed = query.trim();
                 Start typing to search across customers, vehicles, and job cards.
               </p>
             ) : !hasResults ? (
-              <p className="px-2 py-6 text-center text-sm text-muted-foreground">No matches for &ldquo;{trimmed}&rdquo;.</p>
+              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                No matches for &ldquo;{trimmed}&rdquo;.
+              </p>
             ) : (
               <div className="flex flex-col gap-3">
                 {displayedResults.jobCards.length > 0 ? (
@@ -133,7 +144,13 @@ const trimmed = query.trim();
                 {displayedResults.customers.length > 0 ? (
                   <ResultGroup label="Customers">
                     {displayedResults.customers.map((c) => (
-                      <ResultRow key={c.id} icon={<User className="size-4" />} title={c.name} subtitle={c.phone} onClick={() => go(`/customers/${c.id}`)} />
+                      <ResultRow
+                        key={c.id}
+                        icon={<User className="size-4" />}
+                        title={c.name}
+                        subtitle={c.phone}
+                        onClick={() => go(`/customers/${c.id}`)}
+                      />
                     ))}
                   </ResultGroup>
                 ) : null}
@@ -149,7 +166,9 @@ const trimmed = query.trim();
 function ResultGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="px-2 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{label}</p>
+      <p className="px-2 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+        {label}
+      </p>
       <div className="flex flex-col gap-0.5">{children}</div>
     </div>
   );
