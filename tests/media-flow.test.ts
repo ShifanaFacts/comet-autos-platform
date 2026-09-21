@@ -29,6 +29,7 @@ import {
 import {
   MAX_PHOTOS_PER_UPLOAD,
   MAX_PHOTO_BYTES,
+  authorizeJobMedia,
   listJobPhotos,
   listJobSignatures,
   readJobMedia,
@@ -189,7 +190,7 @@ describe('job photos', () => {
   test('removing a photo keeps the record, marks who removed it, and stops serving it', async () => {
     const before = await listJobPhotos(a.owner, jobCardId);
     const target = before[before.length - 1];
-    await removeJobPhoto(a.owner, target.id, { reason: 'Blurred' });
+    await removeJobPhoto(a.owner, jobCardId, target.id, { reason: 'Blurred' });
 
     const after = await listJobPhotos(a.owner, jobCardId);
     assert.equal(after.length, before.length - 1);
@@ -206,6 +207,61 @@ describe('job photos', () => {
       await prisma.auditLog.findFirst({
         where: { entityId: target.id, action: 'job_photo.removed' },
       }),
+    );
+  });
+
+  test('a photo can only be removed through the job it belongs to', async () => {
+    // A second job in the same organization and branch: the remover has
+    // every right on both, so only the job scoping can refuse this.
+    const { jobCardId: otherJobId } = await checkInVehicle(a.owner, {
+      mode: 'new',
+      customer: { name: 'Other Owner', phone: '050 321 9876', email: '' },
+      vehicle: { plateNumber: `X${RUN.slice(-4)} 44`, make: 'Kia', model: 'Seltos' },
+      visit: { complaint: 'Service', mileage: '12000' },
+    });
+    const [photo] = await listJobPhotos(a.owner, jobCardId);
+
+    await assert.rejects(
+      removeJobPhoto(a.owner, otherJobId, photo.id),
+      (error: unknown) => error instanceof NotFoundError,
+      'a document id from one job cannot be acted on from another',
+    );
+    const row = await prisma.document.findUniqueOrThrow({ where: { id: photo.id } });
+    assert.equal(row.deletedAt, null, 'and the photo is untouched');
+  });
+
+  test('a stage screen sees only its own stage', async () => {
+    await uploadJobPhotos(a.owner, jobCardId, [{ name: 'qc.jpg', bytes: JPEG }], {
+      stage: 'QUALITY_CHECK',
+      requestKey: `media-stage-filter-key-${RUN}`,
+    });
+    const qc = await listJobPhotos(a.owner, jobCardId, { stage: 'QUALITY_CHECK' });
+    assert.ok(qc.length > 0);
+    assert.ok(
+      qc.every((photo) => photo.stage === 'QUALITY_CHECK'),
+      'nothing from another stage leaks in',
+    );
+    const all = await listJobPhotos(a.owner, jobCardId);
+    assert.ok(all.length > qc.length, 'and the unfiltered list is still the whole job');
+  });
+
+  test('serving a file needs the right to see the job, checked before the bytes', async () => {
+    const [photo] = await listJobPhotos(a.owner, jobCardId);
+    // Someone with no job-card rights at all: authorization is refused
+    // before storage is ever asked for the file.
+    const stranger = { ...a.owner, orgWidePermissions: new Set<string>(), branchPermissions: new Map() };
+    await assert.rejects(
+      authorizeJobMedia(stranger as typeof a.owner, photo.id),
+      (error: unknown) => error instanceof AuthError,
+    );
+    await assert.rejects(
+      readJobMedia(stranger as typeof a.owner, photo.id),
+      (error: unknown) => error instanceof AuthError,
+    );
+    // An unknown id is "not found", never a hint that something is there.
+    await assert.rejects(
+      authorizeJobMedia(a.owner, '00000000-0000-7000-8000-000000000000'),
+      (error: unknown) => error instanceof NotFoundError,
     );
   });
 

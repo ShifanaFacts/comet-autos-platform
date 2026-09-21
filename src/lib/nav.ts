@@ -25,6 +25,7 @@ import {
   Banknote,
   BarChart3,
   Settings,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -173,7 +174,13 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'More',
     items: [
       { label: 'Reports', href: '/reports', icon: BarChart3, soon: true },
-      { label: 'Settings', href: '/settings', icon: Settings, soon: true },
+      { label: 'Settings', href: '/settings', icon: Settings, permission: 'accounting.view' },
+      {
+        label: 'Users & roles',
+        href: '/settings/users',
+        icon: ShieldCheck,
+        permission: 'user.view',
+      },
     ],
   },
 ];

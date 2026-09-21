@@ -7,36 +7,12 @@ import assert from 'node:assert/strict';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { DomainError } from '@/lib/errors';
+import { PERMISSION_CODES } from '@/lib/auth/permission-catalog';
 
 export const RUN = Date.now().toString(36).toUpperCase();
 
-export const ALL_PERMISSIONS = [
-  'job_card.view',
-  'job_card.create',
-  'job_card.edit',
-  'job_card.assign',
-  'job_card.close',
-  'customer.view',
-  'customer.create',
-  'customer.edit',
-  'vehicle.view',
-  'vehicle.create',
-  'vehicle.edit',
-  'inventory.view',
-  'inventory.issue',
-  'invoice.view',
-  'invoice.create',
-  'payment.create',
-  'inventory.adjust',
-  'inventory.manage',
-  'purchase.create',
-  'purchase.receive',
-  'accounting.view',
-  'accounting.create',
-  'accounting.edit',
-  'payroll.view',
-  'payroll.create',
-];
+/** Every code the system enforces — a test owner holds the lot. */
+export const ALL_PERMISSIONS = PERMISSION_CODES;
 
 export interface TestOrg {
   organizationId: string;

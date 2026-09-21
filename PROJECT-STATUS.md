@@ -2,6 +2,130 @@
 
 Last updated: 2026-09-21
 
+## Phase 13: Users, roles & access management (uncommitted)
+
+168 integration tests pass (adds `tests/access-management.test.ts`, 20 tests).
+**No schema change** — `User.isActive`/`lastLoginAt`, `Role.isSystem`,
+`UserRole`'s soft-revoke with `assignedByUserId`/`revokedByUserId`, and
+`Employee`'s `@@unique([organizationId, userId])` were all already there.
+
+**One data change, not a schema change.** The V1 permission catalogue had 31
+codes across nine modules and none of them covered access management — so
+until now, changing who could sign in meant SQL. Three codes were added to
+the existing global `Permission` table through the same mechanism the seed
+uses (`upsert` by `code`): `user.view`, `user.manage`, `role.manage`.
+`npm run db:permissions` (`prisma/ensure-permissions.ts`) is idempotent, adds
+only missing rows, and grants the three to **roles that already held every
+other permission** — so nobody's real reach changed; the people who could
+already do this directly in the database now have a screen for it.
+`src/lib/auth/permission-catalog.ts` is the single source the seed, that
+script and the role screens all read.
+
+Screens, all under `/settings`:
+
+- `/settings/users` — search, active/inactive/all, role and branch filters,
+  paginated at 25. Cards on phone and tablet, a dense table from `lg`.
+- `/settings/users/new` and `/[id]/edit` — one form; creating also sets the
+  first password and can link an employee.
+- `/settings/users/[id]` — account, roles with who granted them, the
+  permissions those roles add up to, recent activity, and the sensitive
+  actions (deactivate, reset password).
+- `/settings/roles` and `/settings/roles/[id]` — every role, and what it
+  allows laid out by module with a plain-English line per permission.
+
+Four rules are enforced in the services and nowhere else:
+
+1. **One login per employee.** The database already refused a second; the
+   service explains it, and the picker only offers employees without one.
+2. **Nobody removes their own access.** Deactivating yourself or changing
+   your own roles is refused.
+3. **The workshop never loses its last administrator.** Deactivating a user,
+   changing their roles, or removing `user.manage` from a role is refused if
+   it would leave no active user able to manage access.
+4. **Built-in roles are read-only.** `isSystem` roles can't be renamed or
+   have their permissions changed.
+
+Role grants are revoked, never deleted, so who held what and who granted it
+stays readable. Deactivation and a password reset both end live sessions —
+`lib/auth/session` already refuses a session whose user is inactive, and a
+reset revokes every session row.
+
+## Phase 12: Photographing the work where the work happens (uncommitted)
+
+148 integration tests pass (`tests/media-flow.test.ts` grows from 8 photo
+tests to 11). **No schema change** — `Document` already carried `jobCardId`,
+`stage` (all seven `MediaStage` values), `description`, `deletedAt`,
+`deletedByUserId` and the `(organizationId, jobCardId, stage)` index.
+
+The storage, upload, validation, soft-delete and secure-serving layer was
+already built and is untouched. What was missing was the camera being
+anywhere a technician actually works: every photo had to be added from the
+job card, through a gallery picker, choosing its stage from a dropdown.
+
+`components/media/stage-photos.tsx` + `stage-photos-panel.tsx` put a capture
+strip on the screen for each stage — inspection, diagnosis, repair, quality
+check and delivery. The stage is fixed by the screen, so there is nothing to
+choose and nothing to type: **Take photo** (a `capture="environment"` input,
+so the phone opens the camera directly) or **Gallery**, then the photo
+uploads on its own. A local preview appears the instant the shutter closes
+and is replaced by the stored one when the server catches up; a failure
+leaves the photo in place with its reason and a **Retry** that re-sends under
+the same request key, so a retry after a timeout that actually landed never
+adds a second copy.
+
+Two rules kept consistent rather than reinvented:
+
+- **When photographing is allowed** is the job's own rule — live until
+  DELIVERED or CANCELLED — decided once in `StagePhotosPanel`, not per
+  screen. The stage screen only says which stage a photo files under.
+- **A photo belongs to its job.** `removeJobPhoto` now takes the job the
+  request came from, so a document id lifted from one job card cannot be
+  acted on from another, even by someone who may edit both.
+
+`/media/[id]` now answers `If-None-Match` with a 304 — after the permission
+check, never before, so a tag can't confirm a file exists to someone who may
+not see it.
+
+`lib/media/client.ts` and `components/media/photo-viewer.tsx` are the upload
+path and lightbox extracted from `job-photos.tsx`, so the job card gallery
+and the stage strips behave identically. The gallery keeps its captions,
+multi-select, stage filter chips and stage dropdown; it gained the same
+direct-to-camera button.
+
+## Phase 11: Workshop settings (uncommitted)
+
+145 integration tests pass (adds `tests/organization-settings.test.ts`, 12
+tests). **No schema change** — the columns were added in the Phase 9 migration
+and read everywhere already; what was missing was a way to change them without
+SQL. `/settings` is no longer a `ComingSoon` placeholder.
+
+`lib/organization/settings.ts` owns the two things that leave the screen:
+
+- **The seller block** — name, legal name, address, phone, email and TRN, read
+  by `lib/documents/build.ts` for every quotation, invoice and receipt.
+- **VAT** — `isVatRegistered` and `vatRate`, read by `lib/tax.ts` for the rate
+  new estimate, invoice, purchase and expense lines start at.
+
+The rule the tests pin down: **changing the rate changes what is offered next,
+never what has already been issued.** Every estimate, invoice and purchase line
+stores the rate it was priced at, so a quotation sent at 5% still totals 105
+after the workshop moves to 7.5% or de-registers. Turning VAT off makes new
+lines default to 0% but keeps the configured rate, so re-registering does not
+mean retyping it.
+
+The base currency is shown and deliberately not editable: every amount on
+record is in it, and re-labelling them would misstate what was charged.
+
+Input is normalised on the way in — the name's runs of whitespace collapse,
+the email lower-cases, the TRN is stored as digits so `1002 0030 0400 003` and
+`100200300400003` are the same number. A rate outside 0–100 is refused.
+
+Permissions: `accounting.view` to read, `accounting.edit` to save, both
+enforced in the service. Someone with view but not edit gets a read-only
+`<dl>`, not a disabled form. The change is audited
+(`organization.settings_updated`, before and after) and carries a request key,
+so a double-submitted form saves once.
+
 ## Phase 10: Finance dashboard (uncommitted)
 
 133 integration tests pass (adds `tests/finance-dashboard.test.ts`, 15 tests).
@@ -595,7 +719,9 @@ stubbed), in roughly this order:
   screens (creation already works via Quick Check-In).
 - **Phase 7 — Inventory & Purchasing**, **Phase 8 — Finance & Accounting**,
   **Phase 9 — HR & Payroll**, **Phase 10 — Reports**, **Phase 11 — Settings
-  & RBAC UI** (role/permission management UI — enforcement already exists).
+  & RBAC UI**. The workshop/VAT half of Phase 11 is now done (see the top of
+  this file); the role and permission management UI is not — enforcement
+  already exists everywhere, but roles are still granted by SQL.
 - **Notifications** (Email/SMS/WhatsApp) and **import/export** — deferred
   until the modules that need them exist.
 

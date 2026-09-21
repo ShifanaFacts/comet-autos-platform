@@ -1,55 +1,22 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Camera, ChevronLeft, ChevronRight, ImageOff, Loader2, Trash2, Upload, X } from 'lucide-react';
+import { Camera, ImagePlus, Loader2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { MediaStage } from '@/generated/prisma/enums';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Field, NativeSelect } from '@/components/forms/fields';
-import { ConfirmAction } from '@/components/shared/confirm-action';
 import { MEDIA_STAGE_LABEL, MEDIA_STAGES } from '@/lib/media/stages';
+import { newRequestKey, prepareImage, sendPhotos } from '@/lib/media/client';
+import { PhotoViewer, type PhotoItem } from '@/components/media/photo-viewer';
 import { cn } from '@/lib/utils';
-import { removePhotoAction } from '@/app/(app)/job-cards/[id]/actions';
 
-export interface PhotoItem {
-  id: string;
-  stage: MediaStage;
-  description: string | null;
-  createdAt: string;
-  uploadedBy: string;
-}
+export type { PhotoItem };
 
 /** Ask any "Add photo" button on the page to open the camera/gallery picker. */
 export const ADD_PHOTO_EVENT = 'comet:add-photo';
-
-const MAX_EDGE = 2400;
-const SHRINK_ABOVE_BYTES = 1.5 * 1024 * 1024;
-
-/** Shrinks large photos on the device before upload: faster on workshop Wi-Fi, lighter to view later. */
-async function prepare(file: File): Promise<File> {
-  if (file.size <= SHRINK_ABOVE_BYTES && /^image\/(jpeg|png|webp)$/.test(file.type)) return file;
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
-    if (!blob) return file;
-    return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
-  } catch {
-    return file; // The server checks the actual bytes and explains if it can't take the file.
-  }
-}
-
-function newKey() {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 export function JobPhotos({
   jobCardId,
@@ -64,6 +31,7 @@ export function JobPhotos({
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const [filter, setFilter] = useState<MediaStage | 'ALL'>('ALL');
   const [picked, setPicked] = useState<{ file: File; url: string }[]>([]);
   const [stage, setStage] = useState<MediaStage>(defaultStage);
@@ -72,11 +40,12 @@ export function JobPhotos({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const requestKey = useRef<string | null>(null);
   const [viewer, setViewer] = useState<number | null>(null);
-  const [isRemoving, startRemoving] = useTransition();
 
   useEffect(() => {
     function open() {
-      inputRef.current?.click();
+      // On a phone the quick-action button goes straight to the camera.
+      const target = matchMedia('(pointer: coarse)').matches ? cameraRef.current : inputRef.current;
+      target?.click();
     }
     window.addEventListener(ADD_PHOTO_EVENT, open);
     return () => window.removeEventListener(ADD_PHOTO_EVENT, open);
@@ -92,13 +61,14 @@ export function JobPhotos({
 
   async function onPick(files: FileList | null) {
     if (!files || files.length === 0) return;
-    const prepared = await Promise.all(Array.from(files).slice(0, 12).map(prepare));
+    const prepared = await Promise.all(Array.from(files).slice(0, 12).map(prepareImage));
     setPicked(prepared.map((file) => ({ file, url: URL.createObjectURL(file) })));
     setStage(defaultStage);
     setCaption('');
     setUploadError(null);
-    requestKey.current = newKey();
+    requestKey.current = newRequestKey();
     if (inputRef.current) inputRef.current.value = '';
+    if (cameraRef.current) cameraRef.current.value = '';
   }
 
   function closeUpload() {
@@ -107,45 +77,33 @@ export function JobPhotos({
     setPicked([]);
   }
 
-  function upload() {
+  async function upload() {
     if (progress !== null || picked.length === 0) return;
-    const form = new FormData();
-    picked.forEach((p) => form.append('photos', p.file));
-    form.set('stage', stage);
-    form.set('description', caption);
-    form.set('requestKey', requestKey.current ?? newKey());
+    const count = picked.length;
     setUploadError(null);
     setProgress(0);
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/job-cards/${jobCardId}/photos`);
-    xhr.upload.onprogress = (event) => event.lengthComputable && setProgress(Math.round((event.loaded / event.total) * 100));
-    xhr.onerror = () => {
-      setProgress(null);
-      setUploadError('The upload didn’t reach the workshop system — nothing was saved. Check the connection and try again.');
-    };
-    xhr.onload = () => {
-      setProgress(null);
-      let body: { ok?: boolean; error?: string } = {};
-      try {
-        body = JSON.parse(xhr.responseText);
-      } catch {
-        // handled below
-      }
-      if (xhr.status >= 200 && xhr.status < 300 && body.ok) {
-        toast.success(`${picked.length} photo${picked.length === 1 ? '' : 's'} added to ${MEDIA_STAGE_LABEL[stage]}`);
-        picked.forEach((p) => URL.revokeObjectURL(p.url));
-        setPicked([]);
-        requestKey.current = null;
-        setFilter('ALL');
-        router.refresh();
-      } else {
-        setUploadError(body.error ?? 'The photos could not be saved. Nothing was saved — please try again.');
-      }
-    };
-    xhr.send(form);
+    const result = await sendPhotos({
+      jobCardId,
+      files: picked.map((p) => p.file),
+      stage,
+      description: caption,
+      // The same key on a retry, so a submission that actually landed is
+      // never counted twice.
+      requestKey: (requestKey.current ??= newRequestKey()),
+      onProgress: setProgress,
+    });
+    setProgress(null);
+    if (!result.ok) {
+      setUploadError(result.error ?? null);
+      return;
+    }
+    toast.success(`${count} photo${count === 1 ? '' : 's'} added to ${MEDIA_STAGE_LABEL[stage]}`);
+    picked.forEach((p) => URL.revokeObjectURL(p.url));
+    setPicked([]);
+    requestKey.current = null;
+    setFilter('ALL');
+    router.refresh();
   }
-
-  const current = viewer !== null ? shown[viewer] : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -156,6 +114,15 @@ export function JobPhotos({
         multiple
         className="sr-only"
         aria-label="Choose photos"
+        onChange={(event) => onPick(event.target.files)}
+      />
+      <input
+        ref={cameraRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        aria-label="Take a photo"
         onChange={(event) => onPick(event.target.files)}
       />
 
@@ -178,10 +145,16 @@ export function JobPhotos({
           ))}
         </div>
         {canEdit ? (
-          <Button variant="outline" className="h-10 shrink-0" onClick={() => inputRef.current?.click()}>
-            <Camera />
-            Add photos
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            <Button className="h-10" onClick={() => cameraRef.current?.click()}>
+              <Camera />
+              Take photo
+            </Button>
+            <Button variant="outline" className="h-10" onClick={() => inputRef.current?.click()}>
+              <ImagePlus />
+              <span className="sr-only sm:not-sr-only">Gallery</span>
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -189,7 +162,7 @@ export function JobPhotos({
         <button
           type="button"
           disabled={!canEdit}
-          onClick={() => inputRef.current?.click()}
+          onClick={() => cameraRef.current?.click()}
           className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors enabled:hover:bg-muted/40"
         >
           <Camera className="size-6 text-muted-foreground" />
@@ -291,83 +264,14 @@ export function JobPhotos({
         </DialogContent>
       </Dialog>
 
-      {/* Viewer */}
-      <Dialog open={current !== null} onOpenChange={(open) => !open && setViewer(null)}>
-        <DialogContent className="max-w-3xl gap-3 p-3 sm:p-4" showCloseButton={false}>
-          {current ? (
-            <>
-              <DialogTitle className="sr-only">{MEDIA_STAGE_LABEL[current.stage]} photo</DialogTitle>
-              <div className="relative flex items-center justify-center overflow-hidden rounded-md bg-black">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={`/media/${current.id}`} alt={current.description ?? `${MEDIA_STAGE_LABEL[current.stage]} photo`} className="max-h-[70dvh] w-auto object-contain" />
-                <button
-                  type="button"
-                  onClick={() => setViewer(null)}
-                  aria-label="Close"
-                  className="absolute top-2 right-2 flex size-10 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
-                >
-                  <X className="size-5" />
-                </button>
-                {viewer! > 0 ? (
-                  <button type="button" onClick={() => setViewer(viewer! - 1)} aria-label="Previous photo" className="absolute left-2 flex size-11 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80">
-                    <ChevronLeft className="size-6" />
-                  </button>
-                ) : null}
-                {viewer! < shown.length - 1 ? (
-                  <button type="button" onClick={() => setViewer(viewer! + 1)} aria-label="Next photo" className="absolute right-2 flex size-11 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80">
-                    <ChevronRight className="size-6" />
-                  </button>
-                ) : null}
-              </div>
-              <div className="flex flex-wrap items-start justify-between gap-3 px-1">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">
-                    {MEDIA_STAGE_LABEL[current.stage]}
-                    <span className="font-normal text-muted-foreground">
-                      {' '}
-                      · {viewer! + 1} of {shown.length}
-                    </span>
-                  </p>
-                  {current.description ? <p className="text-sm">{current.description}</p> : null}
-                  <p className="text-xs text-muted-foreground">
-                    Added by {current.uploadedBy} · {current.createdAt}
-                  </p>
-                </div>
-                {canEdit ? (
-                  <ConfirmAction
-                    trigger={
-                      <Button variant="ghost" size="sm" className="text-destructive" disabled={isRemoving}>
-                        <Trash2 />
-                        Remove
-                      </Button>
-                    }
-                    title="Remove this photo from the job?"
-                    description="It will no longer show on the job card. The removal is recorded with your name."
-                    confirmLabel="Remove photo"
-                    onConfirm={async () =>
-                      startRemoving(async () => {
-                        const result = await removePhotoAction(jobCardId, current.id);
-                        if (!result.ok) {
-                          toast.error(result.error ?? 'The photo could not be removed.');
-                          return;
-                        }
-                        toast.success('Photo removed');
-                        setViewer(null);
-                        router.refresh();
-                      })
-                    }
-                  />
-                ) : null}
-              </div>
-            </>
-          ) : (
-            <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
-              <ImageOff className="size-6" />
-              Photo not available
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <PhotoViewer
+        jobCardId={jobCardId}
+        photos={shown}
+        index={viewer}
+        onIndexChange={setViewer}
+        onClose={() => setViewer(null)}
+        canEdit={canEdit}
+      />
     </div>
   );
 }

@@ -333,7 +333,7 @@ export default async function JobCardWorkspacePage({
                 id: photo.id,
                 stage: photo.stage,
                 description: photo.description,
-                createdAt: photo.createdAt.toISOString(),
+                createdAt: formatDateTime(photo.createdAt),
                 uploadedBy: photo.uploadedBy?.fullName ?? 'Workshop',
               }))}
               defaultStage={defaultMediaStage(jobCard.status)}

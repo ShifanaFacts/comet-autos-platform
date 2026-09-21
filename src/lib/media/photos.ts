@@ -102,12 +102,26 @@ export async function uploadJobPhotos(
   });
 }
 
-/** The job's photos (not removed), oldest first, with who added them. */
-export async function listJobPhotos(user: AuthenticatedUser, jobCardId: string) {
+/**
+ * The job's photos (not removed), oldest first, with who added them.
+ * Pass a stage to get only that stage's — what a screen showing one step of
+ * the job needs, served straight off the (organization, job, stage) index.
+ */
+export async function listJobPhotos(
+  user: AuthenticatedUser,
+  jobCardId: string,
+  options: { stage?: MediaStage } = {},
+) {
   const job = await loadJob(user.organizationId, jobCardId);
   requirePermission(user, 'job_card.view', { branchId: job.branchId });
   const photos = await prisma.document.findMany({
-    where: { organizationId: user.organizationId, jobCardId: job.id, documentType: 'PHOTO', deletedAt: null },
+    where: {
+      organizationId: user.organizationId,
+      jobCardId: job.id,
+      documentType: 'PHOTO',
+      deletedAt: null,
+      ...(options.stage ? { stage: options.stage } : {}),
+    },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     select: { id: true, stage: true, description: true, createdAt: true, fileSize: true, uploadedBy: { select: { fullName: true } } },
   });
@@ -118,11 +132,28 @@ export type JobPhoto = Awaited<ReturnType<typeof listJobPhotos>>[number];
 
 const removeSchema = z.object({ reason: z.string().trim().max(300).optional() });
 
-/** Removes a photo from the job (soft delete: the record and file are kept, marked removed and by whom). */
-export async function removeJobPhoto(user: AuthenticatedUser, documentId: string, rawInput: unknown = {}) {
+/**
+ * Removes a photo from the job (soft delete: the record and file are kept,
+ * marked removed and by whom).
+ *
+ * `jobCardId` is the job the request came from. A photo can only be removed
+ * through the job it belongs to, so a document id lifted from one job card
+ * cannot be acted on from another — even by someone allowed to edit both.
+ */
+export async function removeJobPhoto(
+  user: AuthenticatedUser,
+  jobCardId: string,
+  documentId: string,
+  rawInput: unknown = {},
+) {
   const input = parseInput(removeSchema, rawInput);
   const photo = await prisma.document.findFirst({
-    where: { id: documentId, organizationId: user.organizationId, documentType: 'PHOTO', jobCardId: { not: null } },
+    where: {
+      id: documentId,
+      organizationId: user.organizationId,
+      documentType: 'PHOTO',
+      jobCardId,
+    },
     include: { jobCard: { select: { id: true, branchId: true } } },
   });
   if (!photo?.jobCard) throw new NotFoundError('photo');
@@ -146,20 +177,43 @@ export async function removeJobPhoto(user: AuthenticatedUser, documentId: string
 }
 
 /**
- * The bytes of a job photo or signature for a signed-in user who may see
- * the job. Other organizations' files, removed photos and other document
- * kinds are reported as not found.
+ * Confirms this user may see a job photo or signature, and returns what the
+ * response needs to describe it — without touching storage. Other
+ * organizations' files, removed photos and other document kinds are
+ * reported as not found, never as forbidden: a stranger learns nothing
+ * about what exists.
  */
-export async function readJobMedia(user: AuthenticatedUser, documentId: string) {
+export async function authorizeJobMedia(user: AuthenticatedUser, documentId: string) {
   const document = await prisma.document.findFirst({
-    where: { id: documentId, organizationId: user.organizationId, documentType: { in: ['PHOTO', 'SIGNATURE'] }, deletedAt: null, jobCardId: { not: null } },
+    where: {
+      id: documentId,
+      organizationId: user.organizationId,
+      documentType: { in: ['PHOTO', 'SIGNATURE'] },
+      deletedAt: null,
+      jobCardId: { not: null },
+    },
     select: { storageKey: true, mimeType: true, fileName: true, jobCard: { select: { branchId: true } } },
   });
   if (!document?.jobCard) throw new NotFoundError('file');
   requirePermission(user, 'job_card.view', { branchId: document.jobCard.branchId });
+  return document;
+}
+
+/** The stored bytes of a file already confirmed as this user's to see. */
+export async function readAuthorizedMedia(document: { storageKey: string }) {
   const bytes = await getStorage().get(document.storageKey);
   if (!bytes) throw new NotFoundError('file');
-  return { bytes, mimeType: document.mimeType, fileName: document.fileName };
+  return bytes;
+}
+
+/** The bytes of a job photo or signature, for a user who may see the job. */
+export async function readJobMedia(user: AuthenticatedUser, documentId: string) {
+  const document = await authorizeJobMedia(user, documentId);
+  return {
+    bytes: await readAuthorizedMedia(document),
+    mimeType: document.mimeType,
+    fileName: document.fileName,
+  };
 }
 
 /** The job's signatures (approval, handover), for the job card. */

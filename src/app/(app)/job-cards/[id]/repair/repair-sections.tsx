@@ -3,6 +3,7 @@ import { ArrowRight, CheckCircle2, Package, ShieldCheck, Wrench, XCircle } from 
 import type { WorkflowStatus } from '@/lib/workshop/stages';
 import type { RepairWorkspace } from '@/lib/workshop/repair';
 import type { JobWorkspace } from '@/lib/workshop/workspace';
+import { StagePhotosPanel } from '@/components/media/stage-photos-panel';
 import { employeeName } from '@/lib/workshop/assignment';
 import { formatDateTime, formatMoney } from '@/lib/format';
 import {
@@ -457,6 +458,15 @@ export function RepairSections({
         </Panel>
       </Section>
 
+      {/* Photographing the repair, where the repair is recorded. */}
+      <StagePhotosPanel
+        jobCardId={jobCard.id}
+        branchId={jobCard.branchId}
+        status={jobCard.status}
+        stage="REPAIR"
+        hint="Worn parts, the work in progress, the part fitted."
+      />
+
       {/* 4. Additional work / approval */}
       <div id="additional-work" className="-mb-10 scroll-mt-24" aria-hidden />
       <Section
@@ -595,6 +605,14 @@ export function RepairSections({
             </p>
           ) : null}
         </Panel>
+
+        <StagePhotosPanel
+          jobCardId={jobCard.id}
+          branchId={jobCard.branchId}
+          status={jobCard.status}
+          stage="QUALITY_CHECK"
+          hint="The finished work, as it was signed off."
+        />
       </section>
     </Stack>
   );

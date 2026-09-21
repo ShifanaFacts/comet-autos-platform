@@ -298,7 +298,7 @@ export async function deliverVehicleAction(
 /** Removes a photo from the job (kept on record as removed, with who removed it). */
 export async function removePhotoAction(jobCardId: string, documentId: string): Promise<ActionResult> {
   const user = await requireUser();
-  const result = await runAction(() => removeJobPhoto(user, documentId));
+  const result = await runAction(() => removeJobPhoto(user, jobCardId, documentId));
   if (result.ok) refreshJob(jobCardId);
   return toClientResult(result);
 }

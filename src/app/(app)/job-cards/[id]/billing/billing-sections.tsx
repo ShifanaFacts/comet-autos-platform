@@ -3,6 +3,7 @@ import type { PaymentMethod } from '@/generated/prisma/enums';
 import type { WorkflowStatus } from '@/lib/workshop/stages';
 import type { JobWorkspace } from '@/lib/workshop/workspace';
 import type { BillableLine, BillingNote, JobInvoice } from '@/lib/billing/invoice';
+import { StagePhotosPanel } from '@/components/media/stage-photos-panel';
 import {
   formatCalendarDate,
   formatDateTime,
@@ -389,6 +390,15 @@ export function BillingSections({
               </p>
             )}
           </Panel>
+
+          {/* The vehicle as it left, photographed at handover. */}
+          <StagePhotosPanel
+            jobCardId={jobCard.id}
+            branchId={jobCard.branchId}
+            status={jobCard.status}
+            stage="DELIVERY"
+            hint="The condition it left in — the workshop's record if it is ever questioned."
+          />
         </section>
       ) : null}
     </Stack>
