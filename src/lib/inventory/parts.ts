@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
+import { resolveDefaultVatRate } from '@/lib/tax';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
@@ -133,7 +134,8 @@ async function assertSkuFree(
   if (clash) throw new DomainError(`Part number ${sku} is already used by “${clash.name}”.`, 'sku');
 }
 
-function partData(input: z.infer<typeof partSchema>) {
+/** An empty VAT rate takes the organization's default — never a literal rate. */
+function partData(input: z.infer<typeof partSchema>, defaultVatRate: string) {
   return {
     sku: input.sku,
     name: input.name,
@@ -141,7 +143,7 @@ function partData(input: z.infer<typeof partSchema>) {
     unitOfMeasure: input.unitOfMeasure.toLowerCase(),
     defaultCostPrice: input.costPrice,
     defaultSellingPrice: input.sellingPrice,
-    defaultTaxRate: input.taxRate || '5.00',
+    defaultTaxRate: input.taxRate || defaultVatRate,
     reorderLevel: input.reorderLevel ? input.reorderLevel : null,
   };
 }
@@ -158,7 +160,7 @@ export async function createPart(user: AuthenticatedUser, rawInput: unknown) {
     const part = await tx.part.create({
       data: {
         organizationId: user.organizationId,
-        ...partData(input),
+        ...partData(input, await resolveDefaultVatRate(user.organizationId, tx)),
         category: await canonicalCategory(tx, user.organizationId, emptyToNull(input.category)),
         preferredSupplierId: await requireSupplier(
           tx,
@@ -212,7 +214,7 @@ export async function updatePart(user: AuthenticatedUser, partId: string, rawInp
     const part = await tx.part.update({
       where: { id: partId },
       data: {
-        ...partData(input),
+        ...partData(input, await resolveDefaultVatRate(user.organizationId, tx)),
         category: await canonicalCategory(tx, user.organizationId, emptyToNull(input.category)),
         preferredSupplierId: await requireSupplier(
           tx,

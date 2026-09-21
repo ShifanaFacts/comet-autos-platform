@@ -165,8 +165,11 @@ export async function getCustomerDetail(user: AuthenticatedUser, customerId: str
   });
   if (!customer) throw new NotFoundError('customer');
 
+  // The jobs this customer brought in — including on vehicles they no longer
+  // own. Found by the job's own customer, not through the vehicle: otherwise a
+  // sold vehicle would take its history to the new owner.
   const jobCards = await prisma.jobCard.findMany({
-    where: { organizationId: user.organizationId, vehicle: { customerId: customer.id } },
+    where: { organizationId: user.organizationId, customerId: customer.id },
     orderBy: { openedAt: 'desc' },
     select: {
       id: true,

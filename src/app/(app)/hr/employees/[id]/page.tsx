@@ -91,7 +91,7 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
                           </span>
                           <span className="text-xs text-muted-foreground">
                             <span className="font-mono">{assignment.jobCard.jobNumber}</span> ·{' '}
-                            {assignment.jobCard.vehicle.customer.name}
+                            {assignment.jobCard.customer.name}
                           </span>
                         </div>
                         <JobStatusBadge status={assignment.jobCard.status} />
@@ -145,6 +145,33 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
                 <div className="flex flex-col gap-1">
                   <dt className="text-xs font-medium text-muted-foreground">Employee code</dt>
                   <dd className="font-mono">{employee.employeeCode}</dd>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <dt className="text-xs font-medium text-muted-foreground">Contact</dt>
+                  <dd>
+                    {employee.phone || employee.email ? (
+                      <>
+                        {employee.phone ? (
+                          <a
+                            href={`tel:${employee.phone.replace(/[^\d+]/g, '')}`}
+                            className="tabular-nums hover:underline"
+                          >
+                            {employee.phone}
+                          </a>
+                        ) : null}
+                        {employee.email ? (
+                          <a
+                            href={`mailto:${employee.email}`}
+                            className="block break-all text-muted-foreground hover:underline"
+                          >
+                            {employee.email}
+                          </a>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">Not recorded</span>
+                    )}
+                  </dd>
                 </div>
                 <div className="flex flex-col gap-1">
                   <dt className="text-xs font-medium text-muted-foreground">Branch</dt>

@@ -55,8 +55,8 @@ export function EstimateTable({ estimates, dateLabel }: { estimates: QueueEstima
                 </span>
               </TableCell>
               <TableCell>
-                {estimate.jobCard.vehicle.customer.name}
-                <span className="block text-xs text-muted-foreground">{estimate.jobCard.vehicle.customer.phone}</span>
+                {estimate.jobCard.customer.name}
+                <span className="block text-xs text-muted-foreground">{estimate.jobCard.customer.phone}</span>
               </TableCell>
               <TableCell>
                 <EstimateStatusPill status={estimate.status} expired={isExpired(estimate)} />

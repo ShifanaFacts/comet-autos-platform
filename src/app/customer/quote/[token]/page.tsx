@@ -94,7 +94,7 @@ export default async function CustomerQuotePage({
             </p>
             <DocumentStatus status={document.status} />
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Hello {vehicle.customer.name},</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Hello {jobCard.customer.name},</h1>
           <p className="text-muted-foreground">
             {additional
               ? 'While repairing your vehicle we found more work that needs doing. It is not part of the work you already approved — please review it and let us know if we should go ahead.'

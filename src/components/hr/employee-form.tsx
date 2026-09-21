@@ -26,6 +26,8 @@ export function EmployeeForm({
     lastName: string;
     employeeCode: string;
     jobTitle: string | null;
+    phone: string | null;
+    email: string | null;
     department: string | null;
     hireDate: string;
     terminationDate: string | null;
@@ -79,6 +81,29 @@ export function EmployeeForm({
             defaultValue={initial?.jobTitle ?? ''}
             error={errors.jobTitle}
             hint="e.g. Senior Technician."
+            className={INPUT}
+          />
+        </div>
+        <div className="grid gap-6 sm:grid-cols-2">
+          <TextField
+            label="Mobile number"
+            name="phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            defaultValue={initial?.phone ?? ''}
+            error={errors.phone}
+            hint="How the workshop reaches them."
+            className={INPUT}
+          />
+          <TextField
+            label="Email"
+            name="email"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            defaultValue={initial?.email ?? ''}
+            error={errors.email}
             className={INPUT}
           />
         </div>

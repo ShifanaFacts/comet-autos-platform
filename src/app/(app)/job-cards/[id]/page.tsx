@@ -411,15 +411,15 @@ export default async function JobCardWorkspacePage({
                 </li>
                 <li>
                   <Link
-                    href={`/customers/${jobCard.vehicle.customer.id}`}
+                    href={`/customers/${jobCard.customer.id}`}
                     className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-muted/60 sm:px-6"
                   >
                     <span className="flex min-w-0 flex-col gap-0.5">
-                      <span className="font-medium">{jobCard.vehicle.customer.name}</span>
+                      <span className="font-medium">{jobCard.customer.name}</span>
                       <span className="truncate text-xs text-muted-foreground">
-                        {jobCard.vehicle.customer.phone}
-                        {jobCard.vehicle.customer.email
-                          ? ` · ${jobCard.vehicle.customer.email}`
+                        {jobCard.customer.phone}
+                        {jobCard.customer.email
+                          ? ` · ${jobCard.customer.email}`
                           : ''}
                       </span>
                     </span>

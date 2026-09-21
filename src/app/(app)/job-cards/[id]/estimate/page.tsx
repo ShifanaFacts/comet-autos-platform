@@ -50,8 +50,8 @@ export default async function EstimatePage({
   }
   const { jobCard, status, diagnosis, estimate: latest } = workspace;
   const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
-  const customer = jobCard.vehicle.customer;
-  const defaultVatRate = resolveDefaultVatRate(user.organizationId);
+  const customer = jobCard.customer;
+  const defaultVatRate = await resolveDefaultVatRate(user.organizationId);
 
   const shown = version
     ? (jobCard.estimates.find((e) => String(e.version) === version) ?? latest)

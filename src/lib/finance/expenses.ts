@@ -264,5 +264,5 @@ export async function listExpenseCategories(user: AuthenticatedUser) {
 export async function getExpenseFormOptions(user: AuthenticatedUser) {
   requirePermission(user, 'accounting.create');
   const categories = await listExpenseCategories(user);
-  return { categories, defaultVatRate: resolveDefaultVatRate(user.organizationId) };
+  return { categories, defaultVatRate: await resolveDefaultVatRate(user.organizationId) };
 }

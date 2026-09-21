@@ -38,7 +38,7 @@ export default async function JobCardsPage({
           OR: [
             { jobNumber: { contains: query, mode: 'insensitive' as const } },
             { vehicle: { plateNumber: { contains: query, mode: 'insensitive' as const } } },
-            { vehicle: { customer: { name: { contains: query, mode: 'insensitive' as const } } } },
+            { customer: { name: { contains: query, mode: 'insensitive' as const } } },
           ],
         }
       : {}),
@@ -47,7 +47,7 @@ export default async function JobCardsPage({
   const [jobCards, total, unfilteredTotal] = await Promise.all([
     prisma.jobCard.findMany({
       where,
-      include: { vehicle: { include: { customer: true } } },
+      include: { customer: true, vehicle: true },
       orderBy: { openedAt: 'desc' },
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
@@ -130,7 +130,7 @@ export default async function JobCardsPage({
                       <span className="flex flex-col gap-0.5 text-xs text-muted-foreground">
                         <span className="truncate">
                           <span className="font-mono">{jobCard.jobNumber}</span> ·{' '}
-                          {jobCard.vehicle.customer.name}
+                          {jobCard.customer.name}
                         </span>
                         <span className="tabular-nums">
                           {jobCard.openedAt.toLocaleString('en-AE', {
@@ -176,7 +176,7 @@ export default async function JobCardsPage({
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell>{jobCard.vehicle.customer.name}</TableCell>
+                        <TableCell>{jobCard.customer.name}</TableCell>
                         <TableCell>
                           <JobStatusBadge status={jobCard.status} />
                         </TableCell>

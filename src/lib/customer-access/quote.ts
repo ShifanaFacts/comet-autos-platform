@@ -73,15 +73,8 @@ export async function loadCustomerQuote(rawToken: string) {
           jobNumber: true,
           customerComplaint: true,
           odometerReading: true,
-          vehicle: {
-            select: {
-              plateNumber: true,
-              make: true,
-              model: true,
-              year: true,
-              customer: { select: { name: true } },
-            },
-          },
+          customer: { select: { name: true } },
+          vehicle: { select: { plateNumber: true, make: true, model: true, year: true } },
           inspections: {
             where: { status: 'COMPLETED' },
             orderBy: { inspectedAt: 'desc' },

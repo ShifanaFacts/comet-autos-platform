@@ -331,17 +331,23 @@ enum SignerType {
 // =============================================================================
 
 model Organization {
-  id           String   @id @default(uuid(7)) @db.Uuid
-  name         String
-  legalName    String?  @map("legal_name")
-  taxNumber    String?  @map("tax_number")
-  address      String?
-  phone        String?
-  email        String?
-  baseCurrency String   @default("AED") @map("base_currency")
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id              String   @id @default(uuid(7)) @db.Uuid
+  name            String
+  legalName       String?  @map("legal_name")
+  taxNumber       String?  @map("tax_number")
+  /// Whether the business charges VAT. When false, new lines default to 0%.
+  /// Existing documents keep the rate they were priced at either way.
+  isVatRegistered Boolean  @default(true) @map("is_vat_registered")
+  /// Standard VAT rate as a percentage, e.g. 5.00. Read through lib/tax —
+  /// never hard-coded elsewhere.
+  vatRate         Decimal  @default(5.00) @map("vat_rate") @db.Decimal(5, 2)
+  address         String?
+  phone           String?
+  email           String?
+  baseCurrency    String   @default("AED") @map("base_currency")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   branches                Branch[]
   users                   User[]
@@ -621,6 +627,7 @@ model Customer {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   vehicles           Vehicle[]
+  jobCards           JobCard[]
   appointments       Appointment[]
   invoices           Invoice[]
   approvals          Approval[]
@@ -698,13 +705,17 @@ model Appointment {
 // WORKSHOP
 // =============================================================================
 
-/// JobCard belongs to Vehicle only. Customer is derived through
-/// vehicle.customer — there is deliberately NO direct customerId here.
+/// customerId is the customer the job was opened for, captured at check-in
+/// from the vehicle's owner at that moment and never rewritten. A vehicle
+/// can change hands; its past jobs still belong to whoever brought it in, so
+/// service history, approvals and invoices keep the right person. Anything
+/// about the job reads jobCard.customer — never vehicle.customer.
 model JobCard {
   id                String        @id @default(uuid(7)) @db.Uuid
   organizationId    String        @map("organization_id") @db.Uuid
   branchId          String        @map("branch_id") @db.Uuid
   vehicleId         String        @map("vehicle_id") @db.Uuid
+  customerId        String        @map("customer_id") @db.Uuid
   appointmentId     String?       @map("appointment_id") @db.Uuid
   jobNumber         String        @map("job_number")
   status            JobCardStatus @default(ARRIVED)
@@ -723,6 +734,7 @@ model JobCard {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branch       Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
   vehicle      Vehicle      @relation(fields: [organizationId, vehicleId], references: [organizationId, id], onDelete: Restrict)
+  customer     Customer     @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
   appointment  Appointment? @relation(fields: [organizationId, appointmentId], references: [organizationId, id], onDelete: Restrict)
   createdBy    User         @relation(fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
   deliveredBy  User?        @relation("JobCardDeliveredBy", fields: [organizationId, deliveredByUserId], references: [organizationId, id], onDelete: Restrict)
@@ -745,6 +757,7 @@ model JobCard {
   @@index([organizationId])
   @@index([organizationId, branchId])
   @@index([organizationId, vehicleId])
+  @@index([organizationId, customerId])
   @@index([organizationId, status])
   @@index([organizationId, branchId, status])
   @@map("job_cards")
@@ -1628,6 +1641,10 @@ model Employee {
   firstName       String    @map("first_name")
   lastName        String    @map("last_name")
   jobTitle        String?   @map("job_title")
+  /// The employee's own contact details, independent of any system login:
+  /// a technician who never signs in can still be reached.
+  phone           String?
+  email           String?
   department      String?
   hireDate        DateTime  @map("hire_date") @db.Date
   terminationDate DateTime? @map("termination_date") @db.Date

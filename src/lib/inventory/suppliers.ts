@@ -133,7 +133,7 @@ const RECEIVED: ('RECEIVED' | 'PARTIALLY_RECEIVED')[] = ['RECEIVED', 'PARTIALLY_
 
 /** Received value, paid and outstanding for a set of suppliers, in fils. */
 async function balances(organizationId: string, supplierIds: string[]) {
-  const defaultVat = resolveDefaultVatRate(organizationId);
+  const defaultVat = await resolveDefaultVatRate(organizationId);
   const purchases = await prisma.purchase.findMany({
     where: { organizationId, supplierId: { in: supplierIds }, status: { in: RECEIVED } },
     select: {

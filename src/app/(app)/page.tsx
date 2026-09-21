@@ -442,7 +442,7 @@ async function WorkshopActivity({ organizationId }: { organizationId: string }) 
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
                       <span className="font-medium text-foreground/70">{job.jobNumber}</span> ·{' '}
-                      {job.vehicle.customer.name}
+                      {job.customer.name}
                     </p>
                   </div>
                   <JobStatusBadge status={job.status} />

@@ -169,7 +169,7 @@ export function BillingSections({
   canDeliver: boolean;
 }) {
   const { jobCard } = workspace;
-  const customer = jobCard.vehicle.customer;
+  const customer = jobCard.customer;
   const state = invoice ? PAYMENT_STATE[invoice.paymentState] : null;
 
   return (
@@ -379,7 +379,7 @@ export function BillingSections({
                 </div>
               </div>
             ) : status === 'PAID' && canDeliver ? (
-              <DeliveryForm jobCardId={jobCard.id} customerName={jobCard.vehicle.customer.name} />
+              <DeliveryForm jobCardId={jobCard.id} customerName={jobCard.customer.name} />
             ) : (
               <p className="flex items-center gap-2 text-sm text-muted-foreground">
                 <KeyRound className="size-4" />

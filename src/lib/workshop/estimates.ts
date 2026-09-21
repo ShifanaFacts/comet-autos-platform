@@ -141,7 +141,7 @@ function priceLines(items: z.infer<typeof lineSchema>[], defaultVatRate: string)
 /** Replaces a draft's lines and recalculates Subtotal / VAT / Total on the server. */
 export async function saveEstimateDraft(user: AuthenticatedUser, estimateId: string, rawInput: unknown) {
   const input = parseInput(draftSchema, rawInput);
-  const lines = priceLines(input.items, resolveDefaultVatRate(user.organizationId));
+  const lines = priceLines(input.items, await resolveDefaultVatRate(user.organizationId));
   const totals = calculateTotals(lines.map((line) => line.amounts));
   const validUntil = parseCalendarDate(input.validUntil);
   if (!validUntil) throw new DomainError('Choose a valid date.', 'validUntil');
@@ -488,11 +488,11 @@ export async function applyEstimateDecision(
   }
   await tx.$executeRaw`SELECT id FROM estimates WHERE id = ${params.estimateId}::uuid AND organization_id = ${params.organizationId}::uuid FOR UPDATE`;
   const estimate = await loadEstimate(tx, params.organizationId, params.estimateId);
-  const { vehicle } = await tx.jobCard.findUniqueOrThrow({
+  // The decision belongs to the job's customer, even if the vehicle has since changed hands.
+  const { customerId } = await tx.jobCard.findUniqueOrThrow({
     where: { id: estimate.jobCardId },
-    select: { vehicle: { select: { customerId: true } } },
+    select: { customerId: true },
   });
-  const customerId = vehicle.customerId;
 
   if (estimate.status !== 'SENT') {
     throw new DomainError(

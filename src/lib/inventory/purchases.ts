@@ -125,7 +125,7 @@ async function prepareLines(
     where: { organizationId, id: { in: items.map((i) => i.partId) } },
     select: { id: true, sku: true, isActive: true },
   });
-  const defaultVat = resolveDefaultVatRate(organizationId);
+  const defaultVat = await resolveDefaultVatRate(organizationId, tx);
   return items.map((item, index) => {
     const part = parts.find((p) => p.id === item.partId);
     if (!part)
@@ -588,7 +588,7 @@ export async function getPurchaseDetail(user: AuthenticatedUser, purchaseId: str
     },
   });
   if (!purchase) throw new NotFoundError('purchase');
-  const defaultVat = resolveDefaultVatRate(user.organizationId);
+  const defaultVat = await resolveDefaultVatRate(user.organizationId);
   const lines = purchase.items.map((item) => {
     const orderedMilli = signedToMilli(item.quantityOrdered);
     const receivedMilli = signedToMilli(item.quantityReceived);
@@ -662,6 +662,6 @@ export async function getPurchaseFormOptions(user: AuthenticatedUser) {
       taxRate: p.defaultTaxRate?.toString() ?? '',
       supplierId: p.preferredSupplierId,
     })),
-    defaultVat: resolveDefaultVatRate(user.organizationId),
+    defaultVat: await resolveDefaultVatRate(user.organizationId),
   };
 }

@@ -58,7 +58,9 @@ async function loadOwner(
   resourceId: string,
 ) {
   const vehicleSelect = {
-    vehicle: { select: { plateNumber: true, customer: { select: { phone: true } } } },
+    // Verified against the customer the document is for — the job's customer.
+    customer: { select: { phone: true } },
+    vehicle: { select: { plateNumber: true } },
   } as const;
   const jobCard =
     type === 'ESTIMATE'
@@ -75,7 +77,7 @@ async function loadOwner(
           })
         )?.jobCard;
   if (!jobCard) return null;
-  return { plateNumber: jobCard.vehicle.plateNumber, phone: jobCard.vehicle.customer.phone };
+  return { plateNumber: jobCard.vehicle.plateNumber, phone: jobCard.customer.phone };
 }
 
 /** Resolves the link and checks the browser's verification proof (cookie value). */

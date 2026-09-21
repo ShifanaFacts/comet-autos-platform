@@ -63,7 +63,7 @@ export async function globalSearch(query: string): Promise<GlobalSearchResults> 
     }),
     prisma.jobCard.findMany({
       where: { organizationId: user.organizationId, jobNumber: { contains: trimmed, mode: 'insensitive' } },
-      include: { vehicle: { include: { customer: true } } },
+      include: { customer: true, vehicle: true },
       take: 5,
     }),
   ]);
@@ -83,7 +83,7 @@ export async function globalSearch(query: string): Promise<GlobalSearchResults> 
       jobNumber: jc.jobNumber,
       status: jc.status,
       plateNumber: jc.vehicle.plateNumber,
-      customerName: jc.vehicle.customer.name,
+      customerName: jc.customer.name,
     })),
   };
 }

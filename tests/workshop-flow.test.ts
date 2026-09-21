@@ -403,7 +403,7 @@ describe('core workshop journey', () => {
     assert.equal((await createEstimate(a.owner, jobCardId)).id, estimateId, 'reopens the same draft');
     assert.equal(await jobStatus(jobCardId), 'ESTIMATE');
     assert.equal(getNextAction(await getJobWorkspace(a.owner, jobCardId)).title, 'Finish and send the estimate');
-    assert.equal(resolveDefaultVatRate(a.owner.organizationId), UAE_STANDARD_VAT_RATE);
+    assert.equal(await resolveDefaultVatRate(a.owner.organizationId), UAE_STANDARD_VAT_RATE);
 
     await expectDomainError(sendEstimate(a.owner, estimateId), /at least one/);
     await expectDomainError(

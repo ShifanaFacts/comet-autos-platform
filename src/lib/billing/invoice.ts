@@ -74,7 +74,7 @@ async function loadBillingSources(client: Prisma.TransactionClient, organization
 /** What would be billed for this job, and every approved-vs-actual difference. Pure calculation — writes nothing. */
 export async function buildBilling(client: Prisma.TransactionClient, organizationId: string, jobCardId: string) {
   const { lines, labours, usages } = await loadBillingSources(client, organizationId, jobCardId);
-  const defaultVat = resolveDefaultVatRate(organizationId);
+  const defaultVat = await resolveDefaultVatRate(organizationId, client);
   const billable: BillableLine[] = [];
   const notes: BillingNote[] = [];
 
@@ -203,7 +203,8 @@ async function lockJob(tx: Prisma.TransactionClient, organizationId: string, job
   await tx.$executeRaw`SELECT id FROM job_cards WHERE id = ${jobCardId}::uuid AND organization_id = ${organizationId}::uuid FOR UPDATE`;
   const jobCard = await tx.jobCard.findFirst({
     where: { id: jobCardId, organizationId },
-    include: { vehicle: { include: { customer: true } } },
+    // The job's own customer — who brought the vehicle in — not whoever owns it today.
+    include: { customer: true, vehicle: true },
   });
   if (!jobCard) throw new NotFoundError('job card');
   return jobCard;
@@ -231,7 +232,7 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
     if (billing.billable.length === 0) throw new DomainError('There is no approved, completed work to bill.');
 
     const organization = await tx.organization.findUniqueOrThrow({ where: { id: user.organizationId } });
-    const customer = jobCard.vehicle.customer;
+    const customer = jobCard.customer;
     const today = parseCalendarDate(localDateString())!;
     const invoiceNumber = await allocateDocumentNumber(tx, user.organizationId, jobCard.branchId, 'TAX_INVOICE');
     const now = new Date();
@@ -493,8 +494,8 @@ export async function deliverVehicle(user: AuthenticatedUser, jobCardId: string,
         jobCardId: jobCard.id,
         context: 'DELIVERY_HANDOVER',
         signerType: 'CUSTOMER',
-        signerName: input.signerName || jobCard.vehicle.customer.name,
-        customerId: jobCard.vehicle.customer.id,
+        signerName: input.signerName || jobCard.customer.name,
+        customerId: jobCard.customer.id,
         capturedByUserId: user.id,
         fileOwnerUserId: user.id,
         auditActorUserId: user.id,

@@ -158,6 +158,9 @@ export async function checkInVehicle(
         organizationId: user.organizationId,
         branchId,
         vehicleId: vehicle.id,
+        // The job belongs to whoever owns the vehicle now, and keeps them if
+        // the vehicle later changes hands.
+        customerId: vehicle.customerId,
         appointmentId,
         jobNumber,
         status: 'ARRIVED',

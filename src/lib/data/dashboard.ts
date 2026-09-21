@@ -168,14 +168,8 @@ export async function getRecentJobCards(organizationId: string, take = 6) {
       jobNumber: true,
       status: true,
       openedAt: true,
-      vehicle: {
-        select: {
-          plateNumber: true,
-          make: true,
-          model: true,
-          customer: { select: { name: true } },
-        },
-      },
+      customer: { select: { name: true } },
+      vehicle: { select: { plateNumber: true, make: true, model: true } },
     },
   });
 }

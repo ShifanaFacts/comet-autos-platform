@@ -44,13 +44,13 @@ export default async function AdditionalWorkPage({
   }
   const { jobCard, status } = workspace;
   const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
-  const customer = jobCard.vehicle.customer;
+  const customer = jobCard.customer;
   const decision = estimate.approvals[0];
   const expired =
     estimate.status === 'SENT' &&
     estimate.validUntil !== null &&
     estimate.validUntil.toISOString().slice(0, 10) < localDateString();
-  const defaultVatRate = resolveDefaultVatRate(user.organizationId);
+  const defaultVatRate = await resolveDefaultVatRate(user.organizationId);
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">

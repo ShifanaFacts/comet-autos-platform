@@ -49,8 +49,10 @@ const vehicleSelect = {
   make: true,
   model: true,
   year: true,
-  customer: { select: { name: true, phone: true, address: true, taxNumber: true } },
 } as const;
+
+/** The job's own customer — who the quotation was for — never the vehicle's current owner. */
+const customerSelect = { name: true, phone: true, address: true, taxNumber: true } as const;
 
 async function loadSeller(organizationId: string): Promise<DocumentSeller> {
   return prisma.organization.findUniqueOrThrow({
@@ -102,6 +104,7 @@ async function fetchQuotation(organizationId: string, estimateId: string) {
           jobNumber: true,
           customerComplaint: true,
           odometerReading: true,
+          customer: { select: customerSelect },
           vehicle: { select: vehicleSelect },
         },
       },
@@ -167,10 +170,10 @@ function quotationModel(
         : []),
     ],
     customer: {
-      name: jobCard.vehicle.customer.name,
-      phone: jobCard.vehicle.customer.phone,
-      address: jobCard.vehicle.customer.address,
-      taxNumber: jobCard.vehicle.customer.taxNumber,
+      name: jobCard.customer.name,
+      phone: jobCard.customer.phone,
+      address: jobCard.customer.address,
+      taxNumber: jobCard.customer.taxNumber,
     },
     vehicle: {
       description: vehicleLabel(jobCard.vehicle),
@@ -247,6 +250,8 @@ async function fetchInvoice(organizationId: string, where: { id: string } | { pa
         },
       },
       payments: { orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }] },
+      // The invoice names its own customer; the snapshot fields hold the rest.
+      customer: { select: { name: true, phone: true } },
       jobCard: {
         select: { jobNumber: true, odometerReading: true, vehicle: { select: vehicleSelect } },
       },
@@ -271,8 +276,8 @@ function invoiceParties(invoice: InvoiceRecord) {
   const vehicle = invoice.jobCard?.vehicle;
   return {
     customer: {
-      name: invoice.customerName ?? vehicle?.customer.name ?? 'Customer',
-      phone: vehicle?.customer.phone ?? null,
+      name: invoice.customerName ?? invoice.customer.name,
+      phone: invoice.customer.phone,
       address: invoice.customerAddress,
       taxNumber: invoice.customerTaxNumber,
     },

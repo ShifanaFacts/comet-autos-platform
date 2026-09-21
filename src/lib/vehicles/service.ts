@@ -8,6 +8,7 @@ import { DomainError, NotFoundError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull, normalizePlate, normalizeVin } from '@/lib/normalize';
 import { searchVehicles, vehiclePlateExists } from '@/lib/customers/search';
+import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 
 export { PLATE_EMIRATES } from '@/lib/vehicles/constants';
 
@@ -170,6 +171,8 @@ export async function getVehicleDetail(user: AuthenticatedUser, vehicleId: strin
       jobCards: {
         orderBy: { openedAt: 'desc' },
         include: {
+          // Who brought the vehicle in for each job — not always today's owner.
+          customer: { select: { id: true, name: true } },
           diagnoses: { orderBy: { diagnosedAt: 'desc' }, take: 1, select: { findings: true } },
           estimates: {
             orderBy: [{ version: 'desc' }],
@@ -190,4 +193,93 @@ export async function getVehicleDetail(user: AuthenticatedUser, vehicleId: strin
   });
   if (!vehicle) throw new NotFoundError('vehicle');
   return vehicle;
+}
+
+const transferSchema = z.object({
+  customerId: z.string({ error: 'Choose the new owner.' }).trim().min(1, 'Choose the new owner.'),
+  reason: z
+    .string({ error: 'Say why the owner is changing.' })
+    .trim()
+    .min(3, 'Say why the owner is changing.')
+    .max(300),
+  /** Typed back by the user, so a vehicle is never handed over by a stray tap. */
+  confirmPlate: z
+    .string({ error: 'Type the registration number to confirm.' })
+    .trim()
+    .min(1, 'Type the registration number to confirm.'),
+  requestKey: z.string().optional(),
+});
+
+/**
+ * Hands a vehicle to a new owner. Only the vehicle's current owner changes:
+ * every past job keeps the customer who brought it in (JobCard.customerId),
+ * and invoices and approvals keep theirs, so the previous owner's history
+ * stays theirs. A job that is open right now also stays with whoever brought
+ * the vehicle in. The change is audited with both owners and the reason.
+ */
+export async function transferVehicleOwnership(
+  user: AuthenticatedUser,
+  vehicleId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(transferSchema, rawInput);
+  requirePermission(user, 'vehicle.edit');
+
+  return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'vehicle.transfer_ownership');
+    // Serialise transfers of the same vehicle.
+    await tx.$executeRaw`SELECT id FROM vehicles WHERE id = ${vehicleId}::uuid AND organization_id = ${user.organizationId}::uuid FOR UPDATE`;
+    const vehicle = await tx.vehicle.findFirst({
+      where: { id: vehicleId, organizationId: user.organizationId },
+      include: { customer: { select: { id: true, name: true } } },
+    });
+    if (!vehicle) throw new NotFoundError('vehicle');
+
+    if (normalizePlate(input.confirmPlate) !== normalizePlate(vehicle.plateNumber)) {
+      throw new DomainError(
+        `That isn't this vehicle's registration. Type ${vehicle.plateNumber} to confirm.`,
+        'confirmPlate',
+      );
+    }
+    const newOwner = await tx.customer.findFirst({
+      where: { id: input.customerId, organizationId: user.organizationId, isActive: true },
+      select: { id: true, name: true },
+    });
+    if (!newOwner) {
+      throw new DomainError('Choose an active customer of this workshop.', 'customerId');
+    }
+    if (newOwner.id === vehicle.customerId) {
+      throw new DomainError(`${newOwner.name} already owns this vehicle.`, 'customerId');
+    }
+
+    const openJobs = await tx.jobCard.count({
+      where: {
+        organizationId: user.organizationId,
+        vehicleId: vehicle.id,
+        status: { notIn: ['DELIVERED', 'CANCELLED', 'CLOSED'] },
+      },
+    });
+
+    const updated = await tx.vehicle.update({
+      where: { id: vehicle.id },
+      data: { customerId: newOwner.id },
+    });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: user.primaryBranchId,
+      actorUserId: user.id,
+      action: 'vehicle.ownership_transferred',
+      entityType: 'Vehicle',
+      entityId: vehicle.id,
+      beforeData: { customerId: vehicle.customer.id, customerName: vehicle.customer.name },
+      afterData: { customerId: newOwner.id, customerName: newOwner.name },
+      metadata: {
+        reason: input.reason,
+        plateNumber: vehicle.plateNumber,
+        openJobsKeptByPreviousOwner: openJobs,
+      },
+    });
+    await settleRequestKey(tx, user, rawInput, vehicle.id);
+    return { vehicle: updated, previousOwner: vehicle.customer, newOwner };
+  });
 }

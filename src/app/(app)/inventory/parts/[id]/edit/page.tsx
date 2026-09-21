@@ -63,7 +63,7 @@ export default async function EditPartPage({ params }: { params: Promise<{ id: s
           }}
           categories={categories}
           suppliers={suppliers}
-          defaultVat={resolveDefaultVatRate(user.organizationId)}
+          defaultVat={await resolveDefaultVatRate(user.organizationId)}
           isNew={false}
           cancelHref={`/inventory/parts/${part.id}`}
         />

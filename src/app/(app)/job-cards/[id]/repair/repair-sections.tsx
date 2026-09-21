@@ -631,7 +631,7 @@ function JobSummary({
               {jobCard.jobNumber}
             </p>
             <p className="text-sm text-muted-foreground">
-              {jobCard.vehicle.customer.name} · {jobCard.vehicle.customer.phone}
+              {jobCard.customer.name} · {jobCard.customer.phone}
             </p>
           </div>
           {passed ? (

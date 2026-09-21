@@ -1,8 +1,118 @@
 # Project Status
 
-Last updated: 2026-09-20
+Last updated: 2026-09-21
 
-## Milestone: Job photos, signatures & responsive workshop UI — IN PROGRESS (increment 2 done, uncommitted)
+## Phase 10: Finance dashboard (uncommitted)
+
+133 integration tests pass (adds `tests/finance-dashboard.test.ts`, 15 tests).
+**No schema change** — every figure comes from columns that already exist.
+
+`/finance` (nav: Finance → Overview), built on `lib/finance/dashboard.ts`.
+
+Calculation rules, defined once at the top of that file:
+
+- **Revenue** — invoices ISSUED in the period, at their own stored amounts.
+  DRAFT is not revenue; VOID and CANCELLED never count.
+- **Collected** — payments received in the period that count: completed, not
+  a reversal, and not since reversed.
+- **Expenses** — RECORDED expenses dated in the period; voided never count.
+- **VAT** — output from those invoices, input from those expenses, read from
+  the organization's settings. A workshop that is not VAT-registered reports
+  zero and the panel says so plainly.
+- **Owed** — the live figures from `lib/finance/outstanding`, never a second
+  version of that calculation.
+- **Position** — revenue less expenses, both excluding VAT, labelled as an
+  operating margin rather than an accounting profit.
+
+Periods are the workshop's own days in Dubai: Today / This week (from Monday)
+/ This month / a custom range, stated in the page description so there is no
+doubt what a number covers. `issueDate` and `expenseDate` are DATE columns and
+compare as dates; payments carry an instant, so their window runs Dubai
+midnight to Dubai midnight.
+
+Permissions are per section, enforced server-side: `invoice.view` for sales
+and receivables, `accounting.view` for expenses and VAT, `inventory.view` for
+payables. A user with none of them is refused outright; a user with some sees
+only those sections, and the withheld queries are never run.
+
+Measured: **21 queries, 11–21 ms** for a full render, constant across periods
+and row counts (no N+1).
+
+## Milestone: Ownership, VAT configuration & outstanding balances (uncommitted)
+
+118 integration tests pass (adds `tests/ownership-finance.test.ts`, 13 tests).
+One additive migration, `20260921090000_employee_contact_org_vat_job_customer`.
+
+**A — Employee contact.** `Employee.phone` and `Employee.email`, both nullable
+and independent of the optional system login, so a technician who never signs
+in can still be reached. Searchable; shown on the profile as tap-to-call.
+
+**B — Vehicle ownership.** `JobCard.customerId` (NOT NULL, FK, indexed),
+backfilled from each vehicle's owner. A job now keeps the customer it was
+opened for, for ever. Every job-scoped read moved from `vehicle.customer` to
+`jobCard.customer` — invoices, approvals, quotation and invoice PDFs, customer
+links, WhatsApp recipients, search, dashboards, job lists and queues. Two
+writes mattered most: the invoice's customer and the approval's customer were
+both read from the vehicle at the moment of writing.
+
+A real bug was found and fixed along the way: a customer's job history was
+found *through their current vehicles*, so after a sale the previous owner's
+history would have vanished and the buyer would have inherited it.
+
+`transferVehicleOwnership` completes the picture — `vehicle.edit`, reason
+required, registration typed back to confirm, row locked, request-key
+protected, and audited with both owners plus how many open jobs stayed with
+the seller. Past jobs on a vehicle are marked with the previous owner's name.
+
+**C — Organization VAT.** `Organization.isVatRegistered` (default true) and
+`vatRate` (default 5.00, CHECK 0–100); `taxNumber` unchanged. `lib/tax.ts` now
+reads them — `resolveDefaultVatRate()` became async and every one of its 16
+call sites awaits it, passing the transaction client where there is one. An
+organization that is not VAT-registered defaults new lines to 0%. The last
+hard-coded rate (`'5.00'` in `inventory/parts.ts`) is gone. Issued documents
+keep the rate they were priced at.
+
+**Phase 9 — Outstanding.** `/finance/outstanding` with two views. Customers
+owe = issued invoices less payments that count; suppliers = value of stock
+actually *received* on a purchase less supplier payments that count — measured
+from purchases, never from stock on hand. VOID/CANCELLED invoices, CANCELLED
+and REVERSED purchases, and reversed payments never count. Both reuse the same
+balance helpers the invoice and purchase screens use, so a figure here can
+never disagree with its document. Ageing buckets, search, age filters, and
+branch scoping for branch-tied users.
+
+## Milestone: Operational records — employees & expenses (uncommitted)
+
+105 integration tests pass (adds `tests/operations-flow.test.ts`, 17 tests).
+**No schema change** — both models already existed and were unused.
+
+- **Employees** (`lib/hr/employees.ts`, `/hr/employees`): list with working /
+  left / all filters and search, profile showing the jobs they carry and the
+  labour attributed to them, create and edit. An employee is never deleted —
+  someone who leaves is marked inactive with a leaving date, so every job
+  they worked on still reads correctly. An optional system login may be
+  linked, and one login stands for exactly one employee. Gated on
+  `payroll.view` / `payroll.create`.
+- **Expenses** (`lib/finance/expenses.ts`, `/finance/expenses`): record what
+  the workshop spends to keep running, with the VAT split done by the same
+  exact-money helper invoices use (integer fils, never floating point).
+  Totals cover exactly the filtered set. A mistake is voided, not deleted —
+  the row stays, stops counting, and the reason goes to the audit log.
+  Categories are the organization's EXPENSE chart-of-accounts rows; the seed
+  now adds ten standard ones idempotently. Gated on `accounting.view` /
+  `accounting.create` / `accounting.edit`.
+- **Signatures** now state their absence: the job card always shows the
+  Signatures section, reading "No signature provided" when there is none,
+  rather than hiding the section.
+- `InlineForm` was rebuilt as a button plus a conditional panel. It had used
+  `<details open={…}>`, which React treats as controlled and therefore
+  fights the browser's own toggling.
+
+Both screens were browser-walked at 1440 and 390 with no sideways scroll and
+no console errors, including a real expense recorded (5000.00 net → 250.00
+VAT) and then voided.
+
+## Milestone: Job photos, signatures & responsive workshop UI — IN PROGRESS (increment 2 done, committed in aac7f76)
 
 88 integration tests pass (adds `tests/media-flow.test.ts`, 11 tests).
 

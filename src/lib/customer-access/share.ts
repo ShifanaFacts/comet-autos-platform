@@ -75,14 +75,8 @@ async function shareQuotation(
         jobCard: {
           select: {
             branchId: true,
-            vehicle: {
-              select: {
-                plateNumber: true,
-                make: true,
-                model: true,
-                customer: { select: { name: true, phone: true } },
-              },
-            },
+            customer: { select: { name: true, phone: true } },
+            vehicle: { select: { plateNumber: true, make: true, model: true } },
           },
         },
       },
@@ -130,7 +124,7 @@ async function shareQuotation(
     });
     return {
       path: `/customer/quote/${rawToken}`,
-      phone: estimate.jobCard.vehicle.customer.phone,
+      phone: estimate.jobCard.customer.phone,
       buildMessage: (link) => quotationText(estimate, workshopName, link),
     };
   });
@@ -141,19 +135,15 @@ type QuotationForMessage = {
   status: string;
   totalAmount: { toString(): string };
   jobCard: {
-    vehicle: {
-      plateNumber: string;
-      make: string;
-      model: string;
-      customer: { name: string; phone: string };
-    };
+    customer: { name: string; phone: string };
+    vehicle: { plateNumber: string; make: string; model: string };
   };
 };
 
 function quotationText(estimate: QuotationForMessage, workshopName: string, link: string) {
   const { vehicle } = estimate.jobCard;
   return quotationMessage({
-    customerName: vehicle.customer.name,
+    customerName: estimate.jobCard.customer.name,
     workshopName,
     vehicle: vehicleLabel(vehicle),
     plateNumber: vehicle.plateNumber,
@@ -174,14 +164,8 @@ export async function quotationWhatsApp(user: AuthenticatedUser, estimateId: str
       totalAmount: true,
       jobCard: {
         select: {
-          vehicle: {
-            select: {
-              plateNumber: true,
-              make: true,
-              model: true,
-              customer: { select: { name: true, phone: true } },
-            },
-          },
+          customer: { select: { name: true, phone: true } },
+          vehicle: { select: { plateNumber: true, make: true, model: true } },
         },
       },
       organization: { select: { name: true } },
@@ -189,7 +173,7 @@ export async function quotationWhatsApp(user: AuthenticatedUser, estimateId: str
   });
   if (!estimate) throw new NotFoundError('quotation');
   return whatsAppUrl(
-    estimate.jobCard.vehicle.customer.phone,
+    estimate.jobCard.customer.phone,
     quotationText(estimate, estimate.organization.name, link),
   );
 }
@@ -212,14 +196,8 @@ async function shareInvoice(
         payments: true,
         jobCard: {
           select: {
-            vehicle: {
-              select: {
-                plateNumber: true,
-                make: true,
-                model: true,
-                customer: { select: { name: true, phone: true } },
-              },
-            },
+            customer: { select: { name: true, phone: true } },
+            vehicle: { select: { plateNumber: true, make: true, model: true } },
           },
         },
       },
@@ -254,7 +232,7 @@ async function shareInvoice(
 
     const { vehicle } = invoice.jobCard;
     const common = {
-      customerName: vehicle.customer.name,
+      customerName: invoice.jobCard.customer.name,
       workshopName,
       vehicle: vehicleLabel(vehicle),
       plateNumber: vehicle.plateNumber,
@@ -264,7 +242,7 @@ async function shareInvoice(
       const balance = invoiceBalance(invoice);
       return {
         path,
-        phone: vehicle.customer.phone,
+        phone: invoice.jobCard.customer.phone,
         buildMessage: (link) =>
           invoiceMessage({
             ...common,
@@ -280,7 +258,7 @@ async function shareInvoice(
     const { remainingBalance } = receiptBalances(invoice, payment.id);
     return {
       path,
-      phone: vehicle.customer.phone,
+      phone: invoice.jobCard.customer.phone,
       buildMessage: (link) =>
         receiptMessage({
           ...common,

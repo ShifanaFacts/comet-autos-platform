@@ -14,6 +14,8 @@ import {
   History,
   Receipt,
   Wallet,
+  HandCoins,
+  ChartPie,
   ReceiptText,
   Calculator,
   Percent,
@@ -104,8 +106,15 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Finance',
     items: [
+      { label: 'Overview', href: '/finance', icon: ChartPie, permission: 'invoice.view' },
       { label: 'Invoices', href: '/finance/invoices', icon: Receipt, permission: 'invoice.view' },
       { label: 'Payments', href: '/finance/payments', icon: Wallet, permission: 'invoice.view' },
+      {
+        label: 'Outstanding',
+        href: '/finance/outstanding',
+        icon: HandCoins,
+        permission: 'invoice.view',
+      },
       {
         label: 'Expenses',
         href: '/finance/expenses',

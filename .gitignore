@@ -40,3 +40,10 @@ coverage/
 
 # Vercel
 .vercel
+
+# Throwaway scratch files from local diagnostics and browser walks. These
+# hold test-organization logins and ids — never part of the codebase.
+/.check.ts
+/resp*.json
+/.responsive*.json
+/.local-storage/

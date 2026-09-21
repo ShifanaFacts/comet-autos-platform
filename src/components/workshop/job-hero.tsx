@@ -27,8 +27,8 @@ export function JobHero({
       make: string;
       model: string;
       year: number | null;
-      customer: { id: string; name: string; phone: string };
     };
+    customer: { id: string; name: string; phone: string };
   };
   technician: string | null;
 }) {
@@ -72,19 +72,19 @@ export function JobHero({
 
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <Link
-            href={`/customers/${vehicle.customer.id}`}
+            href={`/customers/${jobCard.customer.id}`}
             className="inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium hover:bg-muted"
           >
             <UserRound className="size-4 text-muted-foreground" />
-            {vehicle.customer.name}
+            {jobCard.customer.name}
           </Link>
           <a
-            href={`tel:${vehicle.customer.phone.replace(/[^\d+]/g, '')}`}
+            href={`tel:${jobCard.customer.phone.replace(/[^\d+]/g, '')}`}
             className="inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium tabular-nums hover:bg-muted"
-            aria-label={`Call ${vehicle.customer.name}`}
+            aria-label={`Call ${jobCard.customer.name}`}
           >
             <Phone className="size-4 text-muted-foreground" />
-            {vehicle.customer.phone}
+            {jobCard.customer.phone}
           </a>
         </div>
       </div>
