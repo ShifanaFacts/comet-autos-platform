@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ClipboardList, LogIn } from 'lucide-react';
+import { ClipboardList, Plus } from 'lucide-react';
 import { requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -70,16 +70,21 @@ export default async function JobCardsPage({
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
         eyebrow="Workshop"
-        title="Job Cards"
+        title="Work Orders"
         description={
           isFiltered
-            ? `Showing ${total} of ${unfilteredTotal} job cards.`
-            : `${unfilteredTotal} job card${unfilteredTotal === 1 ? '' : 's'} in total.`
+            ? `Showing ${total} of ${unfilteredTotal} work orders.`
+            : `${unfilteredTotal} work order${unfilteredTotal === 1 ? '' : 's'} in total.`
         }
         actions={
-          <Button size="lg" nativeButton={false} render={<Link href="/check-in" />}>
-            <LogIn />
-            Check In Vehicle
+          <Button
+            size="lg"
+            className="w-full sm:w-auto"
+            nativeButton={false}
+            render={<Link href="/check-in" />}
+          >
+            <Plus />
+            New work order
           </Button>
         }
       />
@@ -91,17 +96,18 @@ export default async function JobCardsPage({
           isFiltered ? (
             <EmptyState
               icon={ClipboardList}
-              title="No job cards match your filters"
+              title="No work orders match your filters"
               description="Try a different search or clear the status filter."
             />
           ) : (
             <EmptyState
               icon={ClipboardList}
-              title="No job cards yet"
-              description="Check in a vehicle to create the first one."
+              title="No work orders yet"
+              description="Open one for a customer's vehicle — just who, which car, and what needs doing."
               action={
                 <Button nativeButton={false} render={<Link href="/check-in" />}>
-                  Check In Vehicle
+                  <Plus />
+                  New work order
                 </Button>
               }
             />

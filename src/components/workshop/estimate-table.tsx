@@ -8,6 +8,21 @@ import type { getWorkQueues } from '@/lib/workshop/workspace';
 
 export type QueueEstimate = Awaited<ReturnType<typeof getWorkQueues>>['estimates'][number];
 
+/**
+ * Where a quotation opens. Additional-work requests live on their work
+ * order's own screen; every other quotation — with a work order or without —
+ * opens on the one quotation page.
+ */
+export function quotationHref(estimate: {
+  id: string;
+  kind: string;
+  jobCard: { id: string } | null;
+}): string {
+  return estimate.kind === 'ADDITIONAL' && estimate.jobCard
+    ? `/job-cards/${estimate.jobCard.id}/additional/${estimate.id}`
+    : `/quotations/${estimate.id}`;
+}
+
 export function isExpired(estimate: QueueEstimate): boolean {
   return (
     estimate.status === 'SENT' &&
@@ -35,28 +50,25 @@ export function EstimateTable({ estimates, dateLabel }: { estimates: QueueEstima
           {estimates.map((estimate) => (
             <TableRow key={estimate.id} className="relative">
               <TableCell>
-                <Link
-                  href={
-                    estimate.kind === 'ADDITIONAL'
-                      ? `/job-cards/${estimate.jobCard.id}/additional/${estimate.id}`
-                      : `/job-cards/${estimate.jobCard.id}/estimate`
-                  }
-                  className="after:absolute after:inset-0"
-                >
-                  <VehiclePlate plateNumber={estimate.jobCard.vehicle.plateNumber} className="px-2 py-0.5 text-xs" />
+                <Link href={quotationHref(estimate)} className="after:absolute after:inset-0">
+                  {estimate.vehicle ? (
+                    <VehiclePlate plateNumber={estimate.vehicle.plateNumber} className="px-2 py-0.5 text-xs" />
+                  ) : (
+                    <span className="text-sm text-muted-foreground">No vehicle</span>
+                  )}
                 </Link>
               </TableCell>
               <TableCell>
                 <span className="font-medium">{estimate.estimateNumber}</span>
                 <span className="block text-xs text-muted-foreground">
-                  {estimate.jobCard.jobNumber}
+                  {estimate.jobCard?.jobNumber ?? 'No work order'}
                   {estimate.version > 1 ? ` · v${estimate.version}` : ''}
                   {estimate.kind === 'ADDITIONAL' ? ' · additional work' : ''}
                 </span>
               </TableCell>
               <TableCell>
-                {estimate.jobCard.customer.name}
-                <span className="block text-xs text-muted-foreground">{estimate.jobCard.customer.phone}</span>
+                {estimate.customer.name}
+                <span className="block text-xs text-muted-foreground">{estimate.customer.phone}</span>
               </TableCell>
               <TableCell>
                 <EstimateStatusPill status={estimate.status} expired={isExpired(estimate)} />

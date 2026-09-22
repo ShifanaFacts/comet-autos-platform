@@ -43,7 +43,7 @@ export function JobHero({
           href="/job-cards"
           className="inline-flex min-h-9 items-center hover:text-foreground md:min-h-0"
         >
-          Job Cards
+          Work Orders
         </Link>
         <ChevronRight className="size-3.5" />
         <span className="font-medium text-foreground">{jobCard.jobNumber}</span>

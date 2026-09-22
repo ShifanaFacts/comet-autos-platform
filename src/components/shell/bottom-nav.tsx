@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardList, Home, LogIn, Menu, type LucideIcon } from 'lucide-react';
+import { ClipboardList, FileText, Home, Menu, Receipt, type LucideIcon } from 'lucide-react';
 import { MobileNav } from '@/components/shell/mobile-nav';
 import { cn } from '@/lib/utils';
 
@@ -15,10 +15,15 @@ interface Tab {
   requires?: string;
 }
 
+/*
+ * The daily documents, one thumb away. Home carries the three "+ New"
+ * buttons, so the tabs are for finding what already exists.
+ */
 const TABS: Tab[] = [
   { label: 'Home', href: '/', icon: Home },
-  { label: 'Jobs', href: '/job-cards', icon: ClipboardList, requires: '/job-cards' },
-  { label: 'Check-in', href: '/check-in', icon: LogIn, requires: '/check-in' },
+  { label: 'Work orders', href: '/job-cards', icon: ClipboardList, requires: '/job-cards' },
+  { label: 'Quotes', href: '/quotations', icon: FileText, requires: '/quotations' },
+  { label: 'Invoices', href: '/finance/invoices', icon: Receipt, requires: '/finance/invoices' },
 ];
 
 /**

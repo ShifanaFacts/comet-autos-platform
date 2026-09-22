@@ -51,33 +51,37 @@ export async function loadBranding(organizationId: string): Promise<Organization
   });
 }
 
-/** The registration and mobile number a customer must know to open the resource. */
+/**
+ * The registration and mobile number a customer must know to open the
+ * resource. Read from the document itself — a quotation or invoice carries
+ * its own customer and vehicle, whether or not a work order stands behind
+ * it. A document with no vehicle has nothing to check a registration
+ * against, so no link is ever issued for one (see sendEstimate /
+ * createShareLink); if one somehow existed, it stays shut.
+ */
 async function loadOwner(
   type: CustomerAccessResourceType,
   organizationId: string,
   resourceId: string,
 ) {
-  const vehicleSelect = {
-    // Verified against the customer the document is for — the job's customer.
+  const partySelect = {
+    // Verified against the customer the document is for, not whoever owns
+    // the vehicle today.
     customer: { select: { phone: true } },
     vehicle: { select: { plateNumber: true } },
   } as const;
-  const jobCard =
+  const document =
     type === 'ESTIMATE'
-      ? (
-          await prisma.estimate.findFirst({
-            where: { id: resourceId, organizationId },
-            select: { jobCard: { select: vehicleSelect } },
-          })
-        )?.jobCard
-      : (
-          await prisma.invoice.findFirst({
-            where: { id: resourceId, organizationId },
-            select: { jobCard: { select: vehicleSelect } },
-          })
-        )?.jobCard;
-  if (!jobCard) return null;
-  return { plateNumber: jobCard.vehicle.plateNumber, phone: jobCard.customer.phone };
+      ? await prisma.estimate.findFirst({
+          where: { id: resourceId, organizationId },
+          select: partySelect,
+        })
+      : await prisma.invoice.findFirst({
+          where: { id: resourceId, organizationId },
+          select: partySelect,
+        });
+  if (!document?.vehicle) return null;
+  return { plateNumber: document.vehicle.plateNumber, phone: document.customer.phone };
 }
 
 /** Resolves the link and checks the browser's verification proof (cookie value). */

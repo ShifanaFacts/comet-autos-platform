@@ -18,7 +18,7 @@ export default function AppNotFound() {
       </div>
       <div className="flex flex-wrap justify-center gap-3">
         <Button size="lg" nativeButton={false} render={<Link href="/job-cards" />}>
-          Job cards
+          Work orders
         </Button>
         <Button size="lg" variant="outline" nativeButton={false} render={<Link href="/" />}>
           <ArrowLeft />

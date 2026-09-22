@@ -4,7 +4,11 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { filsToString, toFils } from '@/lib/money';
 import { invoiceBalance } from '@/lib/billing/invoice';
-import { receivedValueFils } from '@/lib/inventory/purchases';
+import {
+  PURCHASE_BALANCE_SELECT,
+  RECEIVED_PURCHASE_STATUSES as RECEIVED_STATUSES,
+  purchaseBalance,
+} from '@/lib/finance/supplier-balance';
 import { resolveDefaultVatRate } from '@/lib/tax';
 
 /*
@@ -34,7 +38,7 @@ const OWING_INVOICE_STATUSES: InvoiceStatus[] = ['ISSUED', 'PARTIALLY_PAID', 'PA
  * A purchase owes money only once something has actually been received.
  * CANCELLED and REVERSED receipts are not debts.
  */
-const RECEIVED_PURCHASE_STATUSES: PurchaseStatus[] = ['RECEIVED', 'PARTIALLY_RECEIVED'];
+const RECEIVED_PURCHASE_STATUSES: PurchaseStatus[] = [...RECEIVED_STATUSES];
 
 export interface OutstandingFilters {
   /** Party name, document number or phone. */
@@ -168,31 +172,15 @@ export async function getSupplierOutstanding(
       createdAt: true,
       status: true,
       supplier: { select: { id: true, name: true, phone: true } },
-      items: { select: { quantityReceived: true, unitCost: true, taxRate: true } },
-      supplierPayments: {
-        select: { id: true, amount: true, status: true, reversalOfSupplierPaymentId: true },
-      },
+      ...PURCHASE_BALANCE_SELECT,
     },
   });
 
   const rows = purchases
     .map((purchase) => {
-      const receivedFils = receivedValueFils(purchase.items, defaultVat);
-      // Same rule as customer payments: a reversed payment stops counting.
-      const reversed = new Set(
-        purchase.supplierPayments
-          .map((payment) => payment.reversalOfSupplierPaymentId)
-          .filter(Boolean),
-      );
-      const paid = purchase.supplierPayments
-        .filter(
-          (payment) =>
-            payment.status === 'COMPLETED' &&
-            !payment.reversalOfSupplierPaymentId &&
-            !reversed.has(payment.id),
-        )
-        .reduce((sum, payment) => sum + toFils(payment.amount.toString()), 0);
-      const balanceFils = Math.max(receivedFils - paid, 0);
+      // One definition of what is owed on a purchase, shared with the
+      // payables screens and with recording a payment.
+      const money = purchaseBalance(purchase, defaultVat);
       const date = purchase.supplierInvoiceDate ?? purchase.createdAt;
       return {
         id: purchase.id,
@@ -200,12 +188,11 @@ export async function getSupplierOutstanding(
         supplierInvoiceNumber: purchase.supplierInvoiceNumber,
         date,
         party: purchase.supplier,
-        total: filsToString(receivedFils),
-        paid: filsToString(paid),
-        balance: filsToString(balanceFils),
-        balanceFils,
-        state: (paid === 0 ? 'UNPAID' : balanceFils > 0 ? 'PARTIALLY_PAID' : 'PAID') as
-          'UNPAID' | 'PARTIALLY_PAID' | 'PAID',
+        total: money.received,
+        paid: money.paid,
+        balance: money.balance,
+        balanceFils: money.balanceFils,
+        state: money.state,
         ageDays: ageInDays(date),
       };
     })

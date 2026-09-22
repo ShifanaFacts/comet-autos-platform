@@ -72,21 +72,21 @@ async function shareQuotation(
       where: { id: estimateId, organizationId: user.organizationId },
       include: {
         _count: { select: { nextVersions: true } },
-        jobCard: {
-          select: {
-            branchId: true,
-            customer: { select: { name: true, phone: true } },
-            vehicle: { select: { plateNumber: true, make: true, model: true } },
-          },
-        },
+        customer: { select: { name: true, phone: true } },
+        vehicle: { select: { plateNumber: true, make: true, model: true } },
       },
     });
     if (!estimate) throw new NotFoundError('quotation');
-    requirePermission(user, 'job_card.edit', { branchId: estimate.jobCard.branchId });
+    requirePermission(user, 'job_card.edit', { branchId: estimate.branchId });
     if (estimate.status === 'DRAFT')
       throw new DomainError('Send the quotation first — a draft can’t be shared.');
     if (estimate._count.nextVersions > 0)
       throw new DomainError('A newer version of this quotation exists. Share that one instead.');
+    // The customer opens the link by confirming the registration on file.
+    if (!estimate.vehicle)
+      throw new DomainError(
+        'Add the vehicle to this quotation before sharing it — the customer confirms their registration number to open the link.',
+      );
 
     let expiresAt: Date;
     if (estimate.status === 'SENT') {
@@ -111,7 +111,7 @@ async function shareQuotation(
     });
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
-      branchId: estimate.jobCard.branchId,
+      branchId: estimate.branchId,
       actorUserId: user.id,
       action: 'customer_access.link_shared',
       entityType: 'Estimate',
@@ -124,7 +124,7 @@ async function shareQuotation(
     });
     return {
       path: `/customer/quote/${rawToken}`,
-      phone: estimate.jobCard.customer.phone,
+      phone: estimate.customer.phone,
       buildMessage: (link) => quotationText(estimate, workshopName, link),
     };
   });
@@ -134,19 +134,17 @@ type QuotationForMessage = {
   estimateNumber: string;
   status: string;
   totalAmount: { toString(): string };
-  jobCard: {
-    customer: { name: string; phone: string };
-    vehicle: { plateNumber: string; make: string; model: string };
-  };
+  customer: { name: string; phone: string };
+  vehicle: { plateNumber: string; make: string; model: string } | null;
 };
 
 function quotationText(estimate: QuotationForMessage, workshopName: string, link: string) {
-  const { vehicle } = estimate.jobCard;
+  const { vehicle } = estimate;
   return quotationMessage({
-    customerName: estimate.jobCard.customer.name,
+    customerName: estimate.customer.name,
     workshopName,
-    vehicle: vehicleLabel(vehicle),
-    plateNumber: vehicle.plateNumber,
+    vehicle: vehicle ? vehicleLabel(vehicle) : null,
+    plateNumber: vehicle?.plateNumber ?? null,
     number: estimate.estimateNumber,
     total: estimate.totalAmount.toString(),
     awaitingDecision: estimate.status === 'SENT',
@@ -162,18 +160,14 @@ export async function quotationWhatsApp(user: AuthenticatedUser, estimateId: str
       estimateNumber: true,
       status: true,
       totalAmount: true,
-      jobCard: {
-        select: {
-          customer: { select: { name: true, phone: true } },
-          vehicle: { select: { plateNumber: true, make: true, model: true } },
-        },
-      },
+      customer: { select: { name: true, phone: true } },
+      vehicle: { select: { plateNumber: true, make: true, model: true } },
       organization: { select: { name: true } },
     },
   });
   if (!estimate) throw new NotFoundError('quotation');
   return whatsAppUrl(
-    estimate.jobCard.customer.phone,
+    estimate.customer.phone,
     quotationText(estimate, estimate.organization.name, link),
   );
 }
@@ -194,18 +188,19 @@ async function shareInvoice(
       },
       include: {
         payments: true,
-        jobCard: {
-          select: {
-            customer: { select: { name: true, phone: true } },
-            vehicle: { select: { plateNumber: true, make: true, model: true } },
-          },
-        },
+        customer: { select: { name: true, phone: true } },
+        vehicle: { select: { plateNumber: true, make: true, model: true } },
       },
     });
     if (!invoice) throw new NotFoundError(target.kind === 'invoice' ? 'invoice' : 'receipt');
     requirePermission(user, 'invoice.view', { branchId: invoice.branchId });
-    if (!invoice.jobCard)
-      throw new DomainError('Only workshop job invoices can be shared with a customer link.');
+    // The customer opens the link by confirming the registration on file, so
+    // an invoice with no vehicle has nothing to check against. It still
+    // prints and is still payable — only the secure link needs the car.
+    if (!invoice.vehicle)
+      throw new DomainError(
+        'Add the vehicle to this invoice before sharing it — the customer confirms their registration number to open the link.',
+      );
 
     const expiresAt = new Date(Date.now() + INVOICE_LINK_DAYS * 86_400_000);
     const { rawToken, tokenId } = await issueAccessToken(tx, {
@@ -230,9 +225,9 @@ async function shareInvoice(
       },
     });
 
-    const { vehicle } = invoice.jobCard;
+    const { vehicle } = invoice;
     const common = {
-      customerName: invoice.jobCard.customer.name,
+      customerName: invoice.customer.name,
       workshopName,
       vehicle: vehicleLabel(vehicle),
       plateNumber: vehicle.plateNumber,
@@ -242,7 +237,7 @@ async function shareInvoice(
       const balance = invoiceBalance(invoice);
       return {
         path,
-        phone: invoice.jobCard.customer.phone,
+        phone: invoice.customer.phone,
         buildMessage: (link) =>
           invoiceMessage({
             ...common,
@@ -258,7 +253,7 @@ async function shareInvoice(
     const { remainingBalance } = receiptBalances(invoice, payment.id);
     return {
       path,
-      phone: invoice.jobCard.customer.phone,
+      phone: invoice.customer.phone,
       buildMessage: (link) =>
         receiptMessage({
           ...common,

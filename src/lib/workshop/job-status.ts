@@ -21,6 +21,8 @@ export type { WorkflowStage, WorkflowStatus };
 /**
  * The job card state machine.
  *
+ * The full path, used when the workshop works a job stage by stage:
+ *
  *   ARRIVED → INSPECTION → DIAGNOSIS → ESTIMATE → WAITING_APPROVAL
  *     → APPROVED → REPAIR → QUALITY_CHECK → READY → INVOICED → PAID → DELIVERED
  *     → REJECTED → ESTIMATE (revise) …
@@ -28,19 +30,30 @@ export type { WorkflowStage, WorkflowStatus };
  *   WAITING_APPROVAL → ESTIMATE (revise before the customer answers)
  *   any open stage → ON_HOLD → back to where it paused; → CANCELLED
  *
+ * The short path, for a one-person workshop that only wants the documents:
+ *
+ *   ARRIVED → ESTIMATE  (quote a work order without inspecting or diagnosing)
+ *   any open stage → INVOICED  (bill a work order without passing through QC)
+ *
+ * The short path skips stages; it never invents them. A job that jumps from
+ * ARRIVED to INVOICED has no inspection, diagnosis or quality check, and its
+ * history says so. Both are only ever taken by recording a real document —
+ * see WORKFLOW_OWNED below, which keeps every one of these targets off the
+ * manual status buttons.
+ *
  * Legacy statuses (RECEIVED, INSPECTING, …) are never written; a job still
  * carrying one is treated as its workflow equivalent.
  */
 const ALLOWED_TRANSITIONS: Record<WorkflowStatus, WorkflowStatus[]> = {
-  ARRIVED: ['INSPECTION', 'ON_HOLD', 'CANCELLED'],
-  INSPECTION: ['DIAGNOSIS', 'ON_HOLD', 'CANCELLED'],
-  DIAGNOSIS: ['ESTIMATE', 'ON_HOLD', 'CANCELLED'],
-  ESTIMATE: ['WAITING_APPROVAL', 'ON_HOLD', 'CANCELLED'],
-  WAITING_APPROVAL: ['APPROVED', 'REJECTED', 'ESTIMATE', 'ON_HOLD', 'CANCELLED'],
+  ARRIVED: ['INSPECTION', 'ESTIMATE', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
+  INSPECTION: ['DIAGNOSIS', 'ESTIMATE', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
+  DIAGNOSIS: ['ESTIMATE', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
+  ESTIMATE: ['WAITING_APPROVAL', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
+  WAITING_APPROVAL: ['APPROVED', 'REJECTED', 'ESTIMATE', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
   REJECTED: ['ESTIMATE', 'ON_HOLD', 'CANCELLED'],
-  APPROVED: ['REPAIR', 'ON_HOLD', 'CANCELLED'],
-  REPAIR: ['QUALITY_CHECK', 'ON_HOLD', 'CANCELLED'],
-  QUALITY_CHECK: ['READY', 'REPAIR', 'ON_HOLD', 'CANCELLED'],
+  APPROVED: ['REPAIR', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
+  REPAIR: ['QUALITY_CHECK', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
+  QUALITY_CHECK: ['READY', 'REPAIR', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
   READY: ['INVOICED', 'ON_HOLD'],
   INVOICED: ['PAID'],
   PAID: ['DELIVERED'],

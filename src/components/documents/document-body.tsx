@@ -21,24 +21,41 @@ export function DocumentStatus({ status }: { status: CustomerDocumentModel['stat
   return <StatusPill tone={TONE[status.tone]}>{status.label}</StatusPill>;
 }
 
+/** Numbered lines, each marked parts or labour — the same list the PDF prints. */
 export function DocumentItems({ document }: { document: CustomerDocumentModel }) {
+  // One running number across every section, as on the paper sheet.
+  const offsets = document.sections.reduce<number[]>(
+    (acc, section, index) => [...acc, index === 0 ? 0 : acc[index - 1] + document.sections[index - 1].lines.length],
+    [],
+  );
   return (
     <div className="flex flex-col gap-6">
-      {document.sections.map((section) => (
-        <section key={section.title} className="flex flex-col gap-2">
-          <h3 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-            {section.title}
-          </h3>
+      {document.sections.map((section, sectionIndex) => (
+        <section key={section.title || 'lines'} className="flex flex-col gap-2">
+          {section.title ? (
+            <h3 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+              {section.title}
+            </h3>
+          ) : null}
           <ul className="flex flex-col divide-y divide-border rounded-2xl border border-border bg-card">
             {section.lines.map((line, index) => (
-              <li key={index} className="flex items-start justify-between gap-4 px-4 py-3.5">
-                <span className="min-w-0">
+              <li key={index} className="flex items-start gap-3 px-4 py-3.5">
+                <span className="w-6 shrink-0 pt-0.5 text-right text-xs text-muted-foreground tabular-nums">
+                  {offsets[sectionIndex] + index + 1}
+                </span>
+                <span className="min-w-0 flex-1">
                   <span className="block text-[0.95rem] leading-snug font-medium">
                     {line.description}
                   </span>
-                  <span className="block pt-0.5 text-xs text-muted-foreground tabular-nums">
-                    {formatQuantity(line.quantity)} × {formatAed(line.unitPrice)}
-                    {section.title === 'Labour' ? ' per hour' : ''}
+                  <span className="flex flex-wrap items-center gap-x-2 pt-0.5 text-xs text-muted-foreground tabular-nums">
+                    {line.type ? (
+                      <span className="font-semibold tracking-wide">
+                        {line.type === 'LABOUR' ? 'Labour' : 'Parts'}
+                      </span>
+                    ) : null}
+                    <span>
+                      {formatQuantity(line.quantity)} × {formatAed(line.unitPrice)}
+                    </span>
                   </span>
                 </span>
                 <span className="shrink-0 text-[0.95rem] font-medium tabular-nums">

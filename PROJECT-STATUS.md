@@ -2,6 +2,54 @@
 
 Last updated: 2026-09-21
 
+## Phase 14: Supplier payments & payables (uncommitted)
+
+187 integration tests pass (adds `tests/supplier-payments.test.ts`, 19 tests).
+**No schema change.** `SupplierPayment` already carried everything: amount,
+method, reference, `paidAt`, `paidByUserId`, a COMPLETED/REVERSED status and
+`reversalOfSupplierPaymentId`. `DocumentType.SUPPLIER_PAYMENT` and its `SP-`
+prefix were already in the numbering table. What was missing was a way in
+from the application, and that is all this milestone adds.
+
+**One rule, not a fourth copy.** The supplier balance arithmetic existed in
+three places that agreed only because they had been copied carefully — the
+outstanding screen, the supplier directory, and (nearly) the payables work.
+`lib/finance/supplier-balance.ts` is now the only definition, and all three
+call it, as does recording a payment:
+
+    owed = value of stock actually received − the payments that count
+
+A reversal drops **both** rows — the original is no longer money paid, and
+the reversal is not a second payment. Measured from the purchase, never from
+stock on hand: parts already fitted to a car are still owed for.
+
+Screens under `/finance/payables`:
+
+- **Overview** — total outstanding, suppliers owed, over-30-days, ageing;
+  bills oldest first (cards to `lg`, table above); suppliers grouped by what
+  they are owed; recent payments. Search, supplier and age filters in the URL.
+- **Supplier account** — the balance in one number, the bills making it up
+  with a Pay button on each, full purchase history and full payment history.
+- **Record a payment** — two steps on purpose. The amount is typed against a
+  live "remaining after this payment" figure with a one-tap *Pay in full*;
+  the confirmation then restates supplier, purchase, current outstanding,
+  amount, remaining and method before anything is written.
+
+What is refused, all server-side: zero/negative/malformed amounts, more than
+is owed (to the fil), a future date, a date before the goods were received,
+a purchase not yet received, another organization's purchase, another
+branch's purchase. The purchase row is locked `FOR UPDATE` for the length of
+the transaction, so two payments racing cannot both pass the overpayment
+check — tested with a genuine concurrent pair.
+
+Permissions reuse the expense pattern exactly: `inventory.view` to read
+(unchanged from supplier outstanding today), `accounting.create` to record,
+`accounting.edit` to reverse.
+
+**Nothing is ever deleted.** A payment made in error is reversed: the
+original stays, marked REVERSED, a linked reversal row is written, both drop
+out of the balance, and the audit log carries the reason.
+
 ## Phase 13: Users, roles & access management (uncommitted)
 
 168 integration tests pass (adds `tests/access-management.test.ts`, 20 tests).

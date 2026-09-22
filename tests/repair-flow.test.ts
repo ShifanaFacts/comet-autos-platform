@@ -278,7 +278,7 @@ describe('repair → quality check → ready', () => {
     assert.equal(repair.totals.unapproved, '150.00');
 
     // Request approval for it: a separate ADDITIONAL estimate; the job stays in repair.
-    await expectDomainError(createEstimate(a.owner, job.jobCardId), /already has an estimate/);
+    await expectDomainError(createEstimate(a.owner, job.jobCardId), /already has a quotation/);
     const additional = await createAdditionalEstimate(a.owner, job.jobCardId, { notes: 'Water pump gasket leaking' });
     assert.equal(additional.kind, 'ADDITIONAL');
     assert.equal(additional.version, 1);

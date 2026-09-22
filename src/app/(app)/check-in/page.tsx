@@ -34,11 +34,11 @@ export default async function CheckInPage({
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
         eyebrow="Workshop"
-        title="Quick Check-In"
+        title="New work order"
         description={
           appointment
-            ? 'Checking in a booked appointment. Confirm the customer, note the complaint and mileage.'
-            : 'Walk-in or appointment: find the vehicle, confirm the customer, note the complaint and mileage.'
+            ? 'Opening the work order for a booked appointment. Confirm the customer and what they want done.'
+            : 'Find the vehicle, confirm the customer, and say what needs doing. Everything else is optional.'
         }
         actions={
           <LinkButton href="/appointments" variant="outline" size="lg">

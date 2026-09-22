@@ -118,7 +118,7 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
             <EmptyState
               icon={History}
               title="No visits yet"
-              description="Each check-in adds a job card to this vehicle's history."
+              description="Each work order is added to this vehicle's history."
             />
           ) : (
             <Panel padding="none">

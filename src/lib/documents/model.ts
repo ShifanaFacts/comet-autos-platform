@@ -13,7 +13,12 @@ import { filsToString, formatMilli, signedToMilli, toFils } from '@/lib/money';
 export type DocumentKind = 'QUOTATION' | 'INVOICE' | 'RECEIPT';
 export type DocumentTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 
+/** The TYPE column, as the workshop's own sheet prints it. */
+export type DocumentLineType = 'PARTS' | 'LABOUR';
+
 export interface DocumentLine {
+  /** Parts or labour; null for a line that was never given a type. */
+  type: DocumentLineType | null;
   description: string;
   /** Quantity as a decimal string; hours for labour. */
   quantity: string;
@@ -22,9 +27,24 @@ export interface DocumentLine {
   lineTotal: string;
 }
 
+/**
+ * A run of lines in the one numbered table. The main lines have no title;
+ * a titled section (e.g. additional work approved during the repair) prints
+ * its title as a divider, and the numbering carries on across it.
+ */
 export interface DocumentSection {
   title: string;
   lines: DocumentLine[];
+}
+
+/** Lines only need their own VAT column when they are not all at the same rate. */
+export function hasMixedVatRates(sections: DocumentSection[]): boolean {
+  const rates = new Set(
+    sections.flatMap((s) =>
+      s.lines.map((l) => (l.taxRate === null ? '' : String(signedToMilli(l.taxRate)))),
+    ),
+  );
+  return rates.size > 1;
 }
 
 export interface DocumentField {

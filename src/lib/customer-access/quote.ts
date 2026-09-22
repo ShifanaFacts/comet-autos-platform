@@ -68,13 +68,15 @@ export async function loadCustomerQuote(rawToken: string) {
         take: 1,
         select: { status: true, approvedAt: true, decidedAt: true, notes: true },
       },
+      // The quotation's own parties, so a quotation raised without a work
+      // order still names the customer and the car.
+      customer: { select: { name: true } },
+      vehicle: { select: { plateNumber: true, make: true, model: true, year: true } },
       jobCard: {
         select: {
           jobNumber: true,
           customerComplaint: true,
           odometerReading: true,
-          customer: { select: { name: true } },
-          vehicle: { select: { plateNumber: true, make: true, model: true, year: true } },
           inspections: {
             where: { status: 'COMPLETED' },
             orderBy: { inspectedAt: 'desc' },
@@ -128,8 +130,13 @@ export async function decideQuoteAsCustomer(
     where: { id: token.resourceId, organizationId: token.organizationId },
     select: { jobCardId: true, jobCard: { select: { branchId: true } } },
   });
+  // The signature file lives with the work order. A quotation raised
+  // without one still takes the customer's decision; only the optional
+  // signature image has nowhere to be filed.
   const signature =
-    decision === 'APPROVED' && estimateJob ? await prepareSignature(signatureDataUrl, token.organizationId, estimateJob.jobCardId) : null;
+    decision === 'APPROVED' && estimateJob?.jobCardId
+      ? await prepareSignature(signatureDataUrl, token.organizationId, estimateJob.jobCardId)
+      : null;
 
   return prisma.$transaction(async (tx) => {
     // Re-check revocation inside the transaction: a revision may have been created a moment ago.
@@ -147,7 +154,7 @@ export async function decideQuoteAsCustomer(
       recordedByUserId: null,
       metadata: { customerAccessTokenId: token.id, linkIssuedByUserId: token.createdByUserId, signed: Boolean(signature) },
     });
-    if (signature && estimateJob) {
+    if (signature && estimateJob?.jobCardId && estimateJob.jobCard) {
       const customer = await tx.customer.findUniqueOrThrow({ where: { id: approval.customerId }, select: { name: true } });
       await recordSignature(tx, {
         prepared: signature,

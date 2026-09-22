@@ -59,16 +59,48 @@ export function JobPhotos({
   const shown = filter === 'ALL' ? photos : photos.filter((photo) => photo.stage === filter);
   const VISIBLE = 8;
 
-  async function onPick(files: FileList | null) {
+  /**
+   * Gallery picks open the sheet, where a batch can be given a stage and a
+   * caption. A photo straight from the camera is saved at once against the
+   * stage the job is at — take it and carry on. If that save fails, the
+   * sheet opens with the photo still in it and the reason shown, so the
+   * retry (same request key) is one tap and nothing is lost.
+   */
+  async function onPick(files: FileList | null, source: 'camera' | 'gallery') {
     if (!files || files.length === 0) return;
     const prepared = await Promise.all(Array.from(files).slice(0, 12).map(prepareImage));
-    setPicked(prepared.map((file) => ({ file, url: URL.createObjectURL(file) })));
+    if (inputRef.current) inputRef.current.value = '';
+    if (cameraRef.current) cameraRef.current.value = '';
+    const entries = prepared.map((file) => ({ file, url: URL.createObjectURL(file) }));
     setStage(defaultStage);
     setCaption('');
     setUploadError(null);
     requestKey.current = newRequestKey();
-    if (inputRef.current) inputRef.current.value = '';
-    if (cameraRef.current) cameraRef.current.value = '';
+
+    if (source === 'gallery') {
+      setPicked(entries);
+      return;
+    }
+
+    setProgress(0);
+    const result = await sendPhotos({
+      jobCardId,
+      files: entries.map((entry) => entry.file),
+      stage: defaultStage,
+      requestKey: requestKey.current,
+      onProgress: setProgress,
+    });
+    setProgress(null);
+    if (!result.ok) {
+      setUploadError(result.error ?? null);
+      setPicked(entries);
+      return;
+    }
+    entries.forEach((entry) => URL.revokeObjectURL(entry.url));
+    requestKey.current = null;
+    toast.success(`Photo saved to ${MEDIA_STAGE_LABEL[defaultStage]}`);
+    setFilter('ALL');
+    router.refresh();
   }
 
   function closeUpload() {
@@ -114,7 +146,7 @@ export function JobPhotos({
         multiple
         className="sr-only"
         aria-label="Choose photos"
-        onChange={(event) => onPick(event.target.files)}
+        onChange={(event) => onPick(event.target.files, 'gallery')}
       />
       <input
         ref={cameraRef}
@@ -123,7 +155,7 @@ export function JobPhotos({
         capture="environment"
         className="sr-only"
         aria-label="Take a photo"
-        onChange={(event) => onPick(event.target.files)}
+        onChange={(event) => onPick(event.target.files, 'camera')}
       />
 
       <div className="flex items-center justify-between gap-3">
@@ -146,17 +178,34 @@ export function JobPhotos({
         </div>
         {canEdit ? (
           <div className="flex shrink-0 gap-2">
-            <Button className="h-10" onClick={() => cameraRef.current?.click()}>
+            <Button
+              className="h-11"
+              disabled={progress !== null}
+              onClick={() => cameraRef.current?.click()}
+            >
               <Camera />
               Take photo
             </Button>
-            <Button variant="outline" className="h-10" onClick={() => inputRef.current?.click()}>
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={progress !== null}
+              onClick={() => inputRef.current?.click()}
+            >
               <ImagePlus />
               <span className="sr-only sm:not-sr-only">Gallery</span>
             </Button>
           </div>
         ) : null}
       </div>
+
+      {/* A camera photo saves without opening the sheet; show it happening here. */}
+      {progress !== null && picked.length === 0 ? (
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2.5" role="status" aria-live="polite">
+          <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+          <span className="text-sm">{progress < 100 ? `Saving photo… ${progress}%` : 'Saving photo…'}</span>
+        </div>
+      ) : null}
 
       {photos.length === 0 ? (
         <button

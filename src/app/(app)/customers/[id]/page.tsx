@@ -164,7 +164,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
 
       <Section title="Job history" description="Every visit, newest first.">
         {jobCards.length === 0 ? (
-          <EmptyState icon={ClipboardList} title="No visits yet" description="Job cards appear here once a vehicle is checked in." />
+          <EmptyState icon={ClipboardList} title="No visits yet" description="Work orders appear here once one is opened for this customer." />
         ) : (
           <Panel padding="none" className="overflow-hidden">
             <Table>

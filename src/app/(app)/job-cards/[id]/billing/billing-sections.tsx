@@ -16,7 +16,8 @@ import { RecordCard, RecordList, TableWrap } from '@/components/shared/record-ca
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { trimQuantity } from '@/components/workshop/estimate-lines';
 import { cn } from '@/lib/utils';
-import { CreateInvoiceButton, DeliveryForm, PaymentForm } from './billing-forms';
+import { CreateInvoiceButton, DeliveryForm } from './billing-forms';
+import { InvoicePaymentForm } from '@/components/finance/invoice-payment-form';
 
 const PAYMENT_STATE = {
   UNPAID: { tone: 'danger', label: 'Unpaid' },
@@ -326,9 +327,9 @@ export function BillingSections({
             )}
             {invoice.paymentState !== 'PAID' && canPay ? (
               <div className="border-t border-border bg-muted/20 px-4 py-6 sm:px-6">
-                <PaymentForm
+                <InvoicePaymentForm
                   key={invoice.balanceDue}
-                  jobCardId={jobCard.id}
+                  invoiceId={invoice.id}
                   balance={invoice.balanceDue}
                   now={toLocalDateTimeInput(new Date())}
                 />

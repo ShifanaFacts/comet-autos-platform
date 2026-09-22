@@ -102,11 +102,18 @@ export async function saveDiagnosisAction(
   redirect(`/job-cards/${jobCardId}/estimate`);
 }
 
+/**
+ * Opens the work order's quotation and goes to it. A quotation raised this
+ * way and one raised straight for a customer are the same document on the
+ * same screen, so both land on /quotations/<id>.
+ */
 export async function createEstimateAction(jobCardId: string): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() => createEstimate(user, jobCardId));
-  if (result.ok) refreshJob(jobCardId);
-  return toClientResult(result);
+  if (!result.ok) return toClientResult(result);
+  refreshJob(jobCardId);
+  revalidatePath('/quotations');
+  redirect(`/quotations/${result.data!.id}`);
 }
 
 export async function saveEstimateDraftAction(

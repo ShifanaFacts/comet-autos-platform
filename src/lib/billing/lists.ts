@@ -35,8 +35,11 @@ export async function listInvoices(
             OR: [
               { invoiceNumber: { contains: q, mode: 'insensitive' } },
               { customerName: { contains: q, mode: 'insensitive' } },
+              { customer: { name: { contains: q, mode: 'insensitive' } } },
+              { customer: { phone: { contains: q, mode: 'insensitive' } } },
+              // The invoice's own vehicle, so one raised without a work order is found too.
+              { vehicle: { plateNumber: { contains: q, mode: 'insensitive' } } },
               { jobCard: { jobNumber: { contains: q, mode: 'insensitive' } } },
-              { jobCard: { vehicle: { plateNumber: { contains: q, mode: 'insensitive' } } } },
             ],
           }
         : {}),
@@ -59,13 +62,9 @@ export async function listInvoices(
           receivedAt: true,
         },
       },
-      jobCard: {
-        select: {
-          id: true,
-          jobNumber: true,
-          vehicle: { select: { plateNumber: true, make: true, model: true } },
-        },
-      },
+      customer: { select: { name: true, phone: true } },
+      vehicle: { select: { plateNumber: true, make: true, model: true } },
+      jobCard: { select: { id: true, jobNumber: true } },
     },
   });
   return {

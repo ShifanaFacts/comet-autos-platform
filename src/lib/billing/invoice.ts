@@ -243,6 +243,7 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
         branchId: jobCard.branchId,
         jobCardId: jobCard.id,
         customerId: customer.id,
+        vehicleId: jobCard.vehicleId,
         invoiceType: 'TAX_INVOICE',
         invoiceNumber,
         status: 'ISSUED',
@@ -268,6 +269,7 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
         data: {
           organizationId: user.organizationId,
           invoiceId: invoice.id,
+          itemType: line.source.labourId ? 'LABOUR' : 'PART',
           description: line.description,
           quantity: line.amounts.quantity,
           unitPrice: line.amounts.unitPrice,
@@ -309,30 +311,33 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
   });
 }
 
+/** One shape for an invoice with everything a billing screen shows. */
+const invoiceDetail = {
+  items: {
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    include: {
+      labour: { select: { hours: true, rate: true, estimateItem: { select: { estimate: { select: { kind: true, estimateNumber: true } } } } } },
+      partUsage: {
+        select: {
+          quantity: true,
+          unitPrice: true,
+          estimateItem: { select: { estimate: { select: { kind: true, estimateNumber: true } } } },
+        },
+      },
+    },
+  },
+  payments: {
+    orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
+    include: { receivedBy: { select: { fullName: true } } },
+  },
+  issuedBy: { select: { fullName: true } },
+} satisfies Prisma.InvoiceInclude;
+
 /** The job's live invoice with lines, payments and computed balance — or null. */
 export async function getJobInvoice(user: AuthenticatedUser, jobCardId: string) {
   const invoice = await prisma.invoice.findFirst({
     where: { organizationId: user.organizationId, jobCardId, status: { notIn: ['VOID', 'CANCELLED'] } },
-    include: {
-      items: {
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        include: {
-          labour: { select: { hours: true, rate: true, estimateItem: { select: { estimate: { select: { kind: true, estimateNumber: true } } } } } },
-          partUsage: {
-            select: {
-              quantity: true,
-              unitPrice: true,
-              estimateItem: { select: { estimate: { select: { kind: true, estimateNumber: true } } } },
-            },
-          },
-        },
-      },
-      payments: {
-        orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
-        include: { receivedBy: { select: { fullName: true } } },
-      },
-      issuedBy: { select: { fullName: true } },
-    },
+    include: invoiceDetail,
   });
   if (!invoice) return null;
   requirePermission(user, 'invoice.view', { branchId: invoice.branchId });
@@ -340,7 +345,28 @@ export async function getJobInvoice(user: AuthenticatedUser, jobCardId: string) 
   return { ...invoice, paidAmount: balance.paid, balanceDue: balance.balance, paymentState: balance.state };
 }
 
+/**
+ * One invoice by its own id, with lines, payments and balance — the invoice
+ * screen's read, for an invoice with a work order behind it or without one.
+ */
+export async function getInvoiceDetail(user: AuthenticatedUser, invoiceId: string) {
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, organizationId: user.organizationId, status: { notIn: ['VOID', 'CANCELLED'] } },
+    include: {
+      ...invoiceDetail,
+      customer: { select: { id: true, name: true, phone: true, email: true } },
+      vehicle: { select: { id: true, plateNumber: true, make: true, model: true, year: true } },
+      jobCard: { select: { id: true, jobNumber: true, status: true } },
+    },
+  });
+  if (!invoice) throw new NotFoundError('invoice');
+  requirePermission(user, 'invoice.view', { branchId: invoice.branchId });
+  const balance = invoiceBalance(invoice);
+  return { ...invoice, paidAmount: balance.paid, balanceDue: balance.balance, paymentState: balance.state };
+}
+
 export type JobInvoice = NonNullable<Awaited<ReturnType<typeof getJobInvoice>>>;
+export type InvoiceDetail = Awaited<ReturnType<typeof getInvoiceDetail>>;
 
 const paymentSchema = z.object({
   amount: z
@@ -354,12 +380,20 @@ const paymentSchema = z.object({
 });
 
 /**
- * Records money received against the job's invoice. Never more than the
- * outstanding balance (overpayments are not part of the financial design).
- * Moves the invoice to PARTIALLY_PAID / PAID and, when fully settled, the job
- * from INVOICED to PAID.
+ * Records money received against an invoice — the one place a payment is
+ * ever created. Never more than the outstanding balance (overpayments are
+ * not part of the financial design). Moves the invoice to PARTIALLY_PAID /
+ * PAID and, when the invoice belongs to a work order and is fully settled,
+ * that work order from INVOICED to PAID.
+ *
+ * An invoice raised without a work order settles exactly the same way; there
+ * is simply no job to move.
  */
-export async function recordPayment(user: AuthenticatedUser, jobCardId: string, rawInput: unknown) {
+export async function recordInvoicePayment(
+  user: AuthenticatedUser,
+  invoiceId: string,
+  rawInput: unknown,
+) {
   const input = parseInput(paymentSchema, rawInput);
   const receivedAt = parseLocalDateTime(input.receivedAt);
   if (!receivedAt) throw new DomainError('Enter a valid date and time.', 'receivedAt');
@@ -367,13 +401,19 @@ export async function recordPayment(user: AuthenticatedUser, jobCardId: string, 
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'payment.record');
-    const jobCard = await lockJob(tx, user.organizationId, jobCardId);
-    requirePermission(user, 'payment.create', { branchId: jobCard.branchId });
-    const invoice = await tx.invoice.findFirst({
-      where: { organizationId: user.organizationId, jobCardId: jobCard.id, status: { notIn: ['VOID', 'CANCELLED'] } },
+    // Which job to lock, read before any lock is taken: work orders are
+    // always locked before invoices, everywhere, so two paths can never take
+    // the pair in opposite orders.
+    const target = await tx.invoice.findFirst({
+      where: { id: invoiceId, organizationId: user.organizationId, status: { notIn: ['VOID', 'CANCELLED'] } },
+      select: { id: true, jobCardId: true },
     });
-    if (!invoice) throw new DomainError('Create the invoice before recording a payment.');
-    await tx.$executeRaw`SELECT id FROM invoices WHERE id = ${invoice.id}::uuid FOR UPDATE`;
+    if (!target) throw new NotFoundError('invoice');
+    const jobCard = target.jobCardId ? await lockJob(tx, user.organizationId, target.jobCardId) : null;
+
+    await tx.$executeRaw`SELECT id FROM invoices WHERE id = ${target.id}::uuid FOR UPDATE`;
+    const invoice = await tx.invoice.findFirstOrThrow({ where: { id: target.id, organizationId: user.organizationId } });
+    requirePermission(user, 'payment.create', { branchId: invoice.branchId });
     if (invoice.invoiceType !== 'TAX_INVOICE') throw new DomainError('Payments can only be recorded against a tax invoice.');
     if (invoice.status === 'PAID') throw new DomainError('This invoice is already fully paid.');
     if (invoice.status !== 'ISSUED' && invoice.status !== 'PARTIALLY_PAID') {
@@ -393,7 +433,7 @@ export async function recordPayment(user: AuthenticatedUser, jobCardId: string, 
       throw new DomainError(`That is more than the balance due (${filsToString(balance)}).`, 'amount');
     }
 
-    const paymentNumber = await allocateDocumentNumber(tx, user.organizationId, jobCard.branchId, 'PAYMENT_RECEIPT');
+    const paymentNumber = await allocateDocumentNumber(tx, user.organizationId, invoice.branchId, 'PAYMENT_RECEIPT');
     const payment = await tx.payment.create({
       data: {
         organizationId: user.organizationId,
@@ -412,7 +452,7 @@ export async function recordPayment(user: AuthenticatedUser, jobCardId: string, 
     const newStatus: InvoiceStatus = newBalance === 0 ? 'PAID' : 'PARTIALLY_PAID';
     await tx.invoice.update({ where: { id: invoice.id }, data: { status: newStatus } });
 
-    if (newStatus === 'PAID' && normalizeStatus(jobCard.status) === 'INVOICED') {
+    if (newStatus === 'PAID' && jobCard && normalizeStatus(jobCard.status) === 'INVOICED') {
       await applyJobStatusChange(tx, {
         organizationId: user.organizationId,
         jobCardId: jobCard.id,
@@ -424,7 +464,7 @@ export async function recordPayment(user: AuthenticatedUser, jobCardId: string, 
     }
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
-      branchId: jobCard.branchId,
+      branchId: invoice.branchId,
       actorUserId: user.id,
       action: 'payment.recorded',
       entityType: 'Payment',
@@ -438,9 +478,30 @@ export async function recordPayment(user: AuthenticatedUser, jobCardId: string, 
         balanceAfter: filsToString(newBalance),
         invoiceStatus: newStatus,
       },
+      metadata: { jobCardId: invoice.jobCardId },
     });
     return payment;
   });
+}
+
+/**
+ * Records a payment against the work order's live invoice — the workflow
+ * billing screen's entry point. Finds the invoice, then hands over to
+ * recordInvoicePayment, so there is one set of payment rules, not two.
+ */
+export async function recordPayment(user: AuthenticatedUser, jobCardId: string, rawInput: unknown) {
+  const jobCard = await prisma.jobCard.findFirst({
+    where: { id: jobCardId, organizationId: user.organizationId },
+    select: { id: true, branchId: true },
+  });
+  if (!jobCard) throw new NotFoundError('job card');
+  requirePermission(user, 'payment.create', { branchId: jobCard.branchId });
+  const invoice = await prisma.invoice.findFirst({
+    where: { organizationId: user.organizationId, jobCardId: jobCard.id, status: { notIn: ['VOID', 'CANCELLED'] } },
+    select: { id: true },
+  });
+  if (!invoice) throw new DomainError('Create the invoice before recording a payment.');
+  return recordInvoicePayment(user, invoice.id, rawInput);
 }
 
 const deliverySchema = z.object({

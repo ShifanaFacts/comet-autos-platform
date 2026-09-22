@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma';
 import type { JobCardStatus } from '@/generated/prisma/enums';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { CLOSED_JOB_STATUSES, WORKFLOW_STAGES } from '@/lib/workshop/stages';
-import { localDayRange } from '@/lib/format';
+import { localDateString, localDayRange, parseCalendarDate } from '@/lib/format';
 import { filsToString, toFils } from '@/lib/money';
 import { invoiceBalance, paidFils } from '@/lib/billing/invoice';
 import { getStockByPart, resolveInventoryBranch, stockState } from '@/lib/inventory/stock';
@@ -172,4 +172,170 @@ export async function getRecentJobCards(organizationId: string, take = 6) {
       vehicle: { select: { plateNumber: true, make: true, model: true } },
     },
   });
+}
+
+/**
+ * The three numbers the owner opens the app for: work orders still open,
+ * quotations the customer has not answered, and invoices not yet paid.
+ * Quotations count only the current version of each chain, and only while
+ * they are still in date — an expired quotation is not waiting for anyone.
+ */
+export async function getDocumentCounts(organizationId: string) {
+  // validUntil is a calendar date; compare it with today's date in Dubai.
+  const today = parseCalendarDate(localDateString())!;
+  const [openWorkOrders, quotationsAwaiting, draftQuotations, unpaidInvoices] = await Promise.all([
+    prisma.jobCard.count({ where: { organizationId, status: { notIn: NOT_IN_WORKSHOP } } }),
+    prisma.estimate.count({
+      where: {
+        organizationId,
+        status: 'SENT',
+        nextVersions: { none: {} },
+        OR: [{ validUntil: null }, { validUntil: { gte: today } }],
+      },
+    }),
+    prisma.estimate.count({
+      where: { organizationId, status: 'DRAFT', kind: 'ORIGINAL', nextVersions: { none: {} } },
+    }),
+    prisma.invoice.count({
+      where: { organizationId, status: { in: ['ISSUED', 'PARTIALLY_PAID'] } },
+    }),
+  ]);
+  return { openWorkOrders, quotationsAwaiting, draftQuotations, unpaidInvoices };
+}
+
+export type ActivityKind = 'work_order' | 'quotation' | 'invoice' | 'payment';
+
+export interface ActivityItem {
+  kind: ActivityKind;
+  id: string;
+  href: string;
+  number: string;
+  customer: string;
+  plateNumber: string | null;
+  amount: string | null;
+  at: Date;
+}
+
+/**
+ * Everything created today, newest first — work orders opened, quotations
+ * started, invoices issued and payments taken. Money rows are left out for
+ * someone who may not see invoices.
+ */
+export async function getTodaysActivity(
+  organizationId: string,
+  options: { includeMoney: boolean; take?: number },
+): Promise<ActivityItem[]> {
+  const today = localDayRange();
+  const window = { gte: today.start, lt: today.end };
+  const take = options.take ?? 10;
+
+  const [workOrders, quotations, invoices, payments] = await Promise.all([
+    prisma.jobCard.findMany({
+      where: { organizationId, openedAt: window },
+      orderBy: { openedAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        jobNumber: true,
+        openedAt: true,
+        customer: { select: { name: true } },
+        vehicle: { select: { plateNumber: true } },
+      },
+    }),
+    prisma.estimate.findMany({
+      where: { organizationId, createdAt: window, kind: 'ORIGINAL' },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        estimateNumber: true,
+        createdAt: true,
+        totalAmount: true,
+        customer: { select: { name: true } },
+        vehicle: { select: { plateNumber: true } },
+      },
+    }),
+    options.includeMoney
+      ? prisma.invoice.findMany({
+          where: { organizationId, issuedAt: window, status: { notIn: ['VOID', 'CANCELLED'] } },
+          orderBy: { issuedAt: 'desc' },
+          take,
+          select: {
+            id: true,
+            invoiceNumber: true,
+            issuedAt: true,
+            totalAmount: true,
+            customerName: true,
+            customer: { select: { name: true } },
+            vehicle: { select: { plateNumber: true } },
+          },
+        })
+      : Promise.resolve([]),
+    options.includeMoney
+      ? prisma.payment.findMany({
+          where: { organizationId, receivedAt: window, reversalOfPaymentId: null, status: 'COMPLETED' },
+          orderBy: { receivedAt: 'desc' },
+          take,
+          select: {
+            id: true,
+            paymentNumber: true,
+            receivedAt: true,
+            amount: true,
+            invoice: {
+              select: {
+                id: true,
+                invoiceNumber: true,
+                customerName: true,
+                customer: { select: { name: true } },
+                vehicle: { select: { plateNumber: true } },
+              },
+            },
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const items: ActivityItem[] = [
+    ...workOrders.map((job) => ({
+      kind: 'work_order' as const,
+      id: job.id,
+      href: `/job-cards/${job.id}`,
+      number: job.jobNumber,
+      customer: job.customer.name,
+      plateNumber: job.vehicle.plateNumber,
+      amount: null,
+      at: job.openedAt,
+    })),
+    ...quotations.map((quote) => ({
+      kind: 'quotation' as const,
+      id: quote.id,
+      href: `/quotations/${quote.id}`,
+      number: quote.estimateNumber,
+      customer: quote.customer.name,
+      plateNumber: quote.vehicle?.plateNumber ?? null,
+      amount: quote.totalAmount.toString(),
+      at: quote.createdAt,
+    })),
+    ...invoices.map((invoice) => ({
+      kind: 'invoice' as const,
+      id: invoice.id,
+      href: `/finance/invoices/${invoice.id}`,
+      number: invoice.invoiceNumber,
+      customer: invoice.customerName ?? invoice.customer.name,
+      plateNumber: invoice.vehicle?.plateNumber ?? null,
+      amount: invoice.totalAmount.toString(),
+      at: invoice.issuedAt!,
+    })),
+    ...payments.map((payment) => ({
+      kind: 'payment' as const,
+      id: payment.id,
+      href: `/finance/invoices/${payment.invoice.id}`,
+      number: payment.paymentNumber ?? payment.invoice.invoiceNumber,
+      customer: payment.invoice.customerName ?? payment.invoice.customer.name,
+      plateNumber: payment.invoice.vehicle?.plateNumber ?? null,
+      amount: payment.amount.toString(),
+      at: payment.receivedAt,
+    })),
+  ];
+  return items.sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, take);
 }

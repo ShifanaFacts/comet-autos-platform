@@ -1,4 +1,4 @@
-import type { EstimateStatus, PaymentMethod } from '@/generated/prisma/enums';
+import type { EstimateItemType, EstimateStatus, PaymentMethod } from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { hasPermission, requirePermission } from '@/lib/auth/authorize';
@@ -10,6 +10,7 @@ import {
   formatAed,
   type CustomerDocumentModel,
   type DocumentLine,
+  type DocumentLineType,
   type DocumentSection,
   type DocumentSeller,
   type DocumentTone,
@@ -73,6 +74,13 @@ const vehicleLabel = (v: { make: string; model: string; year: number | null }) =
 const fileName = (title: string, number: string) =>
   `Comet-Autos-${title.replace(/\s+/g, '-')}-${number}`;
 
+/** The TYPE column: parts or labour, as the workshop's own sheet prints it. */
+function lineType(itemType: EstimateItemType | null): DocumentLineType | null {
+  if (itemType === 'LABOUR') return 'LABOUR';
+  if (itemType === 'PART') return 'PARTS';
+  return null;
+}
+
 /** "VAT 5%" when every line carries the same rate, otherwise "VAT". */
 function vatLabel(lines: DocumentLine[]) {
   const rates = new Set(
@@ -98,14 +106,16 @@ async function fetchQuotation(organizationId: string, estimateId: string) {
         take: 1,
         select: { status: true, decidedAt: true, approvalMethod: true },
       },
+      // The quotation's own parties: backfilled from the work order for
+      // every quotation that has one, and the only source for one that
+      // doesn't.
+      customer: { select: customerSelect },
+      vehicle: { select: vehicleSelect },
       jobCard: {
         select: {
-          branchId: true,
           jobNumber: true,
           customerComplaint: true,
           odometerReading: true,
-          customer: { select: customerSelect },
-          vehicle: { select: vehicleSelect },
         },
       },
     },
@@ -130,16 +140,17 @@ function quotationModel(
 ): CustomerDocumentModel {
   const { jobCard } = estimate;
   const toLine = (item: (typeof estimate.items)[number]): DocumentLine => ({
+    type: lineType(item.itemType),
     description: item.description,
     quantity: item.quantity.toString(),
     unitPrice: item.unitPrice.toString(),
     taxRate: item.taxRate?.toString() ?? null,
     lineTotal: item.lineTotal.toString(),
   });
-  const sections: DocumentSection[] = [
-    { title: 'Labour', lines: estimate.items.filter((i) => i.itemType === 'LABOUR').map(toLine) },
-    { title: 'Parts', lines: estimate.items.filter((i) => i.itemType !== 'LABOUR').map(toLine) },
-  ].filter((section) => section.lines.length > 0);
+  // One numbered list in the order the lines were entered, each marked
+  // parts or labour — the layout of the workshop's own quotation sheet.
+  const sections: DocumentSection[] =
+    estimate.items.length > 0 ? [{ title: '', lines: estimate.items.map(toLine) }] : [];
   const expired =
     estimate.status === 'SENT' &&
     estimate.validUntil !== null &&
@@ -158,7 +169,7 @@ function quotationModel(
       ...(estimate.validUntil
         ? [{ label: 'Valid until', value: formatCalendarDate(estimate.validUntil) }]
         : []),
-      { label: 'Job card', value: jobCard.jobNumber },
+      ...(jobCard ? [{ label: 'Work order', value: jobCard.jobNumber }] : []),
       ...(decision
         ? [
             {
@@ -170,31 +181,33 @@ function quotationModel(
         : []),
     ],
     customer: {
-      name: jobCard.customer.name,
-      phone: jobCard.customer.phone,
-      address: jobCard.customer.address,
-      taxNumber: jobCard.customer.taxNumber,
+      name: estimate.customer.name,
+      phone: estimate.customer.phone,
+      address: estimate.customer.address,
+      taxNumber: estimate.customer.taxNumber,
     },
-    vehicle: {
-      description: vehicleLabel(jobCard.vehicle),
-      plateNumber: jobCard.vehicle.plateNumber,
-      vin: jobCard.vehicle.vin,
-      mileage:
-        jobCard.odometerReading !== null
-          ? `${jobCard.odometerReading.toLocaleString('en-US')} km`
-          : null,
-    },
+    vehicle: estimate.vehicle
+      ? {
+          description: vehicleLabel(estimate.vehicle),
+          plateNumber: estimate.vehicle.plateNumber,
+          vin: estimate.vehicle.vin,
+          mileage:
+            jobCard?.odometerReading != null
+              ? `${jobCard.odometerReading.toLocaleString('en-US')} km`
+              : null,
+        }
+      : null,
     narrative:
       estimate.kind === 'ADDITIONAL'
         ? estimate.notes
           ? [{ label: 'Found during the repair', value: estimate.notes }]
           : []
-        : jobCard.customerComplaint
+        : jobCard?.customerComplaint
           ? [{ label: 'Work requested', value: jobCard.customerComplaint }]
           : [],
     sections,
     totals: [
-      { label: 'Subtotal', amount: estimate.subtotal.toString() },
+      { label: 'Total excl. VAT', amount: estimate.subtotal.toString() },
       { label: vatLabel(sections.flatMap((s) => s.lines)), amount: estimate.taxAmount.toString() },
       { label: 'Total', amount: estimate.totalAmount.toString(), emphasis: 'total' },
     ],
@@ -215,7 +228,7 @@ function quotationModel(
 export async function getQuotationDocument(user: AuthenticatedUser, estimateId: string) {
   const estimate = await fetchQuotation(user.organizationId, estimateId);
   if (!estimate) throw new NotFoundError('quotation');
-  requirePermission(user, 'job_card.view', { branchId: estimate.jobCard.branchId });
+  requirePermission(user, 'job_card.view', { branchId: estimate.branchId });
   return quotationModel(estimate, await loadSeller(user.organizationId));
 }
 
@@ -250,10 +263,13 @@ async function fetchInvoice(organizationId: string, where: { id: string } | { pa
         },
       },
       payments: { orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }] },
-      // The invoice names its own customer; the snapshot fields hold the rest.
+      // The invoice names its own customer and vehicle; the snapshot fields
+      // hold the rest. The work order, when there is one, adds its number
+      // and the mileage the car came in on.
       customer: { select: { name: true, phone: true } },
+      vehicle: { select: vehicleSelect },
       jobCard: {
-        select: { jobNumber: true, odometerReading: true, vehicle: { select: vehicleSelect } },
+        select: { jobNumber: true, odometerReading: true },
       },
     },
   });
@@ -273,7 +289,7 @@ async function invoiceSeller(invoice: InvoiceRecord): Promise<DocumentSeller> {
 }
 
 function invoiceParties(invoice: InvoiceRecord) {
-  const vehicle = invoice.jobCard?.vehicle;
+  const vehicle = invoice.vehicle;
   return {
     customer: {
       name: invoice.customerName ?? invoice.customer.name,
@@ -287,8 +303,8 @@ function invoiceParties(invoice: InvoiceRecord) {
           plateNumber: vehicle.plateNumber,
           vin: vehicle.vin,
           mileage:
-            invoice.jobCard!.odometerReading !== null
-              ? `${invoice.jobCard!.odometerReading.toLocaleString('en-US')} km`
+            invoice.jobCard?.odometerReading != null
+              ? `${invoice.jobCard.odometerReading.toLocaleString('en-US')} km`
               : null,
         }
       : null,
@@ -313,32 +329,29 @@ function countedPayments<
 
 function invoiceModel(invoice: InvoiceRecord, seller: DocumentSeller): CustomerDocumentModel {
   const balance = invoiceBalance(invoice);
-  const groups = new Map<string, DocumentLine[]>();
+  // One numbered list in billing order, each line marked parts or labour.
+  // Work the customer approved separately during the repair keeps its own
+  // titled run at the end, so it can't be mistaken for the original quote.
+  const main: DocumentLine[] = [];
+  const additional: DocumentLine[] = [];
   for (const item of invoice.items) {
     const kind = (item.labour ?? item.partUsage)?.estimateItem?.estimate.kind;
-    const title =
-      kind === 'ADDITIONAL'
-        ? 'Additional approved work'
-        : item.labourId
-          ? 'Labour'
-          : item.partUsageId
-            ? 'Parts'
-            : 'Items';
-    groups.set(title, [
-      ...(groups.get(title) ?? []),
-      {
-        description: item.description,
-        quantity: item.quantity.toString(),
-        unitPrice: item.unitPrice.toString(),
-        taxRate: item.taxRate?.toString() ?? null,
-        lineTotal: item.lineTotal.toString(),
-      },
-    ]);
+    const line: DocumentLine = {
+      type: lineType(
+        item.itemType ?? (item.labourId ? 'LABOUR' : item.partUsageId ? 'PART' : null),
+      ),
+      description: item.description,
+      quantity: item.quantity.toString(),
+      unitPrice: item.unitPrice.toString(),
+      taxRate: item.taxRate?.toString() ?? null,
+      lineTotal: item.lineTotal.toString(),
+    };
+    (kind === 'ADDITIONAL' ? additional : main).push(line);
   }
-  const order = ['Labour', 'Parts', 'Additional approved work', 'Items'];
-  const sections = order
-    .filter((t) => groups.has(t))
-    .map((title) => ({ title, lines: groups.get(title)! }));
+  const sections: DocumentSection[] = [
+    ...(main.length ? [{ title: '', lines: main }] : []),
+    ...(additional.length ? [{ title: 'Additional approved work', lines: additional }] : []),
+  ];
   const payments = countedPayments(invoice);
   const title = invoice.invoiceType === 'PROFORMA' ? 'Proforma invoice' : 'Tax invoice';
 
@@ -353,13 +366,13 @@ function invoiceModel(invoice: InvoiceRecord, seller: DocumentSeller): CustomerD
       ...(invoice.supplyDate
         ? [{ label: 'Date of supply', value: formatCalendarDate(invoice.supplyDate) }]
         : []),
-      ...(invoice.jobCard ? [{ label: 'Job card', value: invoice.jobCard.jobNumber }] : []),
+      ...(invoice.jobCard ? [{ label: 'Work order', value: invoice.jobCard.jobNumber }] : []),
     ],
     ...invoiceParties(invoice),
     narrative: [],
     sections,
     totals: [
-      { label: 'Subtotal', amount: invoice.subtotal.toString() },
+      { label: 'Total excl. VAT', amount: invoice.subtotal.toString() },
       { label: vatLabel(sections.flatMap((s) => s.lines)), amount: invoice.taxAmount.toString() },
       { label: 'Total', amount: balance.total, emphasis: 'total' },
       { label: 'Amount paid', amount: balance.paid },
@@ -404,7 +417,7 @@ function receiptModel(
     meta: [
       { label: 'Payment date', value: formatDate(payment.receivedAt) },
       { label: 'Invoice', value: invoice.invoiceNumber },
-      ...(invoice.jobCard ? [{ label: 'Job card', value: invoice.jobCard.jobNumber }] : []),
+      ...(invoice.jobCard ? [{ label: 'Work order', value: invoice.jobCard.jobNumber }] : []),
     ],
     ...invoiceParties(invoice),
     narrative: [],
