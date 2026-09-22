@@ -8,6 +8,7 @@
     "dev:web": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
+    "postinstall": "prisma generate --schema=./prisma/schema.prisma",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md}\" --ignore-path .gitignore",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md}\" --ignore-path .gitignore",
