@@ -43,7 +43,7 @@ export default async function PaymentsPage({
       <PageHeader
         eyebrow="Finance"
         title="Payments"
-        description="Money received from customers, newest first. Payments are taken on the job card, against its invoice."
+        description="Money received from customers, newest first. Payments are taken against an invoice — from the invoice itself or its work order."
       />
       <Stack gap="base">
         <SearchField initialQuery={query} placeholder="Receipt, reference, invoice or customer" />
@@ -54,7 +54,7 @@ export default async function PaymentsPage({
             description={
               query
                 ? 'Try the receipt or invoice number.'
-                : 'Payments appear here once they are taken on a job card.'
+                : 'Payments appear here once they are recorded against an invoice.'
             }
           />
         ) : (

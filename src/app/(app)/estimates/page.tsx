@@ -16,16 +16,16 @@ export default async function EstimatesPage() {
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
         eyebrow="Workshop"
-        title="Estimates"
-        description="Diagnosed jobs that need pricing, drafts in progress, and every current quotation."
+        title="Quotation queue"
+        description="Work orders in the detailed workflow that need pricing, and quotations in progress. Every quotation is also on the Quotations page."
       />
       <JobQueue
-        title="Needs an estimate"
+        title="Needs a quotation"
         description="Diagnosis recorded — price the recommended work."
         jobs={queues.needsEstimate}
-        actionLabel="Create estimate"
+        actionLabel="Create quotation"
         hrefFor={(job) => `/job-cards/${job.id}/estimate`}
-        empty="Every diagnosed job has an estimate."
+        empty="Every diagnosed work order has a quotation."
       />
       <Section title={`Drafts (${drafts.length})`} description="Not yet sent to the customer.">
         {drafts.length === 0 ? (

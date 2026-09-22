@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ClipboardList, LogIn } from 'lucide-react';
+import { ClipboardList, Plus } from 'lucide-react';
 import { requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -38,7 +38,7 @@ export default async function JobCardsPage({
           OR: [
             { jobNumber: { contains: query, mode: 'insensitive' as const } },
             { vehicle: { plateNumber: { contains: query, mode: 'insensitive' as const } } },
-            { vehicle: { customer: { name: { contains: query, mode: 'insensitive' as const } } } },
+            { customer: { name: { contains: query, mode: 'insensitive' as const } } },
           ],
         }
       : {}),
@@ -47,7 +47,7 @@ export default async function JobCardsPage({
   const [jobCards, total, unfilteredTotal] = await Promise.all([
     prisma.jobCard.findMany({
       where,
-      include: { vehicle: { include: { customer: true } } },
+      include: { customer: true, vehicle: true },
       orderBy: { openedAt: 'desc' },
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
@@ -70,16 +70,21 @@ export default async function JobCardsPage({
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
         eyebrow="Workshop"
-        title="Job Cards"
+        title="Work Orders"
         description={
           isFiltered
-            ? `Showing ${total} of ${unfilteredTotal} job cards.`
-            : `${unfilteredTotal} job card${unfilteredTotal === 1 ? '' : 's'} in total.`
+            ? `Showing ${total} of ${unfilteredTotal} work orders.`
+            : `${unfilteredTotal} work order${unfilteredTotal === 1 ? '' : 's'} in total.`
         }
         actions={
-          <Button size="lg" nativeButton={false} render={<Link href="/check-in" />}>
-            <LogIn />
-            Check In Vehicle
+          <Button
+            size="lg"
+            className="w-full sm:w-auto"
+            nativeButton={false}
+            render={<Link href="/check-in" />}
+          >
+            <Plus />
+            New work order
           </Button>
         }
       />
@@ -91,17 +96,18 @@ export default async function JobCardsPage({
           isFiltered ? (
             <EmptyState
               icon={ClipboardList}
-              title="No job cards match your filters"
+              title="No work orders match your filters"
               description="Try a different search or clear the status filter."
             />
           ) : (
             <EmptyState
               icon={ClipboardList}
-              title="No job cards yet"
-              description="Check in a vehicle to create the first one."
+              title="No work orders yet"
+              description="Open one for a customer's vehicle — just who, which car, and what needs doing."
               action={
                 <Button nativeButton={false} render={<Link href="/check-in" />}>
-                  Check In Vehicle
+                  <Plus />
+                  New work order
                 </Button>
               }
             />
@@ -130,7 +136,7 @@ export default async function JobCardsPage({
                       <span className="flex flex-col gap-0.5 text-xs text-muted-foreground">
                         <span className="truncate">
                           <span className="font-mono">{jobCard.jobNumber}</span> ·{' '}
-                          {jobCard.vehicle.customer.name}
+                          {jobCard.customer.name}
                         </span>
                         <span className="tabular-nums">
                           {jobCard.openedAt.toLocaleString('en-AE', {
@@ -176,7 +182,7 @@ export default async function JobCardsPage({
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell>{jobCard.vehicle.customer.name}</TableCell>
+                        <TableCell>{jobCard.customer.name}</TableCell>
                         <TableCell>
                           <JobStatusBadge status={jobCard.status} />
                         </TableCell>

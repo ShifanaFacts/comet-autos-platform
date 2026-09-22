@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useFormAction } from '@/components/forms/use-form-action';
 import { useState } from 'react';
-import { ArrowRight, CalendarDays, CheckCircle2, TriangleAlert, UserPlus } from 'lucide-react';
+import { ArrowRight, CalendarDays, Camera, CheckCircle2, TriangleAlert, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Field, FormError, NativeSelect, TextField, TextareaField } from '@/components/forms/fields';
 import { SubmitButton } from '@/components/forms/submit-button';
@@ -60,17 +60,40 @@ export function CheckInForm({
       <div className="animate-in fade-in zoom-in-95 flex flex-col items-center gap-6 rounded-xl border border-success/25 bg-success/5 px-6 py-12 text-center duration-300">
         <CheckCircle2 className="size-10 text-success" />
         <div className="flex flex-col gap-2">
-          <p className="text-xs font-semibold tracking-wider text-success uppercase">Vehicle checked in · Job card created</p>
+          <p className="text-xs font-semibold tracking-wider text-success uppercase">Work order created</p>
           <p className="text-4xl font-semibold tracking-tight tabular-nums">{state.data.jobNumber}</p>
-          <p className="text-sm text-muted-foreground">Status: Arrived. Next, assign a technician and start the inspection.</p>
+          <p className="text-sm text-muted-foreground">
+            Photograph the vehicle now, quote the work, or invoice it when it&apos;s done.
+          </p>
         </div>
-        <div className="flex flex-wrap justify-center gap-3">
-          <Button size="lg" nativeButton={false} render={<Link href={`/job-cards/${state.data.jobCardId}`} />}>
-            Open Job Card
+        <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-center">
+          <Button
+            size="lg"
+            className="h-12 w-full sm:w-auto"
+            nativeButton={false}
+            render={<Link href={`/job-cards/${state.data.jobCardId}#photos`} />}
+          >
+            <Camera />
+            Take photos
+          </Button>
+          <Button
+            size="lg"
+            variant="outline"
+            className="h-12 w-full sm:w-auto"
+            nativeButton={false}
+            render={<Link href={`/job-cards/${state.data.jobCardId}`} />}
+          >
+            Open work order
             <ArrowRight />
           </Button>
-          <Button size="lg" variant="outline" nativeButton={false} render={<a href="/check-in" />}>
-            Check in another vehicle
+          <Button
+            size="lg"
+            variant="ghost"
+            className="h-12 w-full sm:w-auto"
+            nativeButton={false}
+            render={<a href="/check-in" />}
+          >
+            New work order
           </Button>
         </div>
       </div>
@@ -116,8 +139,8 @@ export function CheckInForm({
         <VisitStep number={3} errors={errors} lastMileage={null} />
         <FormError message={state.error} />
         <div className="flex flex-wrap items-center gap-3 border-t border-border pt-6">
-          <SubmitButton pending={isPending} size="lg" pendingLabel="Checking in…">
-            Check in &amp; create job card
+          <SubmitButton pending={isPending} size="lg" pendingLabel="Creating…">
+            Create work order
           </SubmitButton>
           <Button type="button" variant="ghost" size="lg" onClick={() => setCreatingNew(false)}>
             Search instead
@@ -185,10 +208,10 @@ export function CheckInForm({
             <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-warning/30 bg-warning/5 p-4">
               <p className="flex items-center gap-2 text-sm text-warning">
                 <TriangleAlert className="size-4 shrink-0" />
-                This vehicle is already in the workshop on job {vehicle.openJob.jobNumber}.
+                This vehicle is already in the workshop on work order {vehicle.openJob.jobNumber}.
               </p>
               <Button variant="outline" nativeButton={false} render={<Link href={`/job-cards/${vehicle.openJob.id}`} />}>
-                Open that job card
+                Open that work order
               </Button>
             </div>
           ) : (
@@ -233,8 +256,8 @@ export function CheckInForm({
           <FormError message={errors.vehicleId || errors.appointmentId ? undefined : state.error} />
           {errors.vehicleId || errors.appointmentId ? <FormError message={errors.vehicleId ?? errors.appointmentId} /> : null}
           <div className="border-t border-border pt-6">
-            <SubmitButton pending={isPending} size="lg" pendingLabel="Checking in…">
-              Check in &amp; create job card
+            <SubmitButton pending={isPending} size="lg" pendingLabel="Creating…">
+              Create work order
             </SubmitButton>
           </div>
         </>
@@ -255,10 +278,10 @@ function VisitStep({
   defaultComplaint?: string;
 }) {
   return (
-    <Step number={number} title="Complaint & mileage">
+    <Step number={number} title="What needs doing">
       <div className="flex flex-col gap-6">
         <TextareaField
-          label="Customer complaint"
+          label="Work requested"
           name="complaint"
           required
           defaultValue={defaultComplaint}
@@ -266,14 +289,19 @@ function VisitStep({
           placeholder="In the customer's words — e.g. AC not cooling, noise when braking"
           className="[&_textarea]:min-h-28 [&_textarea]:text-base md:[&_textarea]:text-sm"
         />
+        {/* Optional: the odometer is often not to hand at drop-off, and the
+            work order should not wait on it. */}
         <TextField
           label="Current mileage (km)"
           name="mileage"
-          required
           inputMode="numeric"
           error={errors.mileage}
-          hint={lastMileage !== null ? `Last recorded: ${lastMileage.toLocaleString('en-AE')} km` : 'Read it from the odometer.'}
-          className="max-w-xs [&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
+          hint={
+            lastMileage !== null
+              ? `Optional. Last recorded: ${lastMileage.toLocaleString('en-AE')} km`
+              : 'Optional — add it now or later.'
+          }
+          className="max-w-xs [&_input]:h-12 [&_input]:text-base md:[&_input]:h-11 md:[&_input]:text-sm"
         />
       </div>
     </Step>

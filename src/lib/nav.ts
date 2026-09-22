@@ -14,6 +14,8 @@ import {
   History,
   Receipt,
   Wallet,
+  HandCoins,
+  ChartPie,
   ReceiptText,
   Calculator,
   Percent,
@@ -23,6 +25,7 @@ import {
   Banknote,
   BarChart3,
   Settings,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -49,11 +52,37 @@ export interface NavGroup {
  */
 export const NAV_GROUPS: NavGroup[] = [
   { label: null, items: [{ label: 'Dashboard', href: '/', icon: LayoutDashboard }] },
+  /*
+   * The four documents the workshop actually touches every day come first,
+   * in the order they happen. The detailed lifecycle screens — inspections,
+   * approvals, appointments — are still here, one group down, for the jobs
+   * that use them.
+   */
+  {
+    label: 'Daily work',
+    items: [
+      {
+        label: 'Work Orders',
+        href: '/job-cards',
+        icon: ClipboardList,
+        permission: 'job_card.view',
+      },
+      { label: 'Quotations', href: '/quotations', icon: FileText, permission: 'job_card.view' },
+      { label: 'Invoices', href: '/finance/invoices', icon: Receipt, permission: 'invoice.view' },
+      { label: 'Payments', href: '/finance/payments', icon: Wallet, permission: 'invoice.view' },
+    ],
+  },
+  {
+    label: 'Customers',
+    items: [
+      { label: 'Customers', href: '/customers', icon: Users, permission: 'customer.view' },
+      { label: 'Vehicles', href: '/vehicles', icon: Car, permission: 'vehicle.view' },
+    ],
+  },
   {
     label: 'Workshop',
     items: [
-      { label: 'Job Cards', href: '/job-cards', icon: ClipboardList, permission: 'job_card.view' },
-      { label: 'Check-In', href: '/check-in', icon: LogIn, permission: 'job_card.create' },
+      { label: 'New work order', href: '/check-in', icon: LogIn, permission: 'job_card.create' },
       {
         label: 'Appointments',
         href: '/appointments',
@@ -66,15 +95,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: ClipboardCheck,
         permission: 'job_card.view',
       },
-      { label: 'Estimates', href: '/estimates', icon: FileText, permission: 'job_card.view' },
       { label: 'Approvals', href: '/approvals', icon: BadgeCheck, permission: 'job_card.view' },
-    ],
-  },
-  {
-    label: 'Customers',
-    items: [
-      { label: 'Customers', href: '/customers', icon: Users, permission: 'customer.view' },
-      { label: 'Vehicles', href: '/vehicles', icon: Car, permission: 'vehicle.view' },
     ],
   },
   {
@@ -104,8 +125,19 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Finance',
     items: [
-      { label: 'Invoices', href: '/finance/invoices', icon: Receipt, permission: 'invoice.view' },
-      { label: 'Payments', href: '/finance/payments', icon: Wallet, permission: 'invoice.view' },
+      { label: 'Overview', href: '/finance', icon: ChartPie, permission: 'invoice.view' },
+      {
+        label: 'Outstanding',
+        href: '/finance/outstanding',
+        icon: HandCoins,
+        permission: 'invoice.view',
+      },
+      {
+        label: 'Payables',
+        href: '/finance/payables',
+        icon: Banknote,
+        permission: 'inventory.view',
+      },
       {
         label: 'Expenses',
         href: '/finance/expenses',
@@ -142,7 +174,6 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/hr/attendance',
         icon: CalendarCheck,
         permission: 'payroll.view',
-        soon: true,
       },
       {
         label: 'Leave',
@@ -164,7 +195,13 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'More',
     items: [
       { label: 'Reports', href: '/reports', icon: BarChart3, soon: true },
-      { label: 'Settings', href: '/settings', icon: Settings, soon: true },
+      { label: 'Settings', href: '/settings', icon: Settings, permission: 'accounting.view' },
+      {
+        label: 'Users & roles',
+        href: '/settings/users',
+        icon: ShieldCheck,
+        permission: 'user.view',
+      },
     ],
   },
 ];

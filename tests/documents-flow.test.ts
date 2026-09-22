@@ -180,15 +180,20 @@ describe('customer documents and sharing', () => {
     const estimate = await prisma.estimate.findUniqueOrThrow({ where: { id: estimateId } });
     assert.equal(document.number, estimate.estimateNumber);
     assert.equal(document.status.label, 'Awaiting approval');
+    // The workshop's sheet: one numbered list, each line marked parts or labour.
     assert.deepEqual(
       document.sections.map((s) => s.title),
-      ['Labour', 'Parts'],
+      [''],
+    );
+    assert.deepEqual(
+      document.sections[0].lines.map((l) => l.type),
+      ['LABOUR', 'PARTS'],
     );
     // Totals come straight from the estimate: 375 + 480 = 855.00, VAT 5% = 42.75, total 897.75.
     assert.deepEqual(
       document.totals.map((t) => [t.label, t.amount]),
       [
-        ['Subtotal', estimate.subtotal.toString()],
+        ['Total excl. VAT', estimate.subtotal.toString()],
         ['VAT 5%', estimate.taxAmount.toString()],
         ['Total', estimate.totalAmount.toString()],
       ],
@@ -213,6 +218,10 @@ describe('customer documents and sharing', () => {
       'VAT 5%',
       'Comet Autos',
       'Valid until',
+      'S.NO',
+      'TYPE',
+      'LABOUR',
+      'PARTS',
     ]) {
       assert.ok(text.includes(expected), `PDF shows ${expected}`);
     }
@@ -228,7 +237,7 @@ describe('customer documents and sharing', () => {
         {
           title: 'Parts',
           lines: Array.from({ length: 70 }, (_, i) => ({
-            ...document.sections[1].lines[0],
+            ...document.sections[0].lines[1],
             description: `Part line ${i + 1} with a fairly long description that needs to wrap onto a second line in the table`,
           })),
         },
@@ -368,11 +377,16 @@ describe('customer documents and sharing', () => {
     assert.equal(document.status.label, 'Partially paid');
     assert.deepEqual(
       document.sections.map((s) => s.title),
-      ['Labour', 'Parts'],
+      [''],
+    );
+    assert.deepEqual(
+      document.sections[0].lines.map((l) => l.type),
+      ['LABOUR', 'PARTS'],
+      'a repair-billed line is typed from its labour / part record',
     );
     const totals = Object.fromEntries(document.totals.map((t) => [t.label, t.amount]));
     assert.deepEqual(totals, {
-      Subtotal: '855',
+      'Total excl. VAT': '855',
       'VAT 5%': '42.75',
       Total: '897.75',
       'Amount paid': '300.00',

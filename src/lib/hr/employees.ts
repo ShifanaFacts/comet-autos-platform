@@ -7,7 +7,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
-import { emptyToNull } from '@/lib/normalize';
+import { emptyToNull, normalizePhone } from '@/lib/normalize';
 
 /*
  * The workshop's people. An Employee is who did the work — the record the
@@ -18,8 +18,8 @@ import { emptyToNull } from '@/lib/normalize';
  * An employee is never deleted. Someone who leaves is marked inactive with
  * a termination date, so every job they worked on still reads correctly.
  *
- * Contact details live on the linked User when there is one; the Employee
- * model has no phone/email of its own (see the report in PROJECT-STATUS).
+ * Contact details belong to the employee, not to any login: a technician who
+ * never signs in can still be reached.
  */
 
 const employeeSchema = z.object({
@@ -39,6 +39,13 @@ const employeeSchema = z.object({
     .min(1, 'Enter an employee code.')
     .max(40),
   jobTitle: z.string().trim().max(80).optional(),
+  phone: z
+    .string()
+    .trim()
+    .max(30)
+    .optional()
+    .refine((value) => !value || /^[+d][ds()-]{5,}$/.test(value), 'Enter a valid phone number.'),
+  email: z.union([z.literal(''), z.email('Enter a valid email address.')]).optional(),
   department: z.string().trim().max(80).optional(),
   hireDate: z
     .string({ error: 'Choose the joining date.' })
@@ -110,6 +117,8 @@ function employeeData(input: EmployeeInput) {
     lastName: input.lastName.replace(/\s+/g, ' '),
     employeeCode: input.employeeCode.toUpperCase(),
     jobTitle: emptyToNull(input.jobTitle),
+    phone: input.phone ? normalizePhone(input.phone) : null,
+    email: emptyToNull(input.email)?.toLowerCase() ?? null,
     department: emptyToNull(input.department),
     hireDate: new Date(`${input.hireDate}T00:00:00Z`),
     terminationDate: input.terminationDate ? new Date(`${input.terminationDate}T00:00:00Z`) : null,
@@ -188,6 +197,8 @@ export async function updateEmployee(
         lastName: before.lastName,
         employeeCode: before.employeeCode,
         jobTitle: before.jobTitle,
+        phone: before.phone,
+        email: before.email,
         department: before.department,
         branchId: before.branchId,
         userId: before.userId,
@@ -198,6 +209,8 @@ export async function updateEmployee(
         lastName: employee.lastName,
         employeeCode: employee.employeeCode,
         jobTitle: employee.jobTitle,
+        phone: employee.phone,
+        email: employee.email,
         department: employee.department,
         branchId: employee.branchId,
         userId: employee.userId,
@@ -227,6 +240,8 @@ export async function listEmployees(
               { lastName: { contains: q, mode: 'insensitive' } },
               { employeeCode: { contains: q, mode: 'insensitive' } },
               { jobTitle: { contains: q, mode: 'insensitive' } },
+              { phone: { contains: q } },
+              { email: { contains: q, mode: 'insensitive' } },
             ],
           }
         : {}),
@@ -275,14 +290,8 @@ export async function getEmployeeDetail(user: AuthenticatedUser, employeeId: str
             id: true,
             jobNumber: true,
             status: true,
-            vehicle: {
-              select: {
-                plateNumber: true,
-                make: true,
-                model: true,
-                customer: { select: { name: true } },
-              },
-            },
+            customer: { select: { name: true } },
+            vehicle: { select: { plateNumber: true, make: true, model: true } },
           },
         },
       },

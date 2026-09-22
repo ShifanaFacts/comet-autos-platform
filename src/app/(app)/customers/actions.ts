@@ -14,7 +14,12 @@ import {
   updateCustomer,
   type CustomerInput,
 } from '@/lib/customers/service';
-import { createVehicle, updateVehicle, type VehicleInput } from '@/lib/vehicles/service';
+import {
+  createVehicle,
+  transferVehicleOwnership,
+  updateVehicle,
+  type VehicleInput,
+} from '@/lib/vehicles/service';
 
 // Shape is validated by the services' zod schemas; missing fields become field errors there.
 const asCustomer = (formData: FormData) => formDataToObject(formData) as unknown as CustomerInput;
@@ -104,4 +109,20 @@ export async function updateVehicleAction(
   revalidatePath('/vehicles');
   revalidatePath(`/vehicles/${vehicleId}`);
   redirect(`/vehicles/${vehicleId}`);
+}
+
+export async function transferVehicleAction(
+  vehicleId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() =>
+    transferVehicleOwnership(user, vehicleId, formDataToObject(formData)),
+  );
+  if (!result.ok && !result.duplicate) return fail(result);
+  revalidatePath('/vehicles');
+  revalidatePath(`/vehicles/${vehicleId}`);
+  revalidatePath('/customers', 'layout');
+  redirect(`/vehicles/${vehicleId}?transferred=1`);
 }

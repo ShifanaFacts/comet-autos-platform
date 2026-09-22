@@ -11,6 +11,7 @@ import { JobContextHeader } from '@/components/workshop/job-context-header';
 import { InspectionResultPill } from '@/components/workshop/status-pills';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LinkButton } from '@/components/shared/link-button';
+import { StagePhotosPanel } from '@/components/media/stage-photos-panel';
 import { InspectionChecklist, type ChecklistItem } from './inspection-checklist';
 import { StartInspectionForm } from './start-inspection-form';
 
@@ -40,7 +41,10 @@ export default async function InspectionPage({ params }: { params: Promise<{ id:
 
       {!inspection ? (
         status === 'ARRIVED' && canEdit ? (
-          <Section title="Start the inspection" description="Starting moves the job from Arrived into Inspection.">
+          <Section
+            title="Start the inspection"
+            description="Starting moves the job from Arrived into Inspection."
+          >
             <Panel className="max-w-2xl sm:p-8">
               <StartInspectionForm
                 jobCardId={jobCard.id}
@@ -78,16 +82,33 @@ export default async function InspectionPage({ params }: { params: Promise<{ id:
           canDiagnose={canEdit && status === 'INSPECTION'}
         />
       )}
+
+      {inspection ? (
+        <StagePhotosPanel
+          jobCardId={jobCard.id}
+          branchId={jobCard.branchId}
+          status={jobCard.status}
+          stage="INSPECTION"
+          hint="Photograph anything you flag — it is what the customer is shown."
+        />
+      ) : null}
     </Stack>
   );
 }
 
 /** The standard checklist merged with what has already been recorded (recorded custom items included). */
 function buildChecklist(
-  recorded: { category: string | null; description: string; result: ChecklistItem['result']; notes: string | null }[],
+  recorded: {
+    category: string | null;
+    description: string;
+    result: ChecklistItem['result'];
+    notes: string | null;
+  }[],
 ): ChecklistItem[] {
   const key = (category: string, description: string) => `${category}::${description}`;
-  const saved = new Map(recorded.map((item) => [key(item.category ?? 'Other findings', item.description), item]));
+  const saved = new Map(
+    recorded.map((item) => [key(item.category ?? 'Other findings', item.description), item]),
+  );
   const items: ChecklistItem[] = INSPECTION_CHECKLIST.flatMap(({ category, items: descriptions }) =>
     descriptions.map((description) => {
       const match = saved.get(key(category, description));
@@ -130,7 +151,9 @@ function InspectionReport({
     <Section
       title={inspection.status === 'COMPLETED' ? 'Inspection report' : 'Inspection in progress'}
       description={`Inspected by ${employeeName(inspection.inspectedByEmployee)}${
-        inspection.status === 'COMPLETED' ? ` · completed ${formatDateTime(inspection.inspectedAt)}` : ''
+        inspection.status === 'COMPLETED'
+          ? ` · completed ${formatDateTime(inspection.inspectedAt)}`
+          : ''
       } · ${items.length} checkpoints recorded, ${problems} need attention`}
       action={
         canDiagnose ? (
@@ -143,21 +166,28 @@ function InspectionReport({
     >
       {inspection.summary ? (
         <Panel>
-          <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Summary</p>
+          <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+            Summary
+          </p>
           <p className="mt-2 text-sm whitespace-pre-wrap">{inspection.summary}</p>
         </Panel>
       ) : null}
       <Panel padding="none">
         <ul className="divide-y divide-border">
           {items.map((item) => (
-            <li key={item.id} className="flex flex-col gap-2 px-4 py-4 sm:flex-row sm:items-start sm:gap-6 sm:px-6">
+            <li
+              key={item.id}
+              className="flex flex-col gap-2 px-4 py-4 sm:flex-row sm:items-start sm:gap-6 sm:px-6"
+            >
               <div className="w-24 shrink-0">
                 <InspectionResultPill result={item.result} />
               </div>
               <div className="flex min-w-0 flex-col gap-1">
                 <p className="text-sm font-medium">
                   {item.description}
-                  {item.category ? <span className="font-normal text-muted-foreground"> · {item.category}</span> : null}
+                  {item.category ? (
+                    <span className="font-normal text-muted-foreground"> · {item.category}</span>
+                  ) : null}
                 </p>
                 {item.notes ? <p className="text-sm text-muted-foreground">{item.notes}</p> : null}
               </div>

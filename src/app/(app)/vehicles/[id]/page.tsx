@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { CalendarDays, History, LogIn, Pencil } from 'lucide-react';
+import { ArrowLeftRight, CalendarDays, History, LogIn, Pencil } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getVehicleDetail } from '@/lib/vehicles/service';
@@ -12,6 +12,7 @@ import { JobStatusBadge } from '@/components/shared/job-status-badge';
 import { LinkButton } from '@/components/shared/link-button';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { EstimateStatusPill } from '@/components/workshop/status-pills';
+import { StatusPill } from '@/components/shared/status-pill';
 
 export default async function VehicleDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -34,7 +35,10 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
     ['Model', vehicle.model],
     ['Year', vehicle.year ?? '—'],
     ['Colour', vehicle.color ?? '—'],
-    ['Last mileage', vehicle.lastMileage !== null ? `${vehicle.lastMileage.toLocaleString('en-AE')} km` : '—'],
+    [
+      'Last mileage',
+      vehicle.lastMileage !== null ? `${vehicle.lastMileage.toLocaleString('en-AE')} km` : '—',
+    ],
   ];
 
   return (
@@ -45,17 +49,24 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
             ← Vehicles
           </Link>
         }
-        leading={<VehiclePlate plateNumber={vehicle.plateNumber} className="px-3 py-1.5 text-base" />}
+        leading={
+          <VehiclePlate plateNumber={vehicle.plateNumber} className="px-3 py-1.5 text-base" />
+        }
         title={
           <span>
             {vehicle.make} {vehicle.model}
-            {vehicle.year ? <span className="font-normal text-muted-foreground"> {vehicle.year}</span> : null}
+            {vehicle.year ? (
+              <span className="font-normal text-muted-foreground"> {vehicle.year}</span>
+            ) : null}
           </span>
         }
         description={
           <>
             Owner{' '}
-            <Link href={`/customers/${vehicle.customer.id}`} className="font-medium text-foreground hover:underline">
+            <Link
+              href={`/customers/${vehicle.customer.id}`}
+              className="font-medium text-foreground hover:underline"
+            >
               {vehicle.customer.name}
             </Link>{' '}
             · {vehicle.customer.phone}
@@ -69,7 +80,17 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
                 Edit
               </LinkButton>
             ) : null}
-            <LinkButton href={`/appointments/new?vehicle=${vehicle.id}`} variant="outline" size="lg">
+            {canEdit ? (
+              <LinkButton href={`/vehicles/${vehicle.id}/transfer`} variant="outline" size="lg">
+                <ArrowLeftRight />
+                Change owner
+              </LinkButton>
+            ) : null}
+            <LinkButton
+              href={`/appointments/new?vehicle=${vehicle.id}`}
+              variant="outline"
+              size="lg"
+            >
               <CalendarDays />
               Book appointment
             </LinkButton>
@@ -88,23 +109,41 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
       />
 
       <Grid gap="xl" className="items-start xl:grid-cols-12">
-        <Section title="Service history" description={`${vehicle.jobCards.length} visit${vehicle.jobCards.length === 1 ? '' : 's'}`} className="xl:col-span-8">
+        <Section
+          title="Service history"
+          description={`${vehicle.jobCards.length} visit${vehicle.jobCards.length === 1 ? '' : 's'}`}
+          className="xl:col-span-8"
+        >
           {vehicle.jobCards.length === 0 ? (
-            <EmptyState icon={History} title="No visits yet" description="Each check-in adds a job card to this vehicle's history." />
+            <EmptyState
+              icon={History}
+              title="No visits yet"
+              description="Each work order is added to this vehicle's history."
+            />
           ) : (
             <Panel padding="none">
               <ol className="divide-y divide-border">
                 {vehicle.jobCards.map((job) => (
                   <li key={job.id}>
-                    <Link href={`/job-cards/${job.id}`} className="flex flex-col gap-3 px-4 py-5 hover:bg-muted/60 sm:px-6">
+                    <Link
+                      href={`/job-cards/${job.id}`}
+                      className="flex flex-col gap-3 px-4 py-5 hover:bg-muted/60 sm:px-6"
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <span className="font-medium">{job.jobNumber}</span>
                           <JobStatusBadge status={job.status} />
+                          {job.customerId !== vehicle.customerId ? (
+                            <StatusPill tone="neutral">
+                              Previous owner · {job.customer.name}
+                            </StatusPill>
+                          ) : null}
                         </div>
                         <span className="text-sm text-muted-foreground">
                           {formatDate(job.openedAt)}
-                          {job.odometerReading !== null ? ` · ${job.odometerReading.toLocaleString('en-AE')} km` : ''}
+                          {job.odometerReading !== null
+                            ? ` · ${job.odometerReading.toLocaleString('en-AE')} km`
+                            : ''}
                         </span>
                       </div>
                       <p className="text-sm">
@@ -119,8 +158,12 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
                       ) : null}
                       {job.estimates[0] ? (
                         <div className="flex items-center gap-3 text-sm">
-                          <span className="text-muted-foreground">{job.estimates[0].estimateNumber}</span>
-                          <span className="font-medium tabular-nums">{formatMoney(job.estimates[0].totalAmount)}</span>
+                          <span className="text-muted-foreground">
+                            {job.estimates[0].estimateNumber}
+                          </span>
+                          <span className="font-medium tabular-nums">
+                            {formatMoney(job.estimates[0].totalAmount)}
+                          </span>
                           <EstimateStatusPill status={job.estimates[0].status} />
                         </div>
                       ) : null}
@@ -150,9 +193,14 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
               <Panel padding="none">
                 <ul className="divide-y divide-border">
                   {vehicle.appointments.map((appointment) => (
-                    <li key={appointment.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:px-6">
+                    <li
+                      key={appointment.id}
+                      className="flex flex-col gap-1 px-4 py-3 text-sm sm:px-6"
+                    >
                       <span className="font-medium">{formatDateTime(appointment.scheduledAt)}</span>
-                      {appointment.notes ? <span className="text-muted-foreground">{appointment.notes}</span> : null}
+                      {appointment.notes ? (
+                        <span className="text-muted-foreground">{appointment.notes}</span>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

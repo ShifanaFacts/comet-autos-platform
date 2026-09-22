@@ -21,7 +21,10 @@ export async function getJobWorkspace(user: AuthenticatedUser, jobCardId: string
       createdBy: { select: { fullName: true } },
       deliveredBy: { select: { fullName: true } },
       appointment: { select: { scheduledAt: true, notes: true } },
-      vehicle: { include: { customer: true } },
+      // The job's own customer. The vehicle's current owner may be someone
+      // else by now; anything about this job reads jobCard.customer.
+      customer: true,
+      vehicle: true,
       statusHistory: {
         orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
         include: {
@@ -279,9 +282,8 @@ export async function getWorkQueues(user: AuthenticatedUser) {
     status: true,
     openedAt: true,
     customerComplaint: true,
-    vehicle: {
-      select: { plateNumber: true, make: true, model: true, customer: { select: { name: true, phone: true } } },
-    },
+    customer: { select: { name: true, phone: true } },
+    vehicle: { select: { plateNumber: true, make: true, model: true } },
     assignments: {
       where: { unassignedAt: null, assignmentRole: 'PRIMARY' as const },
       select: { employee: { select: { firstName: true, lastName: true } } },
@@ -324,6 +326,10 @@ export async function getWorkQueues(user: AuthenticatedUser) {
         updatedAt: true,
         kind: true,
         approvals: { orderBy: { decidedAt: 'desc' }, take: 1, select: { approvalMethod: true, decidedAt: true } },
+        // The quotation's own parties, so one raised without a work order
+        // still shows who and what it is for.
+        customer: { select: { name: true, phone: true } },
+        vehicle: { select: { plateNumber: true, make: true, model: true } },
         jobCard: { select: jobSelect },
       },
     }),

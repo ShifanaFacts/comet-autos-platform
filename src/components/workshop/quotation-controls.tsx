@@ -19,12 +19,12 @@ import { SignaturePad } from '@/components/media/signature-pad';
 import type { ActionResult } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import {
-  createEstimateAction,
-  recordDecisionAction,
-  reissueLinkAction,
-  reviseEstimateAction,
-} from '../actions';
-import { CustomerLinkPanel } from './customer-link-panel';
+  recordQuotationDecisionAction,
+  reissueQuotationLinkAction,
+  reviseQuotationAction,
+} from '@/app/(app)/quotations/actions';
+import { createEstimateAction } from '@/app/(app)/job-cards/[id]/actions';
+import { CustomerLinkPanel } from '@/components/workshop/customer-link-panel';
 
 function useSimpleAction() {
   const router = useRouter();
@@ -42,30 +42,35 @@ function useSimpleAction() {
   return { error, isPending, run };
 }
 
-export function CreateEstimateButton({ jobCardId }: { jobCardId: string }) {
+export function CreateEstimateButton({
+  jobCardId,
+  /** Full-width, for a card on the work order screen. */
+  compact = false,
+}: {
+  jobCardId: string;
+  compact?: boolean;
+}) {
   const { error, isPending, run } = useSimpleAction();
   return (
     <div className="flex flex-col gap-3">
       <Button
         size="lg"
-        className="self-start"
+        className={compact ? 'h-11 w-full' : 'self-start'}
         disabled={isPending}
-        onClick={() => run(() => createEstimateAction(jobCardId), 'Estimate created')}
+        onClick={() => run(() => createEstimateAction(jobCardId), 'Quotation created')}
       >
         {isPending ? <Loader2 className="animate-spin" /> : <FilePlus2 />}
-        Create estimate
+        Create quotation
       </Button>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
     </div>
   );
 }
 
-export function ReviseEstimateButton({
-  jobCardId,
+export function ReviseQuotationButton({
   estimateId,
   variant = 'outline',
 }: {
-  jobCardId: string;
   estimateId: string;
   variant?: 'outline' | 'default';
 }) {
@@ -77,14 +82,14 @@ export function ReviseEstimateButton({
         trigger={
           <Button variant={variant} disabled={isPending}>
             {isPending ? <Loader2 className="animate-spin" /> : <GitBranch />}
-            Revise estimate
+            Revise quotation
           </Button>
         }
         title="Create a revised version?"
         description="A new draft is created from this version. The current version and its history are kept, and its customer link stops working."
         confirmLabel="Create revision"
         onConfirm={async () =>
-          run(() => reviseEstimateAction(jobCardId, estimateId), 'Revision created')
+          run(() => reviseQuotationAction(estimateId), 'Revision created')
         }
       />
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -93,11 +98,9 @@ export function ReviseEstimateButton({
 }
 
 export function NewLinkButton({
-  jobCardId,
   estimateId,
   customerName,
 }: {
-  jobCardId: string;
   estimateId: string;
   customerName: string;
 }) {
@@ -131,7 +134,7 @@ export function NewLinkButton({
         onConfirm={async () =>
           startTransition(async () => {
             setError(null);
-            const result = await reissueLinkAction(jobCardId, estimateId);
+            const result = await reissueQuotationLinkAction(estimateId);
             if (!result.ok || !result.data)
               return setError(result.error ?? 'Could not create a link.');
             setLink(result.data);
@@ -144,11 +147,9 @@ export function NewLinkButton({
 }
 
 export function RecordDecisionForm({
-  jobCardId,
   estimateId,
   customerName,
 }: {
-  jobCardId: string;
   estimateId: string;
   customerName: string;
 }) {
@@ -160,7 +161,7 @@ export function RecordDecisionForm({
   const canSign = decision === 'APPROVED' && method === 'IN_PERSON';
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
     async (prev, formData) => {
-      const result = await recordDecisionAction(jobCardId, estimateId, prev, formData);
+      const result = await recordQuotationDecisionAction(estimateId, prev, formData);
       if (result.ok) {
         toast.success(decision === 'APPROVED' ? 'Approval recorded' : 'Rejection recorded');
         router.refresh();

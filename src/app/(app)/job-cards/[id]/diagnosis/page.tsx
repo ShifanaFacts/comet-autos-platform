@@ -11,6 +11,7 @@ import { JobContextHeader } from '@/components/workshop/job-context-header';
 import { InspectionResultPill } from '@/components/workshop/status-pills';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LinkButton } from '@/components/shared/link-button';
+import { StagePhotosPanel } from '@/components/media/stage-photos-panel';
 import { DiagnosisForm } from './diagnosis-form';
 
 export default async function DiagnosisPage({ params }: { params: Promise<{ id: string }> }) {
@@ -55,7 +56,10 @@ export default async function DiagnosisPage({ params }: { params: Promise<{ id: 
             }
             action={
               inspection ? (
-                <Link href={`/job-cards/${jobCard.id}/inspection`} className="font-medium text-primary hover:text-primary-hover">
+                <Link
+                  href={`/job-cards/${jobCard.id}/inspection`}
+                  className="font-medium text-primary hover:text-primary-hover"
+                >
                   Full report
                 </Link>
               ) : null
@@ -63,7 +67,9 @@ export default async function DiagnosisPage({ params }: { params: Promise<{ id: 
           >
             <Panel padding="none">
               {inspection?.summary ? (
-                <p className="border-b border-border px-4 py-4 text-sm whitespace-pre-wrap sm:px-6">{inspection.summary}</p>
+                <p className="border-b border-border px-4 py-4 text-sm whitespace-pre-wrap sm:px-6">
+                  {inspection.summary}
+                </p>
               ) : null}
               {flagged.length > 0 ? (
                 <ul className="divide-y divide-border">
@@ -72,7 +78,9 @@ export default async function DiagnosisPage({ params }: { params: Promise<{ id: 
                       <InspectionResultPill result={item.result} />
                       <span className="min-w-0">
                         <span className="font-medium">{item.description}</span>
-                        {item.notes ? <span className="block text-muted-foreground">{item.notes}</span> : null}
+                        {item.notes ? (
+                          <span className="block text-muted-foreground">{item.notes}</span>
+                        ) : null}
                       </span>
                     </li>
                   ))}
@@ -83,6 +91,16 @@ export default async function DiagnosisPage({ params }: { params: Promise<{ id: 
                 </p>
               )}
             </Panel>
+          </Section>
+
+          <Section title="Evidence" description="What you saw, photographed where you saw it.">
+            <StagePhotosPanel
+              jobCardId={jobCard.id}
+              branchId={jobCard.branchId}
+              status={jobCard.status}
+              stage="DIAGNOSIS"
+              hint="A photo of the fault saves explaining it twice."
+            />
           </Section>
         </Stack>
 
@@ -101,9 +119,17 @@ export default async function DiagnosisPage({ params }: { params: Promise<{ id: 
               <DiagnosisForm
                 jobCardId={jobCard.id}
                 isCorrection={Boolean(diagnosis)}
-                employees={(await listWorkshopEmployees(user)).map((e) => ({ id: e.id, name: employeeName(e), jobTitle: e.jobTitle }))}
+                employees={(await listWorkshopEmployees(user)).map((e) => ({
+                  id: e.id,
+                  name: employeeName(e),
+                  jobTitle: e.jobTitle,
+                }))}
                 initial={{
-                  employeeId: diagnosis?.diagnosedByEmployee.id ?? inspection?.inspectedByEmployee.id ?? primaryTechnician?.id ?? null,
+                  employeeId:
+                    diagnosis?.diagnosedByEmployee.id ??
+                    inspection?.inspectedByEmployee.id ??
+                    primaryTechnician?.id ??
+                    null,
                   findings: diagnosis?.findings ?? '',
                   recommendedAction: diagnosis?.recommendedAction ?? '',
                 }}
@@ -113,11 +139,15 @@ export default async function DiagnosisPage({ params }: { params: Promise<{ id: 
             <Panel>
               <dl className="flex flex-col gap-6 text-sm">
                 <div className="flex flex-col gap-2">
-                  <dt className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Diagnosis</dt>
+                  <dt className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+                    Diagnosis
+                  </dt>
                   <dd className="whitespace-pre-wrap">{diagnosis.findings}</dd>
                 </div>
                 <div className="flex flex-col gap-2">
-                  <dt className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Recommended work</dt>
+                  <dt className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+                    Recommended work
+                  </dt>
                   <dd className="whitespace-pre-wrap">{diagnosis.recommendedAction ?? '—'}</dd>
                 </div>
               </dl>
@@ -136,7 +166,11 @@ export default async function DiagnosisPage({ params }: { params: Promise<{ id: 
           ) : (
             <EmptyState
               icon={Stethoscope}
-              title={inspection?.status === 'COMPLETED' ? 'No diagnosis yet' : 'Finish the inspection first'}
+              title={
+                inspection?.status === 'COMPLETED'
+                  ? 'No diagnosis yet'
+                  : 'Finish the inspection first'
+              }
               description={
                 inspection?.status === 'COMPLETED'
                   ? "You don't have permission to record diagnoses."

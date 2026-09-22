@@ -9,43 +9,11 @@ import bcrypt from 'bcryptjs';
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
-// V1 permission catalog, taken directly from section 25 of the build
-// instruction (plus a `vehicle.*` set by analogy to `customer.*`, since
-// Quick Check-In creates vehicles as well as customers). Permission is a
-// global platform catalog (no organizationId) — see its schema comment.
-const PERMISSION_CODES = [
-  'job_card.view',
-  'job_card.create',
-  'job_card.edit',
-  'job_card.assign',
-  'job_card.close',
-  'customer.view',
-  'customer.create',
-  'customer.edit',
-  'vehicle.view',
-  'vehicle.create',
-  'vehicle.edit',
-  'invoice.view',
-  'invoice.create',
-  'invoice.cancel',
-  'payment.view',
-  'payment.create',
-  'payment.reverse',
-  'inventory.view',
-  'inventory.adjust',
-  'inventory.issue',
-  'inventory.manage',
-  'purchase.create',
-  'purchase.receive',
-  'accounting.view',
-  'accounting.create',
-  'accounting.edit',
-  'accounting.export',
-  'payroll.view',
-  'payroll.create',
-  'payroll.approve',
-  'payroll.export',
-];
+// The permission catalogue lives in one place so the seed, the
+// `db:permissions` script and the access screens can never disagree.
+// Permission is a global platform catalog (no organizationId) — see its
+// schema comment.
+import { PERMISSION_CODES } from '../src/lib/auth/permission-catalog.js';
 
 const SEED_OWNER_EMAIL = 'shifanachennara@gmail.com';
 // Dev-only default password — change immediately in any non-local

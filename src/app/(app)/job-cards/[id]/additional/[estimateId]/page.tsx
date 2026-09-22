@@ -13,8 +13,8 @@ import { JobContextHeader } from '@/components/workshop/job-context-header';
 import { EstimateStatusPill } from '@/components/workshop/status-pills';
 import { EstimateLines, trimQuantity } from '@/components/workshop/estimate-lines';
 import { cn } from '@/lib/utils';
-import { EstimateBuilder } from '../../estimate/estimate-builder';
-import { NewLinkButton, RecordDecisionForm } from '../../estimate/estimate-controls';
+import { QuotationBuilder } from '@/components/workshop/quotation-builder';
+import { NewLinkButton, RecordDecisionForm } from '@/components/workshop/quotation-controls';
 
 const METHOD_LABEL: Record<ApprovalMethod, string> = {
   IN_PERSON: 'in person',
@@ -44,13 +44,13 @@ export default async function AdditionalWorkPage({
   }
   const { jobCard, status } = workspace;
   const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
-  const customer = jobCard.vehicle.customer;
+  const customer = jobCard.customer;
   const decision = estimate.approvals[0];
   const expired =
     estimate.status === 'SENT' &&
     estimate.validUntil !== null &&
     estimate.validUntil.toISOString().slice(0, 10) < localDateString();
-  const defaultVatRate = resolveDefaultVatRate(user.organizationId);
+  const defaultVatRate = await resolveDefaultVatRate(user.organizationId);
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -92,8 +92,7 @@ export default async function AdditionalWorkPage({
 
           {estimate.status === 'DRAFT' && canEdit && status === 'REPAIR' ? (
             <Panel className="sm:p-8">
-              <EstimateBuilder
-                jobCardId={jobCard.id}
+              <QuotationBuilder
                 estimateId={estimate.id}
                 customerName={customer.name}
                 recommendation={null}
@@ -172,11 +171,7 @@ export default async function AdditionalWorkPage({
                 description={`${customer.name} can approve or reject on their secure link.`}
               >
                 <Panel>
-                  <NewLinkButton
-                    jobCardId={jobCard.id}
-                    estimateId={estimate.id}
-                    customerName={customer.name}
-                  />
+                  <NewLinkButton estimateId={estimate.id} customerName={customer.name} />
                 </Panel>
               </Section>
               <Section
@@ -184,11 +179,7 @@ export default async function AdditionalWorkPage({
                 description="If the customer answers in person, by phone or by message."
               >
                 <Panel>
-                  <RecordDecisionForm
-                    jobCardId={jobCard.id}
-                    estimateId={estimate.id}
-                    customerName={customer.name}
-                  />
+                  <RecordDecisionForm estimateId={estimate.id} customerName={customer.name} />
                 </Panel>
               </Section>
             </>

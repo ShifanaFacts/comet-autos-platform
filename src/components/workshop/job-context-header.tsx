@@ -26,8 +26,8 @@ export function JobContextHeader({
       make: string;
       model: string;
       year: number | null;
-      customer: { id: string; name: string; phone: string };
     };
+    customer: { id: string; name: string; phone: string };
   };
   /** Sub-page name, e.g. "Inspection". Omit on the job card itself. */
   section?: string;
@@ -46,7 +46,7 @@ export function JobContextHeader({
             href="/job-cards"
             className="inline-flex min-h-9 items-center hover:text-foreground md:min-h-0"
           >
-            Job Cards
+            Work Orders
           </Link>
           <ChevronRight className="size-3.5" />
           {section ? (
@@ -82,13 +82,13 @@ export function JobContextHeader({
         description ?? (
           <>
             <Link
-              href={`/customers/${vehicle.customer.id}`}
+              href={`/customers/${jobCard.customer.id}`}
               className="inline-flex min-h-9 items-center font-medium text-foreground hover:underline md:min-h-0"
             >
-              {vehicle.customer.name}
+              {jobCard.customer.name}
             </Link>
             {' · '}
-            {vehicle.customer.phone} · Job {jobCard.jobNumber}
+            {jobCard.customer.phone} · Job {jobCard.jobNumber}
           </>
         )
       }

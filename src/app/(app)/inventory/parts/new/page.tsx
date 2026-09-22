@@ -47,7 +47,7 @@ export default async function NewPartPage() {
           action={createPartAction}
           categories={categories}
           suppliers={suppliers}
-          defaultVat={resolveDefaultVatRate(user.organizationId)}
+          defaultVat={await resolveDefaultVatRate(user.organizationId)}
           isNew
           cancelHref="/inventory/parts"
         />

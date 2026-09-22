@@ -76,11 +76,13 @@ export default async function CustomerQuotePage({
     );
   }
 
-  const { jobCard } = quote;
-  const vehicle = jobCard.vehicle;
+  // The quotation names its own customer and vehicle. The work order, when
+  // there is one behind it, adds the job number, the mileage and what the
+  // technician found.
+  const { jobCard, customer, vehicle } = quote;
   const decision = quote.approvals[0];
-  const inspection = jobCard.inspections[0];
-  const recommendation = jobCard.diagnoses[0]?.recommendedAction;
+  const inspection = jobCard?.inspections[0];
+  const recommendation = jobCard?.diagnoses[0]?.recommendedAction;
   const awaiting = !decision && quote.status === 'SENT' && !quote.expired;
   const additional = quote.kind === 'ADDITIONAL';
 
@@ -94,7 +96,7 @@ export default async function CustomerQuotePage({
             </p>
             <DocumentStatus status={document.status} />
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Hello {vehicle.customer.name},</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Hello {customer.name},</h1>
           <p className="text-muted-foreground">
             {additional
               ? 'While repairing your vehicle we found more work that needs doing. It is not part of the work you already approved — please review it and let us know if we should go ahead.'
@@ -146,26 +148,32 @@ export default async function CustomerQuotePage({
           </div>
         </section>
 
-        <div className="flex items-center gap-4 rounded-2xl border border-border bg-card p-4">
-          <VehiclePlate plateNumber={vehicle.plateNumber} />
-          <div className="min-w-0">
-            <p className="truncate font-medium">
-              {vehicle.make} {vehicle.model} {vehicle.year ?? ''}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Job {jobCard.jobNumber}
-              {jobCard.odometerReading !== null
-                ? ` · ${jobCard.odometerReading.toLocaleString('en-AE')} km`
-                : ''}
-            </p>
+        {vehicle ? (
+          <div className="flex items-center gap-4 rounded-2xl border border-border bg-card p-4">
+            <VehiclePlate plateNumber={vehicle.plateNumber} />
+            <div className="min-w-0">
+              <p className="truncate font-medium">
+                {vehicle.make} {vehicle.model} {vehicle.year ?? ''}
+              </p>
+              {jobCard ? (
+                <p className="text-sm text-muted-foreground">
+                  Job {jobCard.jobNumber}
+                  {jobCard.odometerReading !== null
+                    ? ` · ${jobCard.odometerReading.toLocaleString('en-AE')} km`
+                    : ''}
+                </p>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
 
-        <Block title={additional ? 'What we found during the repair' : 'Work requested'}>
-          <p className="whitespace-pre-wrap">
-            {(additional ? quote.notes : jobCard.customerComplaint) ?? '—'}
-          </p>
-        </Block>
+        {(additional ? quote.notes : jobCard?.customerComplaint) ? (
+          <Block title={additional ? 'What we found during the repair' : 'Work requested'}>
+            <p className="whitespace-pre-wrap">
+              {additional ? quote.notes : jobCard?.customerComplaint}
+            </p>
+          </Block>
+        ) : null}
 
         {!additional && inspection && inspection.items.length > 0 ? (
           <Block title="What our technician found">

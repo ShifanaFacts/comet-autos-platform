@@ -3,6 +3,7 @@ import type { PaymentMethod } from '@/generated/prisma/enums';
 import type { WorkflowStatus } from '@/lib/workshop/stages';
 import type { JobWorkspace } from '@/lib/workshop/workspace';
 import type { BillableLine, BillingNote, JobInvoice } from '@/lib/billing/invoice';
+import { StagePhotosPanel } from '@/components/media/stage-photos-panel';
 import {
   formatCalendarDate,
   formatDateTime,
@@ -15,7 +16,8 @@ import { RecordCard, RecordList, TableWrap } from '@/components/shared/record-ca
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { trimQuantity } from '@/components/workshop/estimate-lines';
 import { cn } from '@/lib/utils';
-import { CreateInvoiceButton, DeliveryForm, PaymentForm } from './billing-forms';
+import { CreateInvoiceButton, DeliveryForm } from './billing-forms';
+import { InvoicePaymentForm } from '@/components/finance/invoice-payment-form';
 
 const PAYMENT_STATE = {
   UNPAID: { tone: 'danger', label: 'Unpaid' },
@@ -169,7 +171,7 @@ export function BillingSections({
   canDeliver: boolean;
 }) {
   const { jobCard } = workspace;
-  const customer = jobCard.vehicle.customer;
+  const customer = jobCard.customer;
   const state = invoice ? PAYMENT_STATE[invoice.paymentState] : null;
 
   return (
@@ -325,9 +327,9 @@ export function BillingSections({
             )}
             {invoice.paymentState !== 'PAID' && canPay ? (
               <div className="border-t border-border bg-muted/20 px-4 py-6 sm:px-6">
-                <PaymentForm
+                <InvoicePaymentForm
                   key={invoice.balanceDue}
-                  jobCardId={jobCard.id}
+                  invoiceId={invoice.id}
                   balance={invoice.balanceDue}
                   now={toLocalDateTimeInput(new Date())}
                 />
@@ -379,7 +381,7 @@ export function BillingSections({
                 </div>
               </div>
             ) : status === 'PAID' && canDeliver ? (
-              <DeliveryForm jobCardId={jobCard.id} customerName={jobCard.vehicle.customer.name} />
+              <DeliveryForm jobCardId={jobCard.id} customerName={jobCard.customer.name} />
             ) : (
               <p className="flex items-center gap-2 text-sm text-muted-foreground">
                 <KeyRound className="size-4" />
@@ -389,6 +391,15 @@ export function BillingSections({
               </p>
             )}
           </Panel>
+
+          {/* The vehicle as it left, photographed at handover. */}
+          <StagePhotosPanel
+            jobCardId={jobCard.id}
+            branchId={jobCard.branchId}
+            status={jobCard.status}
+            stage="DELIVERY"
+            hint="The condition it left in — the workshop's record if it is ever questioned."
+          />
         </section>
       ) : null}
     </Stack>

@@ -13,6 +13,7 @@ import {
   KeyRound,
   LogIn,
   PackageCheck,
+  Plus,
   PauseCircle,
   Receipt,
   ShieldCheck,
@@ -22,15 +23,18 @@ import {
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import {
+  getDocumentCounts,
   getFinanceSnapshot as fetchFinance,
   getLowStockParts as fetchLowStock,
   getRecentJobCards,
+  getTodaysActivity,
   getTodaysAppointments,
   getWorkshopFlow as fetchWorkshopFlow,
+  type ActivityKind,
 } from '@/lib/data/dashboard';
 import { formatMoney, formatTime, WORKSHOP_TIME_ZONE } from '@/lib/format';
 import { formatMilli } from '@/lib/money';
-import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
+import { Grid, Panel, Section, Stack } from '@/components/layout/primitives';
 import { EmptyState } from '@/components/shared/empty-state';
 import { QuickAction } from '@/components/shared/quick-action';
 import { WorkshopFlowRow } from '@/components/shared/workshop-flow-row';
@@ -44,6 +48,7 @@ import { cn } from '@/lib/utils';
 // dedupes them to one database round-trip per request.
 const getWorkshopFlow = cache(fetchWorkshopFlow);
 const getLowStock = cache(fetchLowStock);
+const getFinanceSnapshot = cache(fetchFinance);
 
 function dubaiHour() {
   return Number(
@@ -76,33 +81,50 @@ export default async function DashboardPage() {
   const canFinance = hasPermission(user, 'invoice.view', scope);
   const canInventory = hasPermission(user, 'inventory.view', scope);
   const canCheckIn = hasPermission(user, 'job_card.create', scope);
+  const canQuote = hasPermission(user, 'job_card.edit', scope);
+  const canInvoice = hasPermission(user, 'invoice.create', scope);
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
-      <PageHeader
-        eyebrow={today}
-        title={`${greeting()}, ${firstName}`}
-        description="What needs attention in the workshop right now."
-        actions={
-          <>
-            <QuickAction href="/job-cards" icon={ClipboardList} label="Job cards" />
-            {canCheckIn ? (
-              <QuickAction href="/appointments/new" icon={CalendarPlus} label="New appointment" />
-            ) : null}
-            {canCheckIn ? (
-              <QuickAction href="/check-in" icon={LogIn} label="Check in vehicle" primary />
-            ) : null}
-          </>
-        }
-      />
+      <header className="flex flex-col gap-1">
+        <p className="text-sm text-muted-foreground">{today}</p>
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          {greeting()}, {firstName}
+        </h1>
+        <p className="text-base text-muted-foreground">What do you need?</p>
+      </header>
 
-      <Suspense fallback={<Skeleton className="h-28 rounded-2xl" />}>
-        <RightNow organizationId={org} />
+      {/* The three things done every day, first and biggest. */}
+      <StartActions canCheckIn={canCheckIn} canQuote={canQuote} canInvoice={canInvoice} />
+
+      <Suspense fallback={<CountsSkeleton />}>
+        <DocumentCounts organizationId={org} canFinance={canFinance} />
       </Suspense>
 
       <Section
-        title="Action required"
-        description="Jobs waiting for the next step — open one to act on it."
+        title="Today"
+        description="Work orders opened, quotations started, invoices issued and payments taken today."
+      >
+        <Suspense fallback={<Skeleton className="h-40 rounded-xl" />}>
+          <TodaysActivity organizationId={org} canFinance={canFinance} />
+        </Suspense>
+      </Section>
+
+      {/*
+       * The detailed workshop lifecycle — inspection, diagnosis, approval,
+       * repair, quality check, delivery — stays here for the jobs that go
+       * through it. It is below the daily work, not in front of it.
+       */}
+      <Section
+        title="Detailed workflow"
+        description="Work orders that are going through inspection, repair and quality check."
+        action={
+          <span className="flex flex-wrap gap-2">
+            {canCheckIn ? (
+              <QuickAction href="/appointments/new" icon={CalendarPlus} label="New appointment" />
+            ) : null}
+          </span>
+        }
       >
         <Suspense fallback={<ActionsSkeleton />}>
           <ActionBoard organizationId={org} />
@@ -112,13 +134,13 @@ export default async function DashboardPage() {
       <Grid gap="xl" className="items-start xl:grid-cols-12">
         <Section
           title="Workshop"
-          description="Every job by stage, and the latest vehicles in."
+          description="Every work order by stage, and the latest ones opened."
           action={
             <Link
               href="/job-cards"
               className="inline-flex items-center gap-1 font-medium text-primary hover:text-primary-hover"
             >
-              All job cards
+              All work orders
               <ArrowRight className="size-4" />
             </Link>
           }
@@ -167,64 +189,237 @@ export default async function DashboardPage() {
         </Stack>
       </Grid>
 
-      {canFinance ? (
-        <Section
-          title="Money today"
-          description="Invoiced and collected today, and what customers still owe."
-        >
-          <Suspense fallback={<Skeleton className="h-24 rounded-xl" />}>
-            <FinanceStrip organizationId={org} />
-          </Suspense>
-        </Section>
-      ) : null}
     </Stack>
   );
 }
 
 /* ------------------------------------------------------------------------ */
 
-/** The headline: how many vehicles are here, with the day's key counts beside it. */
-async function RightNow({ organizationId }: { organizationId: string }) {
-  const flow = await getWorkshopFlow(organizationId);
-  const facts = [
-    { label: 'Appointments today', value: flow.todaysAppointments, href: '/appointments' },
-    {
-      label: 'Ready for collection',
-      value: flow.actions.ready + flow.actions.toDeliver,
-      href: '/job-cards?status=READY',
-    },
-    { label: 'Waiting for the customer', value: flow.actions.waitingApproval, href: '/approvals' },
-  ];
+/**
+ * "What do you need?" — the three documents, as the biggest things on the
+ * screen. A full-width stack on a phone, three across once there is room.
+ */
+function StartActions({
+  canCheckIn,
+  canQuote,
+  canInvoice,
+}: {
+  canCheckIn: boolean;
+  canQuote: boolean;
+  canInvoice: boolean;
+}) {
+  const actions = [
+    canCheckIn
+      ? {
+          href: '/check-in',
+          icon: ClipboardList,
+          label: 'Work order',
+          hint: 'Customer, vehicle and what needs doing',
+        }
+      : null,
+    canQuote
+      ? {
+          href: '/quotations/new',
+          icon: FileText,
+          label: 'Quotation',
+          hint: 'Price the work — no work order needed',
+        }
+      : null,
+    canInvoice
+      ? {
+          href: '/finance/invoices/new',
+          icon: Receipt,
+          label: 'Invoice',
+          hint: 'Bill the customer and take payment',
+        }
+      : null,
+  ].filter((action) => action !== null);
+  if (actions.length === 0) return null;
+
   return (
-    <section className="relative flex flex-col gap-6 overflow-hidden rounded-2xl bg-sidebar px-6 py-7 text-sidebar-foreground shadow-raised sm:flex-row sm:items-center sm:justify-between sm:px-8">
-      {/* A violet wash keeps the anchor strip from reading as a plain black bar. */}
-      <span
-        aria-hidden
-        className="pointer-events-none absolute -top-24 -right-16 size-72 rounded-full bg-primary/25 blur-3xl"
-      />
-      <Link href="/job-cards" className="group relative flex items-baseline gap-3">
-        <span className="text-5xl leading-none font-semibold tracking-[-0.03em] tabular-nums">
-          {flow.vehiclesCurrentlyIn}
-        </span>
-        <span className="text-base text-sidebar-foreground/80 transition-colors group-hover:text-sidebar-foreground">
-          {flow.vehiclesCurrentlyIn === 1 ? 'vehicle' : 'vehicles'} in the workshop
-        </span>
-      </Link>
-      <div className="relative grid grid-cols-3 gap-4 sm:gap-8">
-        {facts.map((fact) => (
+    <ul className="grid gap-3 sm:grid-cols-3">
+      {actions.map((action) => {
+        const Icon = action.icon;
+        return (
+          <li key={action.href}>
+            <Link
+              href={action.href}
+              className="group flex min-h-20 items-center gap-4 rounded-2xl border border-border bg-card p-4 shadow-card outline-none transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-raised focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-0 motion-reduce:transition-none sm:min-h-28 sm:flex-col sm:items-start sm:justify-between sm:p-5"
+            >
+              <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                <Icon className="size-6" />
+              </span>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="flex items-center gap-1.5 text-lg font-semibold tracking-tight">
+                  <Plus className="size-4" aria-hidden />
+                  New {action.label.toLowerCase()}
+                </span>
+                <span className="text-sm text-muted-foreground">{action.hint}</span>
+              </span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** What is open right now: the numbers behind "is there anything I've forgotten?" */
+async function DocumentCounts({
+  organizationId,
+  canFinance,
+}: {
+  organizationId: string;
+  canFinance: boolean;
+}) {
+  const [counts, finance] = await Promise.all([
+    getDocumentCounts(organizationId),
+    canFinance ? getFinanceSnapshot(organizationId) : Promise.resolve(null),
+  ]);
+  const tiles = [
+    {
+      label: 'Open work orders',
+      value: String(counts.openWorkOrders),
+      hint: 'Still in the workshop',
+      href: '/job-cards',
+      warn: false,
+    },
+    {
+      label: 'Quotations awaiting approval',
+      value: String(counts.quotationsAwaiting),
+      hint:
+        counts.draftQuotations > 0
+          ? `${counts.draftQuotations} draft${counts.draftQuotations === 1 ? '' : 's'} not sent`
+          : 'Sent, not yet answered',
+      href: '/quotations?status=awaiting',
+      warn: false,
+    },
+    ...(finance
+      ? [
+          {
+            label: 'Unpaid invoices',
+            value: String(counts.unpaidInvoices),
+            hint: `${formatMoney(finance.customerOutstanding)} owed`,
+            href: '/finance/invoices?status=unpaid',
+            warn: counts.unpaidInvoices > 0,
+          },
+          {
+            label: 'Collected today',
+            value: formatMoney(finance.todaysCollections),
+            hint: `${formatMoney(finance.todaysSales)} invoiced today`,
+            href: '/finance/payments',
+            warn: false,
+          },
+        ]
+      : []),
+  ];
+
+  return (
+    <ul className={cn('grid grid-cols-2 gap-3', tiles.length > 2 && 'lg:grid-cols-4')}>
+      {tiles.map((tile) => (
+        <li key={tile.label}>
           <Link
-            key={fact.label}
-            href={fact.href}
-            className="group flex flex-col gap-1 rounded-lg px-3 py-2 transition-colors hover:bg-white/[0.07] sm:-mx-1"
+            href={tile.href}
+            className="group flex h-full min-h-24 flex-col justify-between gap-2 rounded-xl border border-border/70 bg-card p-4 transition-colors hover:border-primary/40 hover:bg-muted/40 sm:p-5"
           >
-            <span className="text-2xl leading-none font-semibold tabular-nums">{fact.value}</span>
-            <span className="text-xs text-sidebar-foreground/70 transition-colors group-hover:text-sidebar-foreground">
-              {fact.label}
+            <span className="text-sm text-muted-foreground">{tile.label}</span>
+            <span
+              className={cn(
+                'text-2xl leading-none font-semibold tracking-tight tabular-nums sm:text-3xl',
+                tile.warn && 'text-warning',
+              )}
+            >
+              {tile.value}
+            </span>
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground">
+              {tile.hint}
+              <ArrowRight className="size-3 transition-transform group-hover:translate-x-0.5" />
             </span>
           </Link>
-        ))}
-      </div>
-    </section>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const ACTIVITY: Record<ActivityKind, { label: string; icon: LucideIcon }> = {
+  work_order: { label: 'Work order', icon: ClipboardList },
+  quotation: { label: 'Quotation', icon: FileText },
+  invoice: { label: 'Invoice', icon: Receipt },
+  payment: { label: 'Payment', icon: Wallet },
+};
+
+/** Today's documents, newest first, each a tap away. */
+async function TodaysActivity({
+  organizationId,
+  canFinance,
+}: {
+  organizationId: string;
+  canFinance: boolean;
+}) {
+  const items = await getTodaysActivity(organizationId, { includeMoney: canFinance });
+  if (items.length === 0) {
+    return (
+      <Panel>
+        <EmptyState
+          variant="inline"
+          icon={CalendarDays}
+          title="Nothing yet today"
+          description="Work orders, quotations, invoices and payments you create today appear here."
+        />
+      </Panel>
+    );
+  }
+  return (
+    <Panel padding="none">
+      <ul className="divide-y divide-border">
+        {items.map((item) => {
+          const meta = ACTIVITY[item.kind];
+          const Icon = meta.icon;
+          return (
+            <li key={`${item.kind}-${item.id}`}>
+              <Link
+                href={item.href}
+                className="flex min-h-16 items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/60 sm:gap-4 sm:px-6"
+              >
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <Icon className="size-4" />
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm font-medium">
+                    {meta.label} {item.number}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {item.customer}
+                    {item.plateNumber ? ` · ${item.plateNumber}` : ''} · {formatTime(item.at)}
+                  </span>
+                </span>
+                {item.amount ? (
+                  <span
+                    className={cn(
+                      'shrink-0 text-sm font-semibold tabular-nums',
+                      item.kind === 'payment' && 'text-success',
+                    )}
+                  >
+                    {formatMoney(item.amount)}
+                  </span>
+                ) : null}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </Panel>
+  );
+}
+
+function CountsSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <Skeleton key={i} className="h-24 rounded-xl" />
+      ))}
+    </div>
   );
 }
 
@@ -412,16 +607,16 @@ async function WorkshopActivity({ organizationId }: { organizationId: string }) 
       </div>
       <div className="border-t border-border">
         <p className="px-4 pt-5 pb-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase sm:px-6">
-          Latest check-ins
+          Latest work orders
         </p>
         {recent.length === 0 ? (
           <div className="px-4 pb-6 sm:px-6">
             <EmptyState
               variant="inline"
               icon={ClipboardList}
-              title="No vehicles in the workshop"
-              description="Checked-in vehicles appear here as soon as their job card opens."
-              action={<QuickAction href="/check-in" icon={LogIn} label="Check in vehicle" />}
+              title="No open work orders"
+              description="A work order appears here as soon as it is created."
+              action={<QuickAction href="/check-in" icon={LogIn} label="New work order" />}
             />
           </div>
         ) : (
@@ -442,7 +637,7 @@ async function WorkshopActivity({ organizationId }: { organizationId: string }) 
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
                       <span className="font-medium text-foreground/70">{job.jobNumber}</span> ·{' '}
-                      {job.vehicle.customer.name}
+                      {job.customer.name}
                     </p>
                   </div>
                   <JobStatusBadge status={job.status} />
@@ -471,7 +666,7 @@ async function TodaysAppointments({
           variant="inline"
           icon={CalendarDays}
           title="No appointments today"
-          description="Walk-ins can be checked in any time."
+          description="Walk-ins can have a work order opened any time."
           action={
             canCheckIn ? (
               <QuickAction href="/appointments/new" icon={CalendarPlus} label="Book one" />
@@ -571,60 +766,6 @@ async function LowStock({ user }: { user: AuthenticatedUser }) {
     </Panel>
   );
 }
-
-async function FinanceStrip({ organizationId }: { organizationId: string }) {
-  const finance = await getFinanceSnapshot(organizationId);
-  const cells = [
-    {
-      label: 'Invoiced today',
-      value: formatMoney(finance.todaysSales),
-      hint: `${finance.todaysInvoiceCount} invoice${finance.todaysInvoiceCount === 1 ? '' : 's'}`,
-      href: '/finance/invoices',
-    },
-    {
-      label: 'Collected today',
-      value: formatMoney(finance.todaysCollections),
-      hint: 'Payments received',
-      href: '/finance/payments',
-    },
-    {
-      label: 'Customers owe',
-      value: formatMoney(finance.customerOutstanding),
-      hint: `${finance.unpaidInvoices} unpaid invoice${finance.unpaidInvoices === 1 ? '' : 's'}`,
-      href: '/finance/invoices?status=unpaid',
-      warn: finance.unpaidInvoices > 0,
-    },
-  ];
-  return (
-    <Panel
-      padding="none"
-      className="grid divide-y divide-border sm:grid-cols-3 sm:divide-x sm:divide-y-0"
-    >
-      {cells.map((cell) => (
-        <Link
-          key={cell.label}
-          href={cell.href}
-          className="group flex flex-col gap-1.5 p-5 transition-colors hover:bg-muted/40 sm:p-6"
-        >
-          <span className="text-sm text-muted-foreground">{cell.label}</span>
-          <span
-            className={cn(
-              'text-2xl font-semibold tracking-tight tabular-nums',
-              cell.warn && 'text-warning',
-            )}
-          >
-            {cell.value}
-          </span>
-          <span className="text-xs text-muted-foreground group-hover:text-foreground">
-            {cell.hint}
-          </span>
-        </Link>
-      ))}
-    </Panel>
-  );
-}
-
-const getFinanceSnapshot = cache(fetchFinance);
 
 function ActionsSkeleton() {
   return (

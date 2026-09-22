@@ -12,7 +12,9 @@ export interface QueueJob {
   status: JobCardStatus;
   openedAt: Date;
   customerComplaint: string | null;
-  vehicle: { plateNumber: string; make: string; model: string; customer: { name: string; phone: string } };
+  /** The job's own customer — who brought the vehicle in. */
+  customer: { name: string; phone: string };
+  vehicle: { plateNumber: string; make: string; model: string };
   assignments: { employee: { firstName: string; lastName: string } }[];
 }
 
@@ -50,7 +52,7 @@ export function JobQueue({
                         {job.vehicle.make} {job.vehicle.model} · {job.jobNumber}
                       </span>
                       <span className="truncate text-xs text-muted-foreground">
-                        {job.vehicle.customer.name} · {job.customerComplaint ?? 'No complaint noted'}
+                        {job.customer.name} · {job.customerComplaint ?? 'No complaint noted'}
                       </span>
                     </span>
                     <span className="flex shrink-0 flex-wrap items-center gap-3 text-xs text-muted-foreground">

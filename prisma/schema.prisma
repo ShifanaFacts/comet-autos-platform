@@ -331,17 +331,23 @@ enum SignerType {
 // =============================================================================
 
 model Organization {
-  id           String   @id @default(uuid(7)) @db.Uuid
-  name         String
-  legalName    String?  @map("legal_name")
-  taxNumber    String?  @map("tax_number")
-  address      String?
-  phone        String?
-  email        String?
-  baseCurrency String   @default("AED") @map("base_currency")
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id              String   @id @default(uuid(7)) @db.Uuid
+  name            String
+  legalName       String?  @map("legal_name")
+  taxNumber       String?  @map("tax_number")
+  /// Whether the business charges VAT. When false, new lines default to 0%.
+  /// Existing documents keep the rate they were priced at either way.
+  isVatRegistered Boolean  @default(true) @map("is_vat_registered")
+  /// Standard VAT rate as a percentage, e.g. 5.00. Read through lib/tax —
+  /// never hard-coded elsewhere.
+  vatRate         Decimal  @default(5.00) @map("vat_rate") @db.Decimal(5, 2)
+  address         String?
+  phone           String?
+  email           String?
+  baseCurrency    String   @default("AED") @map("base_currency")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   branches                Branch[]
   users                   User[]
@@ -411,6 +417,7 @@ model Branch {
   appointments            Appointment[]
   jobCards                JobCard[]
   purchases               Purchase[]
+  estimates               Estimate[]
   invoices                Invoice[]
   expenses                Expense[]
   journalEntries          JournalEntry[]
@@ -621,7 +628,9 @@ model Customer {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   vehicles           Vehicle[]
+  jobCards           JobCard[]
   appointments       Appointment[]
+  estimates          Estimate[]
   invoices           Invoice[]
   approvals          Approval[]
   jobStatusDecisions JobStatusHistory[]
@@ -655,6 +664,8 @@ model Vehicle {
 
   appointments Appointment[]
   jobCards     JobCard[]
+  estimates    Estimate[]
+  invoices     Invoice[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, plateNumber])
@@ -698,13 +709,17 @@ model Appointment {
 // WORKSHOP
 // =============================================================================
 
-/// JobCard belongs to Vehicle only. Customer is derived through
-/// vehicle.customer — there is deliberately NO direct customerId here.
+/// customerId is the customer the job was opened for, captured at check-in
+/// from the vehicle's owner at that moment and never rewritten. A vehicle
+/// can change hands; its past jobs still belong to whoever brought it in, so
+/// service history, approvals and invoices keep the right person. Anything
+/// about the job reads jobCard.customer — never vehicle.customer.
 model JobCard {
   id                String        @id @default(uuid(7)) @db.Uuid
   organizationId    String        @map("organization_id") @db.Uuid
   branchId          String        @map("branch_id") @db.Uuid
   vehicleId         String        @map("vehicle_id") @db.Uuid
+  customerId        String        @map("customer_id") @db.Uuid
   appointmentId     String?       @map("appointment_id") @db.Uuid
   jobNumber         String        @map("job_number")
   status            JobCardStatus @default(ARRIVED)
@@ -723,6 +738,7 @@ model JobCard {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branch       Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
   vehicle      Vehicle      @relation(fields: [organizationId, vehicleId], references: [organizationId, id], onDelete: Restrict)
+  customer     Customer     @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
   appointment  Appointment? @relation(fields: [organizationId, appointmentId], references: [organizationId, id], onDelete: Restrict)
   createdBy    User         @relation(fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
   deliveredBy  User?        @relation("JobCardDeliveredBy", fields: [organizationId, deliveredByUserId], references: [organizationId, id], onDelete: Restrict)
@@ -745,6 +761,7 @@ model JobCard {
   @@index([organizationId])
   @@index([organizationId, branchId])
   @@index([organizationId, vehicleId])
+  @@index([organizationId, customerId])
   @@index([organizationId, status])
   @@index([organizationId, branchId, status])
   @@map("job_cards")
@@ -871,7 +888,17 @@ model Diagnosis {
 model Estimate {
   id                String         @id @default(uuid(7)) @db.Uuid
   organizationId    String         @map("organization_id") @db.Uuid
-  jobCardId         String         @map("job_card_id") @db.Uuid
+  /// Null for a quotation raised straight for a customer, with no work
+  /// order behind it. A workflow quotation always carries its job card.
+  jobCardId         String?        @map("job_card_id") @db.Uuid
+  /// The quotation's own branch, customer and vehicle. Backfilled from the
+  /// job card for every quotation that had one, so a workflow quotation
+  /// answers "whose is this?" without the join, and a standalone one can
+  /// answer it at all. Vehicle is optional — a customer may ask for a price
+  /// before bringing the car in.
+  branchId          String         @map("branch_id") @db.Uuid
+  customerId        String         @map("customer_id") @db.Uuid
+  vehicleId         String?        @map("vehicle_id") @db.Uuid
   previousVersionId String?        @map("previous_version_id") @db.Uuid
   estimateNumber    String         @map("estimate_number")
   version           Int            @default(1)
@@ -890,7 +917,10 @@ model Estimate {
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz
 
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  jobCard         JobCard      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  jobCard         JobCard?     @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Cascade)
+  branch          Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  customer        Customer     @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
+  vehicle         Vehicle?     @relation(fields: [organizationId, vehicleId], references: [organizationId, id], onDelete: Restrict)
   previousVersion Estimate?    @relation("EstimateRevision", fields: [organizationId, previousVersionId], references: [organizationId, id], onDelete: Restrict)
   nextVersions    Estimate[]   @relation("EstimateRevision")
   preparedBy      User         @relation("EstimatePreparedBy", fields: [organizationId, preparedByUserId], references: [organizationId, id], onDelete: Restrict)
@@ -903,6 +933,9 @@ model Estimate {
   @@unique([organizationId, estimateNumber])
   @@index([organizationId])
   @@index([organizationId, jobCardId])
+  @@index([organizationId, branchId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, vehicleId])
   @@index([organizationId, previousVersionId])
   @@index([organizationId, jobCardId, kind])
   @@map("estimates")
@@ -1327,6 +1360,11 @@ model Invoice {
   branchId          String        @map("branch_id") @db.Uuid
   jobCardId         String?       @map("job_card_id") @db.Uuid
   customerId        String        @map("customer_id") @db.Uuid
+  /// The vehicle the work was done on. Backfilled from the job card for
+  /// every invoice that had one, and set directly on an invoice raised
+  /// without one, so the tax invoice always names the car. Optional — not
+  /// every invoice is about a vehicle.
+  vehicleId         String?       @map("vehicle_id") @db.Uuid
   invoiceType       InvoiceType   @map("invoice_type")
   invoiceNumber     String        @map("invoice_number")
   status            InvoiceStatus @default(DRAFT)
@@ -1358,6 +1396,7 @@ model Invoice {
   branch       Branch        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
   jobCard      JobCard?      @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Restrict)
   customer     Customer      @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict)
+  vehicle      Vehicle?      @relation(fields: [organizationId, vehicleId], references: [organizationId, id], onDelete: Restrict)
   journalEntry JournalEntry? @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
   createdBy    User          @relation("InvoiceCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
   issuedBy     User?         @relation("InvoiceIssuedBy", fields: [organizationId, issuedByUserId], references: [organizationId, id], onDelete: Restrict)
@@ -1373,6 +1412,7 @@ model Invoice {
   @@index([organizationId, branchId])
   @@index([organizationId, jobCardId])
   @@index([organizationId, customerId])
+  @@index([organizationId, vehicleId])
   @@index([organizationId, status])
   @@map("invoices")
 }
@@ -1383,6 +1423,11 @@ model InvoiceItem {
   id             String   @id @default(uuid(7)) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
   invoiceId      String   @map("invoice_id") @db.Uuid
+  /// Parts or labour, as printed in the invoice's TYPE column. Set from the
+  /// labour / part record for a repair-billed line, from the quotation line
+  /// for a quotation-billed one, and chosen on screen for a typed one.
+  /// Label only — no total, VAT or balance ever reads it.
+  itemType       EstimateItemType? @map("item_type")
   description    String
   quantity       Decimal  @db.Decimal(12, 3)
   unitPrice      Decimal  @map("unit_price") @db.Decimal(14, 2)
@@ -1628,6 +1673,10 @@ model Employee {
   firstName       String    @map("first_name")
   lastName        String    @map("last_name")
   jobTitle        String?   @map("job_title")
+  /// The employee's own contact details, independent of any system login:
+  /// a technician who never signs in can still be reached.
+  phone           String?
+  email           String?
   department      String?
   hireDate        DateTime  @map("hire_date") @db.Date
   terminationDate DateTime? @map("termination_date") @db.Date

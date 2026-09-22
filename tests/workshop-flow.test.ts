@@ -241,7 +241,7 @@ describe('core workshop journey', () => {
     await changeAppointmentStatus(a.owner, appointment.id, 'CONFIRMED');
 
     const visit = (overrides: Record<string, string>) => ({ complaint: 'AC not cooling', mileage: '45000', appointmentId: appointment.id, ...overrides });
-    await expectDomainError(checkInVehicle(a.owner, { mode: 'existing', vehicleId, visit: visit({ complaint: '  ' }) }), /complaint/);
+    await expectDomainError(checkInVehicle(a.owner, { mode: 'existing', vehicleId, visit: visit({ complaint: '  ' }) }), /Describe the work/);
     await expectDomainError(checkInVehicle(a.owner, { mode: 'existing', vehicleId, visit: visit({ mileage: 'abc' }) }), /whole number/);
     await expectDomainError(checkInVehicle(a.owner, { mode: 'existing', vehicleId, visit: visit({ mileage: '-5' }) }), /whole number/);
     await expectDomainError(checkInVehicle(a.owner, { mode: 'existing', vehicleId, visit: visit({ mileage: '99999999' }) }), /not realistic/);
@@ -403,7 +403,7 @@ describe('core workshop journey', () => {
     assert.equal((await createEstimate(a.owner, jobCardId)).id, estimateId, 'reopens the same draft');
     assert.equal(await jobStatus(jobCardId), 'ESTIMATE');
     assert.equal(getNextAction(await getJobWorkspace(a.owner, jobCardId)).title, 'Finish and send the estimate');
-    assert.equal(resolveDefaultVatRate(a.owner.organizationId), UAE_STANDARD_VAT_RATE);
+    assert.equal(await resolveDefaultVatRate(a.owner.organizationId), UAE_STANDARD_VAT_RATE);
 
     await expectDomainError(sendEstimate(a.owner, estimateId), /at least one/);
     await expectDomainError(
@@ -469,7 +469,7 @@ describe('core workshop journey', () => {
     const quote = await loadCustomerQuote(rawToken);
     assert.ok(quote);
     assert.equal(quote.totalAmount.toString(), '1139.24');
-    assert.equal(quote.jobCard.inspections[0].items.length, 2, 'only attention/fail findings are shown');
+    assert.equal(quote.jobCard?.inspections[0].items.length, 2, 'only attention/fail findings are shown');
     assert.equal('id' in quote, false, 'internal ids are not exposed');
 
     // A proof for this link doesn't unlock a different customer's link.

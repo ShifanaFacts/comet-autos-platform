@@ -38,18 +38,30 @@ export const OPEN_JOB_STATUSES: JobCardStatus[] = [
   'COMPLETED',
 ];
 
+/**
+ * What a work order needs to exist: who, which vehicle, and what they want
+ * done. Mileage is optional — the odometer is often not to hand when the
+ * car is dropped off, and refusing to open the work order over it helps
+ * nobody. When it is given it is still checked as strictly as before.
+ */
 const visitSchema = z.object({
   complaint: z
-    .string({ error: "Enter the customer's complaint." })
+    .string({ error: 'Describe the work the customer is asking for.' })
     .trim()
-    .min(3, "Enter the customer's complaint."),
+    .min(3, 'Describe the work the customer is asking for.'),
   mileage: z
-    .string({ error: 'Enter the current mileage.' })
-    .trim()
-    .min(1, 'Enter the current mileage.')
-    .refine((value) => /^\d+$/.test(value.replace(/,/g, '')), 'Mileage must be a whole number of km.')
-    .transform((value) => Number(value.replace(/,/g, '')))
-    .refine((value) => value <= MAX_MILEAGE, 'That mileage is not realistic — check the odometer.'),
+    .union([z.literal(''), z.string()])
+    .optional()
+    .transform((value) => value?.trim() ?? '')
+    .refine(
+      (value) => value === '' || /^\d+$/.test(value.replace(/,/g, '')),
+      'Mileage must be a whole number of km, or left blank.',
+    )
+    .transform((value) => (value === '' ? null : Number(value.replace(/,/g, ''))))
+    .refine(
+      (value) => value === null || value <= MAX_MILEAGE,
+      'That mileage is not realistic — check the odometer.',
+    ),
   appointmentId: z.union([z.literal(''), z.uuid()]).optional(),
 });
 
@@ -116,7 +128,7 @@ export async function checkInVehicle(
       );
     }
 
-    if (vehicle.lastMileage !== null && visit.mileage < vehicle.lastMileage) {
+    if (visit.mileage !== null && vehicle.lastMileage !== null && visit.mileage < vehicle.lastMileage) {
       throw new DomainError(
         `Mileage can't be lower than the last recorded reading (${vehicle.lastMileage.toLocaleString('en-AE')} km).`,
         'mileage',
@@ -158,6 +170,9 @@ export async function checkInVehicle(
         organizationId: user.organizationId,
         branchId,
         vehicleId: vehicle.id,
+        // The job belongs to whoever owns the vehicle now, and keeps them if
+        // the vehicle later changes hands.
+        customerId: vehicle.customerId,
         appointmentId,
         jobNumber,
         status: 'ARRIVED',
@@ -167,7 +182,10 @@ export async function checkInVehicle(
       },
     });
 
-    await tx.vehicle.update({ where: { id: vehicle.id }, data: { lastMileage: visit.mileage } });
+    // Only a reading that was actually taken updates the vehicle's odometer.
+    if (visit.mileage !== null) {
+      await tx.vehicle.update({ where: { id: vehicle.id }, data: { lastMileage: visit.mileage } });
+    }
 
     await tx.jobStatusHistory.create({
       data: {

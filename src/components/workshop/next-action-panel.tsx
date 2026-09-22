@@ -89,7 +89,7 @@ export function NextActionPanel({
                   Cancel job
                 </Button>
               }
-              title="Cancel this job card?"
+              title="Cancel this work order?"
               description="This stops the job permanently. It can't be resumed — the vehicle would need to be checked in again."
               confirmLabel="Cancel job"
               onConfirm={async () => apply('CANCELLED')}

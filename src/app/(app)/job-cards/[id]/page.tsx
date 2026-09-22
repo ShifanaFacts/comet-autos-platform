@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   ArrowRight,
+  Camera,
   ClipboardCheck,
   FileText,
   Stethoscope,
@@ -34,7 +35,8 @@ import type { WorkflowStatus } from '@/lib/workshop/stages';
 import { RepairSections } from './repair/repair-sections';
 import { BillingSections } from './billing/billing-sections';
 import { getBillingPreview, getJobInvoice } from '@/lib/billing/invoice';
-import { getJobDocuments } from '@/lib/documents/build';
+import { getJobDocuments, type JobDocuments } from '@/lib/documents/build';
+import { CreateEstimateButton } from '@/components/workshop/quotation-controls';
 import { CustomerCommunication } from '@/components/documents/customer-communication';
 
 const BILLING_PHASE: WorkflowStatus[] = ['READY', 'INVOICED', 'PAID', 'DELIVERED'];
@@ -109,18 +111,41 @@ export default async function JobCardWorkspacePage({
         technician={primaryTechnician ? employeeName(primaryTechnician) : null}
       />
 
-      <Stack gap="lg">
-        <NextActionPanel
-          jobCardId={jobCard.id}
-          status={jobCard.status}
-          next={next}
-          canHold={canEdit && secondary.includes('ON_HOLD')}
-          canCancel={canEdit && secondary.includes('CANCELLED')}
-        />
-        <Panel>
-          <WorkflowProgress effectiveStatus={effectiveStatus} />
-        </Panel>
-      </Stack>
+      {/* The documents first: quote it, bill it, photograph it. */}
+      <WorkOrderDocuments
+        jobCardId={jobCard.id}
+        status={status}
+        estimate={estimate}
+        invoice={documents.invoice}
+        canQuote={canEdit && !isFinished}
+        canInvoice={
+          !isFinished && hasPermission(user, 'invoice.create', { branchId: jobCard.branchId })
+        }
+        canPhoto={canEdit && !isFinished}
+      />
+
+      {/*
+       * The detailed lifecycle — technician, inspection, diagnosis, repair,
+       * quality check, delivery. Available on every work order, required on
+       * none: the documents above work at any stage.
+       */}
+      <Section
+        title="Detailed workflow"
+        description="Optional. Use it when a job goes through inspection, repair and quality check."
+      >
+        <Stack gap="lg">
+          <NextActionPanel
+            jobCardId={jobCard.id}
+            status={jobCard.status}
+            next={next}
+            canHold={canEdit && secondary.includes('ON_HOLD')}
+            canCancel={canEdit && secondary.includes('CANCELLED')}
+          />
+          <Panel>
+            <WorkflowProgress effectiveStatus={effectiveStatus} />
+          </Panel>
+        </Stack>
+      </Section>
 
       <Grid gap="xl" className="items-start xl:grid-cols-12">
         {/* Main column: the work itself, in workflow order */}
@@ -249,8 +274,8 @@ export default async function JobCardWorkspacePage({
 
                 <ProgressRow
                   icon={FileText}
-                  title="Estimate & approval"
-                  href={`${base}/estimate`}
+                  title="Quotation & approval"
+                  href={estimate ? `/quotations/${estimate.id}` : `${base}/estimate`}
                   status={
                     estimate ? (
                       <EstimateStatusPill status={estimate.status} expired={estimateExpired} />
@@ -260,9 +285,9 @@ export default async function JobCardWorkspacePage({
                   }
                   linkLabel={
                     estimate
-                      ? 'Open estimate'
-                      : status === 'DIAGNOSIS'
-                        ? 'Create estimate'
+                      ? 'Open quotation'
+                      : QUOTABLE.includes(status)
+                        ? 'Create quotation'
                         : undefined
                   }
                 >
@@ -291,6 +316,8 @@ export default async function JobCardWorkspacePage({
                   ) : (
                     <p className="text-sm text-muted-foreground">
                       Labour and parts priced with VAT, sent to the customer to approve.
+                      Inspection and diagnosis are optional — a work order can be quoted straight
+                      away.
                     </p>
                   )}
                 </ProgressRow>
@@ -306,15 +333,27 @@ export default async function JobCardWorkspacePage({
                     </p>
                   </ProgressRow>
                 ) : null}
-                <ProgressRow
-                  icon={Receipt}
-                  title="Invoice & delivery"
-                  status={<StatusPill tone="neutral">Later phase</StatusPill>}
-                >
-                  <p className="text-sm text-muted-foreground">
-                    Invoicing, payment and handover follow the repair phase.
-                  </p>
-                </ProgressRow>
+                {!billingPhase ? (
+                  <ProgressRow
+                    icon={Receipt}
+                    title="Invoice & delivery"
+                    status={
+                      documents.invoice ? (
+                        <StatusPill tone={documents.invoice.status.tone}>
+                          {documents.invoice.status.label}
+                        </StatusPill>
+                      ) : (
+                        <StatusPill tone="neutral">Not invoiced</StatusPill>
+                      )
+                    }
+                  >
+                    <p className="text-sm text-muted-foreground">
+                      {documents.invoice
+                        ? `Invoiced as ${documents.invoice.number}.`
+                        : 'The work order can be invoiced at any stage from the documents above, or after the quality check from the repair records.'}
+                    </p>
+                  </ProgressRow>
+                ) : null}
               </ul>
             </Panel>
           </Section>
@@ -333,7 +372,7 @@ export default async function JobCardWorkspacePage({
                 id: photo.id,
                 stage: photo.stage,
                 description: photo.description,
-                createdAt: photo.createdAt.toISOString(),
+                createdAt: formatDateTime(photo.createdAt),
                 uploadedBy: photo.uploadedBy?.fullName ?? 'Workshop',
               }))}
               defaultStage={defaultMediaStage(jobCard.status)}
@@ -411,15 +450,15 @@ export default async function JobCardWorkspacePage({
                 </li>
                 <li>
                   <Link
-                    href={`/customers/${jobCard.vehicle.customer.id}`}
+                    href={`/customers/${jobCard.customer.id}`}
                     className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-muted/60 sm:px-6"
                   >
                     <span className="flex min-w-0 flex-col gap-0.5">
-                      <span className="font-medium">{jobCard.vehicle.customer.name}</span>
+                      <span className="font-medium">{jobCard.customer.name}</span>
                       <span className="truncate text-xs text-muted-foreground">
-                        {jobCard.vehicle.customer.phone}
-                        {jobCard.vehicle.customer.email
-                          ? ` · ${jobCard.vehicle.customer.email}`
+                        {jobCard.customer.phone}
+                        {jobCard.customer.email
+                          ? ` · ${jobCard.customer.email}`
                           : ''}
                       </span>
                     </span>
@@ -525,5 +564,124 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
       <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
       <dd>{children}</dd>
     </div>
+  );
+}
+
+/** Stages a work order can be quoted from — mirrors QUOTABLE_STATUSES in lib/workshop/estimates.ts. */
+const QUOTABLE: WorkflowStatus[] = ['ARRIVED', 'INSPECTION', 'DIAGNOSIS'];
+
+/**
+ * The work order's documents as three cards: its quotation, its invoice and
+ * its photos. Each one offers the next thing to do with it, whatever stage
+ * the detailed workflow below has or hasn't reached.
+ */
+function WorkOrderDocuments({
+  jobCardId,
+  status,
+  estimate,
+  invoice,
+  canQuote,
+  canInvoice,
+  canPhoto,
+}: {
+  jobCardId: string;
+  status: WorkflowStatus;
+  estimate: { id: string; estimateNumber: string; status: string; totalAmount: { toString(): string } } | null;
+  invoice: JobDocuments['invoice'];
+  canQuote: boolean;
+  canInvoice: boolean;
+  canPhoto: boolean;
+}) {
+  const approved = estimate?.status === 'APPROVED' || estimate?.status === 'PARTIALLY_APPROVED';
+  // A job that went through repair and QC is billed from its repair records.
+  const billFromRepair = status === 'READY';
+
+  const card =
+    'flex min-h-28 flex-col justify-between gap-3 rounded-xl border border-border bg-card p-4 sm:p-5';
+  const primary =
+    'inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover';
+  const secondary =
+    'inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 text-sm font-medium transition-colors hover:bg-muted';
+
+  return (
+    <section aria-label="Documents" className="grid gap-3 sm:grid-cols-3">
+      <div className={card}>
+        <div className="flex items-start justify-between gap-3">
+          <span className="flex items-center gap-2 text-sm font-medium">
+            <FileText className="size-4 text-muted-foreground" />
+            Quotation
+          </span>
+          {estimate ? (
+            <span className="text-sm font-semibold tabular-nums">
+              {formatMoney(estimate.totalAmount)}
+            </span>
+          ) : null}
+        </div>
+        {estimate ? (
+          <Link href={`/quotations/${estimate.id}`} className={secondary}>
+            Open {estimate.estimateNumber}
+            <ArrowRight className="size-4" />
+          </Link>
+        ) : canQuote && QUOTABLE.includes(status) ? (
+          <CreateEstimateButton jobCardId={jobCardId} compact />
+        ) : (
+          <p className="text-sm text-muted-foreground">No quotation on this work order.</p>
+        )}
+      </div>
+
+      <div className={card}>
+        <div className="flex items-start justify-between gap-3">
+          <span className="flex items-center gap-2 text-sm font-medium">
+            <Receipt className="size-4 text-muted-foreground" />
+            Invoice
+          </span>
+          {invoice ? (
+            <StatusPill tone={invoice.status.tone}>{invoice.status.label}</StatusPill>
+          ) : null}
+        </div>
+        {invoice ? (
+          <Link href={`/finance/invoices/${invoice.id}`} className={secondary}>
+            Open {invoice.number}
+            <ArrowRight className="size-4" />
+          </Link>
+        ) : canInvoice && billFromRepair ? (
+          <a href="#invoice" className={primary}>
+            <Receipt className="size-4" />
+            Invoice the repair
+          </a>
+        ) : canInvoice ? (
+          <Link
+            href={
+              approved && estimate
+                ? `/finance/invoices/new?quotation=${estimate.id}`
+                : `/finance/invoices/new?workOrder=${jobCardId}`
+            }
+            className={estimate && !approved ? secondary : primary}
+          >
+            <Receipt className="size-4" />
+            {approved ? 'Invoice the quotation' : 'Create invoice'}
+          </Link>
+        ) : (
+          <p className="text-sm text-muted-foreground">Not invoiced yet.</p>
+        )}
+      </div>
+
+      <div className={card}>
+        <span className="flex items-center gap-2 text-sm font-medium">
+          <Camera className="size-4 text-muted-foreground" />
+          Photos
+        </span>
+        {canPhoto ? (
+          <a href="#photos" className={secondary}>
+            <Camera className="size-4" />
+            Take or add photos
+          </a>
+        ) : (
+          <a href="#photos" className={secondary}>
+            View photos
+          </a>
+        )}
+      </div>
+    </section>
   );
 }

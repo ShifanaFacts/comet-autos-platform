@@ -8,16 +8,20 @@ import { DomainError, NotFoundError } from '@/lib/errors';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull, normalizePhone } from '@/lib/normalize';
-import { filsToString, toFils } from '@/lib/money';
+import { filsToString } from '@/lib/money';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { getStockByPart, resolveInventoryBranch, stockState } from '@/lib/inventory/stock';
-import { receivedValueFils } from '@/lib/inventory/purchases';
+import {
+  PURCHASE_BALANCE_SELECT,
+  RECEIVED_PURCHASE_STATUSES,
+  purchaseBalance,
+} from '@/lib/finance/supplier-balance';
 
 /*
- * Suppliers. The outstanding amount uses what the schema can already
- * represent: the value of stock received from the supplier (cost + VAT, on
- * received quantities) minus completed SupplierPayments. Supplier payments
- * are not recorded by the app yet, so today it equals the received value.
+ * Suppliers. The outstanding amount is the value of stock received from the
+ * supplier (cost + VAT, on received quantities) minus the supplier payments
+ * that count — one rule, in lib/finance/supplier-balance, shared with the
+ * payables screens and with recording a payment.
  */
 
 const supplierSchema = z.object({
@@ -129,33 +133,26 @@ export async function updateSupplier(
   });
 }
 
-const RECEIVED: ('RECEIVED' | 'PARTIALLY_RECEIVED')[] = ['RECEIVED', 'PARTIALLY_RECEIVED'];
+const RECEIVED: ('RECEIVED' | 'PARTIALLY_RECEIVED')[] = [...RECEIVED_PURCHASE_STATUSES];
 
-/** Received value, paid and outstanding for a set of suppliers, in fils. */
+/**
+ * Received value, paid and outstanding for a set of suppliers, in fils.
+ * Per purchase the figures come from `purchaseBalance` — the same rule the
+ * payables screens and recording a payment use — so the supplier directory
+ * can never show a different balance from the payables screen.
+ */
 async function balances(organizationId: string, supplierIds: string[]) {
-  const defaultVat = resolveDefaultVatRate(organizationId);
+  const defaultVat = await resolveDefaultVatRate(organizationId);
   const purchases = await prisma.purchase.findMany({
     where: { organizationId, supplierId: { in: supplierIds }, status: { in: RECEIVED } },
-    select: {
-      supplierId: true,
-      items: { select: { quantityReceived: true, unitCost: true, taxRate: true } },
-      supplierPayments: {
-        select: { id: true, amount: true, status: true, reversalOfSupplierPaymentId: true },
-      },
-    },
+    select: { supplierId: true, ...PURCHASE_BALANCE_SELECT },
   });
   const result = new Map<string, { receivedFils: number; paidFils: number }>();
   for (const purchase of purchases) {
     const entry = result.get(purchase.supplierId) ?? { receivedFils: 0, paidFils: 0 };
-    entry.receivedFils += receivedValueFils(purchase.items, defaultVat);
-    const reversed = new Set(
-      purchase.supplierPayments.map((p) => p.reversalOfSupplierPaymentId).filter(Boolean),
-    );
-    entry.paidFils += purchase.supplierPayments
-      .filter(
-        (p) => p.status === 'COMPLETED' && !p.reversalOfSupplierPaymentId && !reversed.has(p.id),
-      )
-      .reduce((sum, p) => sum + toFils(p.amount.toString()), 0);
+    const money = purchaseBalance(purchase, defaultVat);
+    entry.receivedFils += money.receivedFils;
+    entry.paidFils += money.paidFils;
     result.set(purchase.supplierId, entry);
   }
   return result;
@@ -164,7 +161,9 @@ async function balances(organizationId: string, supplierIds: string[]) {
 const money = (entry: { receivedFils: number; paidFils: number } | undefined) => ({
   received: filsToString(entry?.receivedFils ?? 0),
   paid: filsToString(entry?.paidFils ?? 0),
-  outstanding: filsToString((entry?.receivedFils ?? 0) - (entry?.paidFils ?? 0)),
+  // Floored, like every other outstanding figure: overpayment is refused
+  // when it is recorded, so a negative here would only ever be bad data.
+  outstanding: filsToString(Math.max((entry?.receivedFils ?? 0) - (entry?.paidFils ?? 0), 0)),
 });
 
 export async function listSuppliers(user: AuthenticatedUser, query: string) {
