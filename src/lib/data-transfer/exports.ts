@@ -159,7 +159,8 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   quotations: definition({
     label: 'Quotations',
     load: async (user, filters) =>
-      (await listQuotations(user, { q: filters.q, status: filters.status }, EXPORT_LIMIT)).quotations,
+      (await listQuotations(user, { q: filters.q, status: filters.status }, EXPORT_LIMIT))
+        .quotations,
     columns: [
       { header: 'Quotation', value: (row) => row.estimateNumber },
       { header: 'Version', value: (row) => row.version },
@@ -185,10 +186,15 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
     columns: [
       { header: 'Invoice', value: (row) => row.invoiceNumber },
       { header: 'Issue date', value: (row) => date(row.issueDate) },
+      { header: 'Due date', value: (row) => date(row.dueDate) },
       { header: 'Customer', value: (row) => row.customerName ?? row.customer.name },
       { header: 'Mobile', value: (row) => row.customer.phone },
+      { header: "Customer's order no.", value: (row) => row.customerReference ?? '' },
       { header: 'Registration', value: (row) => row.vehicle?.plateNumber ?? '' },
       { header: 'Job card', value: (row) => row.jobCard?.jobNumber ?? '' },
+      { header: 'Discount', value: (row) => money(row.totalDiscount) },
+      { header: 'Total excl. VAT', value: (row) => money(row.subtotal) },
+      { header: 'VAT', value: (row) => money(row.taxAmount) },
       { header: 'Total', value: (row) => money(row.balance.total) },
       { header: 'Paid', value: (row) => money(row.balance.paid) },
       { header: 'Balance due', value: (row) => money(row.balance.balance) },

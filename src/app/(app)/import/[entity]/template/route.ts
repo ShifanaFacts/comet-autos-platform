@@ -1,6 +1,5 @@
 import { requireUser } from '@/lib/auth/authorize';
-import { hasPermission } from '@/lib/auth/authorize';
-import { IMPORTS, importTemplate } from '@/lib/data-transfer/imports';
+import { canImport, importTemplate } from '@/lib/data-transfer/imports';
 import { csvFileName } from '@/lib/data-transfer/csv';
 import { getBrand } from '@/lib/brand/brand';
 
@@ -11,8 +10,7 @@ export async function GET(
 ) {
   const user = await requireUser();
   const { entity } = await params;
-  const definition = IMPORTS[entity];
-  if (!definition || !hasPermission(user, definition.permission)) {
+  if (!canImport(user, entity)) {
     return new Response('Not found', { status: 404 });
   }
   const { csv, label } = importTemplate(entity);

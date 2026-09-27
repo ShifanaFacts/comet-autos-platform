@@ -3,18 +3,21 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { FileText, Receipt } from 'lucide-react';
-import { FormError, TextareaField } from '@/components/forms/fields';
+import { FormError, TextField, TextareaField } from '@/components/forms/fields';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import { CustomerPicker, type PickedParty } from '@/components/workshop/customer-picker';
 import {
   DocumentLinesEditor,
-  isBlankLine,
+  NO_BILL_DISCOUNT,
+  billDiscountPayload,
+  linesPayload,
   newEditableLine,
   useLineTotals,
+  type BillDiscount,
   type EditableLine,
 } from '@/components/workshop/document-lines-editor';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, localDateString } from '@/lib/format';
 import type { ActionResult } from '@/lib/errors';
 import type { CustomerOption } from '@/lib/customers/picker';
 import { createDirectInvoiceAction } from '../actions';
@@ -70,23 +73,14 @@ export function NewInvoiceForm({
       : null,
   );
   const [lines, setLines] = useState<EditableLine[]>([newEditableLine('PART', defaultVatRate)]);
+  const [bill, setBill] = useState<BillDiscount>(NO_BILL_DISCOUNT);
   const errors = state.fieldErrors ?? {};
-  const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate);
+  const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate, bill);
   const ready = Boolean(picked) && (quotation !== null || (count > 0 && !incomplete));
-
-  const payload = JSON.stringify(
-    quotation
-      ? []
-      : lines
-          .filter((line) => !isBlankLine(line))
-          .map(({ itemType, description, quantity, unitPrice, taxRate }) => ({
-            itemType,
-            description,
-            quantity,
-            unitPrice,
-            taxRate,
-          })),
-  );
+  // A quotation is billed exactly as quoted — its own lines and discounts.
+  const payload = JSON.stringify(quotation ? [] : linesPayload(lines));
+  const discount = quotation ? null : billDiscountPayload(bill);
+  const today = localDateString();
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-8">
@@ -95,6 +89,12 @@ export function NewInvoiceForm({
       <input type="hidden" name="jobCardId" value={picked?.jobCardId ?? ''} />
       <input type="hidden" name="estimateId" value={quotation?.id ?? ''} />
       <input type="hidden" name="items" value={payload} />
+      {discount ? (
+        <>
+          <input type="hidden" name="discountType" value={discount.discountType} />
+          <input type="hidden" name="discount" value={discount.discount} />
+        </>
+      ) : null}
 
       <section className="flex flex-col gap-4">
         <h2 className="text-base font-semibold tracking-tight">Who is this invoice for?</h2>
@@ -112,9 +112,7 @@ export function NewInvoiceForm({
             <span className="flex min-w-0 items-center gap-3">
               <FileText className="size-4 shrink-0 text-muted-foreground" />
               <span className="flex min-w-0 flex-col">
-                <span className="truncate font-medium">
-                  Quotation {quotation.estimateNumber}
-                </span>
+                <span className="truncate font-medium">Quotation {quotation.estimateNumber}</span>
                 <span className="truncate text-sm text-muted-foreground">
                   {quotation.lineCount} line{quotation.lineCount === 1 ? '' : 's'} ·{' '}
                   {formatMoney(quotation.totalAmount)}
@@ -139,9 +137,35 @@ export function NewInvoiceForm({
       ) : (
         <section className="flex flex-col gap-4">
           <h2 className="text-base font-semibold tracking-tight">What are you billing?</h2>
-          <DocumentLinesEditor lines={lines} onChange={setLines} defaultVatRate={defaultVatRate} />
+          <DocumentLinesEditor
+            lines={lines}
+            onChange={setLines}
+            bill={bill}
+            onBillChange={setBill}
+            defaultVatRate={defaultVatRate}
+          />
         </section>
       )}
+
+      <div className="grid gap-6 sm:grid-cols-2">
+        <TextField
+          label="Due date"
+          name="dueDate"
+          type="date"
+          min={today}
+          defaultValue={today}
+          error={errors.dueDate}
+          hint="Leave as today when the customer pays on collection."
+          className="[&_input]:h-11"
+        />
+        <TextField
+          label="Customer's order no. (LPO)"
+          name="customerReference"
+          error={errors.customerReference}
+          hint="Optional — printed on the invoice."
+          className="[&_input]:h-11"
+        />
+      </div>
 
       <TextareaField
         label="Notes on the invoice"
@@ -153,7 +177,12 @@ export function NewInvoiceForm({
 
       <FormError
         message={
-          state.error ?? errors.customerId ?? errors.vehicleId ?? errors.jobCardId ?? errors.items
+          state.error ??
+          errors.customerId ??
+          errors.vehicleId ??
+          errors.jobCardId ??
+          errors.items ??
+          errors.discount
         }
       />
 

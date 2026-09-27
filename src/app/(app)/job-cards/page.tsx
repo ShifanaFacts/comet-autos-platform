@@ -6,6 +6,7 @@ import { usesDetailedJobCards } from '@/lib/organization/settings';
 import { countJobCards, listJobCards } from '@/lib/workshop/job-card-list';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { ListDataActions } from '@/components/shared/list-data-actions';
+import { canImport, importColumns, importNote } from '@/lib/data-transfer/imports';
 import { JobStatusBadge } from '@/components/shared/job-status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
@@ -89,6 +90,9 @@ export default async function JobCardsPage({
             <ListDataActions
               entity="work-orders"
               label="job cards"
+              canImport={canImport(user, 'work-orders')}
+              columns={importColumns('work-orders')}
+              note={importNote('work-orders')}
               search={new URLSearchParams({
                 ...(query ? { q: query } : {}),
                 ...(status ? { status } : {}),

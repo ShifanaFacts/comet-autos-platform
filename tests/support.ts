@@ -1,7 +1,7 @@
 /**
  * Shared setup for integration tests: throwaway organizations with staff,
  * permissions, and (optionally) a stocked parts catalog. Every run creates
- * fresh organizations, so the real Comet Autos data is never touched.
+ * fresh organizations, so the real Mohammed Mowla Auto Garage data is never touched.
  */
 import assert from 'node:assert/strict';
 import { prisma } from '@/lib/prisma';

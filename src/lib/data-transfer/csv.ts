@@ -135,9 +135,20 @@ export function field(record: Record<string, string>, ...names: string[]): strin
   return '';
 }
 
-/** A template file with the headings and one example row, for someone starting from scratch. */
-export function csvTemplate(columns: { header: string; example?: string }[]): string {
+/**
+ * A template file with the headings and one example row, for someone
+ * starting from scratch — plus any further example rows, keyed by heading.
+ */
+export function csvTemplate(
+  columns: { header: string; example?: string }[],
+  moreExamples: Record<string, string>[] = [],
+): string {
   const headers = columns.map((column) => cell(column.header)).join(',');
-  const example = columns.map((column) => cell(column.example ?? '')).join(',');
-  return `﻿${headers}\r\n${example}\r\n`;
+  const rows = [
+    columns.map((column) => cell(column.example ?? '')).join(','),
+    ...moreExamples.map((example) =>
+      columns.map((column) => cell(example[column.header] ?? '')).join(','),
+    ),
+  ];
+  return `﻿${headers}\r\n${rows.join('\r\n')}\r\n`;
 }

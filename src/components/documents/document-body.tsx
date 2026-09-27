@@ -26,7 +26,10 @@ export function DocumentStatus({ status }: { status: CustomerDocumentModel['stat
 export function DocumentItems({ document }: { document: CustomerDocumentModel }) {
   // One running number across every section, as on the paper sheet.
   const offsets = document.sections.reduce<number[]>(
-    (acc, section, index) => [...acc, index === 0 ? 0 : acc[index - 1] + document.sections[index - 1].lines.length],
+    (acc, section, index) => [
+      ...acc,
+      index === 0 ? 0 : acc[index - 1] + document.sections[index - 1].lines.length,
+    ],
     [],
   );
   return (
@@ -57,6 +60,7 @@ export function DocumentItems({ document }: { document: CustomerDocumentModel })
                     <span>
                       {formatQuantity(line.quantity)} × {formatAed(line.unitPrice)}
                     </span>
+                    {line.discount ? <span>less {formatAed(line.discount)}</span> : null}
                   </span>
                 </span>
                 <span className="shrink-0 text-[0.95rem] font-medium tabular-nums">

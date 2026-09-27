@@ -150,14 +150,12 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/finance/accounting',
         icon: Calculator,
         permission: 'accounting.view',
-        soon: true,
       },
       {
         label: 'VAT',
         href: '/finance/vat',
         icon: Percent,
         permission: 'accounting.view',
-        soon: true,
       },
     ],
   },
@@ -181,14 +179,12 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/hr/leave',
         icon: CalendarOff,
         permission: 'payroll.view',
-        soon: true,
       },
       {
         label: 'Payroll',
         href: '/hr/payroll',
         icon: Banknote,
         permission: 'payroll.view',
-        soon: true,
       },
     ],
   },
@@ -196,7 +192,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'More',
     items: [
       { label: 'Letterhead', href: '/letterhead', icon: ScrollText },
-      { label: 'Reports', href: '/reports', icon: BarChart3, soon: true },
+      { label: 'Reports', href: '/reports', icon: BarChart3 },
       { label: 'Settings', href: '/settings', icon: Settings, permission: 'accounting.view' },
       {
         label: 'Users & roles',

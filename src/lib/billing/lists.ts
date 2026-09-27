@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { invoiceBalance, paidFils } from '@/lib/billing/invoice';
+import { filsToString, toFils } from '@/lib/money';
 import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
 
 /*
@@ -54,9 +55,15 @@ export async function listInvoices(
       id: true,
       invoiceNumber: true,
       issueDate: true,
+      dueDate: true,
       status: true,
+      customerReference: true,
+      discountAmount: true,
+      subtotal: true,
+      taxAmount: true,
       totalAmount: true,
       customerName: true,
+      items: { select: { discountAmount: true } },
       payments: {
         select: {
           id: true,
@@ -73,8 +80,15 @@ export async function listInvoices(
   });
   return {
     status,
-    invoices: invoices.map(({ payments, ...invoice }) => ({
+    invoices: invoices.map(({ payments, items, ...invoice }) => ({
       ...invoice,
+      /** Everything taken off: the lines' own discounts and the bill discount. */
+      totalDiscount: filsToString(
+        items.reduce(
+          (sum, item) => sum + toFils(item.discountAmount.toString()),
+          toFils(invoice.discountAmount.toString()),
+        ),
+      ),
       balance: invoiceBalance({ ...invoice, payments }),
     })),
   };

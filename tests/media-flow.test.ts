@@ -43,7 +43,7 @@ import { createTestOrg, expectDomainError, RUN, type TestOrg } from './support';
 
 // Files go to a throwaway directory for the run: the storage driver reads
 // this the first time it is asked for a file, which is inside a test.
-const STORAGE_DIR = mkdtempSync(path.join(tmpdir(), 'comet-media-test-'));
+const STORAGE_DIR = mkdtempSync(path.join(tmpdir(), 'garage-media-test-'));
 process.env.LOCAL_STORAGE_DIR = STORAGE_DIR;
 
 /** The smallest valid files of each kind, by their real magic bytes. */

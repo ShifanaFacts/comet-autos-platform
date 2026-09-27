@@ -18,6 +18,9 @@ const REVALIDATE: Record<string, string[]> = {
   vehicles: ['/vehicles', '/customers', '/'],
   parts: ['/inventory/parts', '/'],
   suppliers: ['/inventory/suppliers', '/inventory/parts'],
+  'work-orders': ['/job-cards', '/customers', '/vehicles', '/'],
+  quotations: ['/quotations', '/customers', '/vehicles'],
+  invoices: ['/finance/invoices', '/finance', '/customers', '/vehicles', '/'],
 };
 
 export async function importCsvAction(

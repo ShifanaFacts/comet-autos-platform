@@ -11,7 +11,8 @@ import { getQuotation } from '@/lib/workshop/quotations';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { EstimateStatusPill } from '@/components/workshop/status-pills';
-import { EstimateLines, trimQuantity } from '@/components/workshop/estimate-lines';
+import { EstimateLines } from '@/components/workshop/estimate-lines';
+import { editableBill, editableLine } from '@/lib/billing/editable-lines';
 import { QuotationBuilder } from '@/components/workshop/quotation-builder';
 import {
   NewLinkButton,
@@ -94,9 +95,7 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
                   : ''
               }`
         }
-        leading={
-          vehicle ? <VehiclePlate plateNumber={vehicle.plateNumber} /> : undefined
-        }
+        leading={vehicle ? <VehiclePlate plateNumber={vehicle.plateNumber} /> : undefined}
         actions={
           <>
             {canEdit &&
@@ -132,7 +131,10 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
       {!isLatest ? (
         <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning">
           You are viewing an older version.{' '}
-          <Link href={`/quotations/${versions[0]?.id ?? quotation.id}`} className="font-medium underline">
+          <Link
+            href={`/quotations/${versions[0]?.id ?? quotation.id}`}
+            className="font-medium underline"
+          >
             See the current version
           </Link>
           .
@@ -154,16 +156,10 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
                 }
                 minValidUntil={localDateString()}
                 defaultVatRate={defaultVatRate}
+                initialBill={editableBill(quotation)}
                 initialLines={quotation.items
                   .filter((item) => item.itemType !== 'OTHER')
-                  .map((item) => ({
-                    key: item.id,
-                    itemType: item.itemType as 'LABOUR' | 'PART',
-                    description: item.description,
-                    quantity: trimQuantity(item.quantity.toString()),
-                    unitPrice: item.unitPrice.toString(),
-                    taxRate: trimQuantity(item.taxRate?.toString() ?? defaultVatRate),
-                  }))}
+                  .map((item) => editableLine(item, item.id, defaultVatRate))}
               />
             </Panel>
           ) : (

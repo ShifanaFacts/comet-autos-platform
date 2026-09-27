@@ -8,14 +8,14 @@ Date: 2026-09-16
 [ADR-007](./ADR-007-nextjs-nestjs-separation.md) set up a two-application
 architecture (`apps/web` Next.js presentation layer calling `apps/api`
 NestJS for all business logic and data access), justified by the premise
-that Comet Autos would grow into a multi-tenant SaaS platform serving
+that Mohammed Mowla Auto Garage would grow into a multi-tenant SaaS platform serving
 multiple independent clients (web, future mobile app, customer portal,
 third-party integrations) that all needed a shared, client-agnostic API
 boundary.
 
-The product owner has corrected that premise directly: **Comet Autos is not
+The product owner has corrected that premise directly: **Mohammed Mowla Auto Garage is not
 a SaaS product.** It is a dedicated internal workshop management
-application for one business — the Comet Autos workshop in Al Qusais,
+application for one business — the Mohammed Mowla Auto Garage workshop in Al Qusais,
 Dubai. There is no roster of external tenants or third-party API consumers
 to design a stable client-agnostic boundary for. The `apps/api` NestJS
 service existed only as a health-check scaffold at the time of this
@@ -42,10 +42,10 @@ course cost nothing beyond documentation and wiring.
   still centralized, still not duplicated per-caller, just without an HTTP
   hop in between.
 
-## Why this is the right call for Comet Autos specifically
+## Why this is the right call for Mohammed Mowla Auto Garage specifically
 
 - **No multi-client requirement in practice.** The only client is the
-  Comet Autos staff web app, plus (per the customer-approval/invoice-access
+  Mohammed Mowla Auto Garage staff web app, plus (per the customer-approval/invoice-access
   requirements) a small set of public, token-scoped Next.js routes — both
   of which are naturally served by one Next.js application. There is no
   mobile app, third-party integrator, or separate tenant today that would

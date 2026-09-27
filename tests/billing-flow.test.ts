@@ -28,15 +28,15 @@ import { localDateString, toLocalDateTimeInput } from '@/lib/format';
 import { calculateLine } from '@/lib/money';
 import { createTestOrg, expectDomainError, historyStatuses, jobStatus, RUN, type TestOrg } from './support';
 
-const COMET_ORG = '00000000-0000-7000-8000-000000000001';
+const SEED_ORG = '00000000-0000-7000-8000-000000000001';
 const PARTS = [
   { sku: 'AC-CLUTCH', name: 'AC compressor clutch', cost: '310.00', price: '480.00', stock: '3' },
   { sku: 'PADS', name: 'Brake pad set', cost: '95.00', price: '180.00', stock: '5' },
 ];
 const now = () => toLocalDateTimeInput(new Date());
 
-async function cometCounts() {
-  const where = { organizationId: COMET_ORG };
+async function seedCounts() {
+  const where = { organizationId: SEED_ORG };
   return {
     jobCards: await prisma.jobCard.count({ where }),
     invoices: await prisma.invoice.count({ where }),
@@ -87,10 +87,10 @@ async function approvedJob(org: TestOrg, suffix: string) {
 
 let a: TestOrg;
 let b: TestOrg;
-let cometBefore: Awaited<ReturnType<typeof cometCounts>>;
+let seedBefore: Awaited<ReturnType<typeof seedCounts>>;
 
 before(async () => {
-  cometBefore = await cometCounts();
+  seedBefore = await seedCounts();
   a = await createTestOrg('BillA', PARTS);
   b = await createTestOrg('BillB', PARTS);
 });
@@ -322,7 +322,7 @@ describe('invoice → payment → delivery', () => {
     await expectDomainError(createInvoice(a.owner, job.jobCardId), /ready/);
   });
 
-  test('15. existing Comet Autos data is untouched', async () => {
-    assert.deepEqual(await cometCounts(), cometBefore);
+  test('15. existing Mohammed Mowla Auto Garage data is untouched', async () => {
+    assert.deepEqual(await seedCounts(), seedBefore);
   });
 });

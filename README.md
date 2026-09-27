@@ -1,6 +1,6 @@
-# Comet Autos
+# Garage Management System
 
-Workshop Management System for Comet Autos (Al Qusais, Dubai) — a dedicated
+Garage management system for Mohammed Mowla Auto Garage (Al Qusais, Dubai) — a dedicated
 internal application for one workshop, not a multi-tenant SaaS platform.
 
 See [PROJECT-STATUS.md](./PROJECT-STATUS.md) for what has been built so far

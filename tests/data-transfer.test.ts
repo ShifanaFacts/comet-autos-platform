@@ -8,7 +8,9 @@
  *    same services the forms use — same validation, same audit;
  *  - a row already on file is skipped, not duplicated;
  *  - one bad row means nothing is written;
- *  - documents (invoices, quotations, payments) cannot be imported at all.
+ *  - job cards, quotations and invoices from an old system come in with
+ *    their own numbers and dates, priced by the app's rules, and move the
+ *    number sequence past them; payments are never imported on their own.
  *
  *   npm run test:integration
  */
@@ -200,9 +202,17 @@ describe('export', () => {
 // ---------------------------------------------------------------------------
 
 describe('import', () => {
-  test('only master data is importable — never a document', () => {
-    assert.deepEqual(Object.keys(IMPORTS).sort(), ['customers', 'parts', 'suppliers', 'vehicles']);
-    for (const entity of ['invoices', 'quotations', 'payments', 'work-orders']) {
+  test('master data and document history are importable — payments on their own are not', () => {
+    assert.deepEqual(Object.keys(IMPORTS).sort(), [
+      'customers',
+      'invoices',
+      'parts',
+      'quotations',
+      'suppliers',
+      'vehicles',
+      'work-orders',
+    ]);
+    for (const entity of ['payments', 'purchases', 'stock-movements']) {
       assert.equal(isImportable(entity), false, `${entity} cannot be imported`);
     }
   });
@@ -325,7 +335,7 @@ describe('import', () => {
   test('permissions and organizations are enforced', async () => {
     const csv = ['Name,Mobile', `Denied ${RUN},050 888 0000`].join('\r\n');
     await assert.rejects(importCsv(a.viewer, 'customers', csv), AuthError);
-    await expectDomainError(importCsv(a.owner, 'invoices', csv), /could not be found/);
+    await expectDomainError(importCsv(a.owner, 'payments', csv), /could not be found/);
 
     // Org B importing the same file makes B's own customer, not A's.
     await importCsv(b.owner, 'customers', ['Name,Mobile', `Shared Name ${RUN},050 999 1234`].join('\r\n'));
@@ -363,5 +373,129 @@ describe('import', () => {
     assert.equal(roundTrip.created, 0, 'every row already exists');
     assert.equal(roundTrip.errors.length, 0, 'and the file reads cleanly');
     assert.ok(roundTrip.skipped.length > 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('import: documents from another system', () => {
+  let c: TestOrg;
+  before(async () => {
+    c = await createTestOrg('TransferC');
+  });
+
+  test('job cards keep their number and date, and add the customer and vehicle they need', async () => {
+    const csv = [
+      'Job card no.,Date,Customer name,Customer mobile,Registration,Make,Model,Mileage (km),Work requested,Status',
+      'JC-000150,15/01/2026,Old Customer,050 700 0001,K 70001,Nissan,Patrol,"84,500",Full service,Delivered',
+      ',2026-02-01,,050 700 0001,K 70001,,,90000,Brake noise,',
+    ].join('\r\n');
+    const outcome = await importCsv(c.owner, 'work-orders', csv);
+    assert.deepEqual(outcome.errors, []);
+    assert.equal(outcome.created, 2);
+
+    const jobs = await prisma.jobCard.findMany({
+      where: { organizationId: c.organizationId },
+      orderBy: { openedAt: 'asc' },
+      include: { vehicle: true, customer: true },
+    });
+    assert.equal(jobs[0].jobNumber, 'JC-000150');
+    assert.equal(jobs[0].status, 'DELIVERED');
+    assert.equal(jobs[0].openedAt.toISOString().slice(0, 10), '2026-01-15');
+    assert.equal(jobs[0].customer.name, 'Old Customer');
+    assert.equal(jobs[1].jobNumber, 'JC-000151', 'a blank number follows the imported ones');
+    assert.equal(jobs[1].customerId, jobs[0].customerId, 'the new customer is created once');
+    assert.equal(jobs[1].vehicle.lastMileage, 90000);
+
+    const again = await importCsv(
+      c.owner,
+      'work-orders',
+      csv.split('\r\n').slice(0, 2).join('\r\n'),
+    );
+    assert.equal(again.created, 0);
+    assert.match(again.skipped[0].reason, /JC-000150 is already on file/);
+  });
+
+  test('invoices: rows sharing a number are one invoice, priced here, with its payment', async () => {
+    const csv = [
+      'Invoice no.,Date,Customer mobile,Registration,Job card no.,Type,Description,Quantity,Unit price,VAT %,Amount paid,Payment method',
+      'INV-000900,2026-01-20,050 700 0001,K 70001,JC-000150,Parts,Oil filter,2,50.00,5,315.00,Card',
+      'INV-000900,,,,,Labour,Service labour,1,200,5,,',
+      'INV-000901,2026-01-21,050 700 0001,,,Labour,Diagnosis,1,100,,,',
+    ].join('\r\n');
+    const outcome = await importCsv(c.owner, 'invoices', csv);
+    assert.deepEqual(outcome.errors, []);
+    assert.equal(outcome.created, 2);
+
+    const paid = await prisma.invoice.findFirstOrThrow({
+      where: { organizationId: c.organizationId, invoiceNumber: 'INV-000900' },
+      include: { items: true, payments: true, jobCard: true },
+    });
+    assert.equal(paid.items.length, 2);
+    assert.equal(paid.subtotal.toString(), '300');
+    assert.equal(paid.taxAmount.toString(), '15');
+    assert.equal(paid.totalAmount.toString(), '315');
+    assert.equal(paid.status, 'PAID');
+    assert.equal(paid.issueDate.toISOString().slice(0, 10), '2026-01-20');
+    assert.equal(paid.jobCard?.jobNumber, 'JC-000150');
+    assert.equal(paid.payments.length, 1);
+    assert.equal(paid.payments[0].method, 'CARD');
+
+    const unpaid = await prisma.invoice.findFirstOrThrow({
+      where: { organizationId: c.organizationId, invoiceNumber: 'INV-000901' },
+    });
+    assert.equal(unpaid.status, 'ISSUED');
+    assert.equal(unpaid.totalAmount.toString(), '105', "a blank VAT % is the workshop's rate");
+
+    const sequence = await prisma.documentNumberSequence.findFirstOrThrow({
+      where: { organizationId: c.organizationId, documentType: 'TAX_INVOICE' },
+    });
+    assert.equal(
+      sequence.nextNumber,
+      902,
+      'the next invoice numbered here comes after the imported ones',
+    );
+  });
+
+  test('a bad line is reported against its own row, and nothing is written', async () => {
+    const csv = [
+      'Quotation no.,Date,Customer mobile,Description,Unit price',
+      'EST-000500,2026-01-10,050 700 0001,Front pads,180',
+      'EST-000500,,,Rear pads,lots',
+    ].join('\r\n');
+    const outcome = await importCsv(c.owner, 'quotations', csv);
+    assert.equal(outcome.created, 0);
+    assert.equal(outcome.errors[0].row, 3);
+    assert.equal(await prisma.estimate.count({ where: { organizationId: c.organizationId } }), 0);
+  });
+
+  test('quotations: imported with their status and lines', async () => {
+    const csv = [
+      'Quotation no.,Date,Customer mobile,Type,Description,Quantity,Unit price,Status',
+      'EST-000500,2026-01-10,050 700 0001,Parts,Front pads,1,180,Approved',
+      'EST-000500,,,Labour,Fitting,1,60,',
+    ].join('\r\n');
+    const outcome = await importCsv(c.owner, 'quotations', csv);
+    assert.deepEqual(outcome.errors, []);
+    const quotation = await prisma.estimate.findFirstOrThrow({
+      where: { organizationId: c.organizationId, estimateNumber: 'EST-000500' },
+      include: { items: true },
+    });
+    assert.equal(quotation.status, 'APPROVED');
+    assert.equal(quotation.items.length, 2);
+    assert.equal(quotation.totalAmount.toString(), '252');
+  });
+
+  test('an unknown customer with no name, or a date in the future, is refused', async () => {
+    const future = localDateString(new Date(Date.now() + 3 * 86400000));
+    const csv = [
+      'Invoice no.,Date,Customer mobile,Description,Unit price',
+      `INV-000950,2026-01-10,050 799 9999,Tyre,300`,
+      `INV-000951,${future},050 700 0001,Tyre,300`,
+    ].join('\r\n');
+    const outcome = await importCsv(c.owner, 'invoices', csv);
+    assert.equal(outcome.created, 0);
+    assert.match(outcome.errors[0].message, /Fill in the Customer name/);
+    assert.match(outcome.errors[1].message, /can't be in the future/);
   });
 });

@@ -10,7 +10,18 @@ import { DomainError, NotFoundError } from '@/lib/errors';
 import { claimRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull } from '@/lib/normalize';
-import { calculateLine, calculateTotals, filsToString, formatMilli, milliToString, signedToMilli, toFils, type LineAmounts } from '@/lib/money';
+import {
+  calculateLine,
+  filsToString,
+  formatMilli,
+  milliToString,
+  prorateFils,
+  signedToMilli,
+  toFils,
+  type Discount,
+  type LineAmounts,
+} from '@/lib/money';
+import { lineData, totalsData, withBillDiscount } from '@/lib/billing/document-lines';
 import { withNetQuantities } from '@/lib/inventory/stock';
 import { prepareSignature, recordSignature } from '@/lib/media/signatures';
 import { resolveDefaultVatRate } from '@/lib/tax';
@@ -36,7 +47,8 @@ import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status
  * reported, so staff can see exactly what was not billed and why.
  */
 
-export type BillingSource = { labourId: string; partUsageId?: undefined } | { partUsageId: string; labourId?: undefined };
+export type BillingSource =
+  { labourId: string; partUsageId?: undefined } | { partUsageId: string; labourId?: undefined };
 
 export interface BillableLine {
   source: BillingSource;
@@ -52,14 +64,33 @@ export interface BillingNote {
   message: string;
 }
 
-async function loadBillingSources(client: Prisma.TransactionClient, organizationId: string, jobCardId: string) {
+async function loadBillingSources(
+  client: Prisma.TransactionClient,
+  organizationId: string,
+  jobCardId: string,
+) {
   const [lines, labours, usages] = await Promise.all([
     client.estimateItem.findMany({
       where: { organizationId, estimate: { jobCardId, organizationId, status: 'APPROVED' } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      include: { estimate: { select: { kind: true, estimateNumber: true } } },
+      include: {
+        estimate: {
+          select: {
+            id: true,
+            kind: true,
+            estimateNumber: true,
+            discountType: true,
+            discountValue: true,
+            discountAmount: true,
+            subtotal: true,
+          },
+        },
+      },
     }),
-    client.labour.findMany({ where: { organizationId, jobCardId }, orderBy: [{ performedAt: 'asc' }, { id: 'asc' }] }),
+    client.labour.findMany({
+      where: { organizationId, jobCardId },
+      orderBy: [{ performedAt: 'asc' }, { id: 'asc' }],
+    }),
     client.partUsage.findMany({
       where: { organizationId, jobCardId },
       orderBy: [{ usedAt: 'asc' }, { id: 'asc' }],
@@ -67,28 +98,57 @@ async function loadBillingSources(client: Prisma.TransactionClient, organization
     }),
   ]);
   // Parts are billed on their net quantity: fitted minus anything taken back into stock.
-  const netUsages = (await withNetQuantities(client, organizationId, usages)).filter((u) => u.netMilli > 0);
+  const netUsages = (await withNetQuantities(client, organizationId, usages)).filter(
+    (u) => u.netMilli > 0,
+  );
   return { lines, labours, usages: netUsages };
 }
 
 /** What would be billed for this job, and every approved-vs-actual difference. Pure calculation — writes nothing. */
-export async function buildBilling(client: Prisma.TransactionClient, organizationId: string, jobCardId: string) {
+export async function buildBilling(
+  client: Prisma.TransactionClient,
+  organizationId: string,
+  jobCardId: string,
+) {
   const { lines, labours, usages } = await loadBillingSources(client, organizationId, jobCardId);
   const defaultVat = await resolveDefaultVatRate(organizationId, client);
   const billable: BillableLine[] = [];
   const notes: BillingNote[] = [];
+  /** Per approved quotation: its lines' total as approved, and as billed. */
+  const quoted = new Map<
+    string,
+    { estimate: (typeof lines)[number]['estimate']; billedFils: number }
+  >();
 
   for (const line of lines) {
     const approvedMilli = signedToMilli(line.quantity);
     const approvedPrice = line.unitPrice.toString();
     const taxRate = line.taxRate?.toString() ?? defaultVat;
     let remaining = approvedMilli;
+    /**
+     * The discount the customer approved on this line, for the part of it
+     * billed: a percentage as it stands, a fixed amount scaled to the
+     * quantity billed.
+     */
+    const lineDiscount = (billedMilli: number): Discount | null => {
+      if (!line.discountType || !line.discountValue) return null;
+      if (line.discountType === 'PERCENT') {
+        return { type: 'PERCENT', value: line.discountValue.toString() };
+      }
+      const fils = prorateFils(toFils(line.discountAmount.toString()), billedMilli, approvedMilli);
+      return fils ? { type: 'AMOUNT', value: filsToString(fils) } : null;
+    };
 
     const records =
       line.itemType === 'LABOUR'
         ? labours
             .filter((l) => l.estimateItemId === line.id)
-            .map((l) => ({ source: { labourId: l.id } as BillingSource, qty: signedToMilli(l.hours), actualPrice: l.rate.toString(), label: l.description }))
+            .map((l) => ({
+              source: { labourId: l.id } as BillingSource,
+              qty: signedToMilli(l.hours),
+              actualPrice: l.rate.toString(),
+              label: l.description,
+            }))
         : usages
             .filter((u) => u.estimateItemId === line.id)
             .map((u) => ({
@@ -110,14 +170,24 @@ export async function buildBilling(client: Prisma.TransactionClient, organizatio
         });
       }
       if (billedMilli > 0) {
+        const amounts = calculateLine({
+          quantity: milliToString(billedMilli),
+          unitPrice: approvedPrice,
+          taxRate,
+          discount: lineDiscount(billedMilli),
+        });
         billable.push({
           source: record.source,
           itemType: line.itemType,
           estimateKind: line.estimate.kind,
           estimateNumber: line.estimate.estimateNumber,
-          description: line.itemType === 'LABOUR' ? line.description : `${line.description} — ${record.label}`,
-          amounts: calculateLine({ quantity: milliToString(billedMilli), unitPrice: approvedPrice, taxRate }),
+          description:
+            line.itemType === 'LABOUR' ? line.description : `${line.description} — ${record.label}`,
+          amounts,
         });
+        const entry = quoted.get(line.estimate.id) ?? { estimate: line.estimate, billedFils: 0 };
+        entry.billedFils += amounts.lineTotalFils;
+        quoted.set(line.estimate.id, entry);
       }
     }
     if (done > approvedMilli) {
@@ -134,18 +204,75 @@ export async function buildBilling(client: Prisma.TransactionClient, organizatio
   }
 
   for (const labour of labours.filter((l) => !l.estimateItemId)) {
-    notes.push({ kind: 'EXCLUDED', message: `Labour "${labour.description}" (${labour.hours} h) is not approved work — not billed.` });
+    notes.push({
+      kind: 'EXCLUDED',
+      message: `Labour "${labour.description}" (${labour.hours} h) is not approved work — not billed.`,
+    });
   }
   for (const usage of usages.filter((u) => !u.estimateItemId)) {
-    notes.push({ kind: 'EXCLUDED', message: `Part ${usage.part.name} × ${formatMilli(usage.netMilli)} is not approved work — not billed.` });
+    notes.push({
+      kind: 'EXCLUDED',
+      message: `Part ${usage.part.name} × ${formatMilli(usage.netMilli)} is not approved work — not billed.`,
+    });
   }
 
-  return { billable, notes, totals: calculateTotals(billable.map((line) => line.amounts)) };
+  const { lines: priced, totals } = withBillDiscount(
+    billable,
+    quotationDiscount([...quoted.values()]),
+  );
+  return { billable: priced, notes, totals };
+}
+
+/**
+ * The discount the customer approved on the quotations as a whole, for the
+ * work billed. The same percentage on every quotation carries over as that
+ * percentage; otherwise each quotation's discount is scaled to how much of
+ * it is billed, and the amounts are added up.
+ */
+function quotationDiscount(
+  quotations: {
+    estimate: {
+      discountType: Discount['type'] | null;
+      discountValue: { toString(): string } | null;
+      discountAmount: { toString(): string };
+      subtotal: { toString(): string };
+    };
+    billedFils: number;
+  }[],
+): Discount | null {
+  const discounted = quotations.filter(({ estimate }) => estimate.discountType);
+  if (discounted.length === 0) return null;
+  const [first] = discounted;
+  const samePercent =
+    discounted.length === quotations.length &&
+    discounted.every(
+      ({ estimate }) =>
+        estimate.discountType === 'PERCENT' &&
+        estimate.discountValue?.toString() === first.estimate.discountValue?.toString(),
+    );
+  if (samePercent) return { type: 'PERCENT', value: first.estimate.discountValue!.toString() };
+
+  const fils = discounted.reduce((sum, { estimate, billedFils }) => {
+    const discountFils = toFils(estimate.discountAmount.toString());
+    // The quotation's lines total: its taxable subtotal plus its discount.
+    const linesFils = toFils(estimate.subtotal.toString()) + discountFils;
+    return sum + prorateFils(discountFils, billedFils, linesFils);
+  }, 0);
+  return fils ? { type: 'AMOUNT', value: filsToString(fils) } : null;
 }
 
 /** Amount actually paid: completed payments not reversed (Payment model rule). */
-export function paidFils(payments: { id: string; amount: { toString(): string }; status: string; reversalOfPaymentId: string | null }[]) {
-  const reversed = new Set(payments.filter((p) => p.reversalOfPaymentId).map((p) => p.reversalOfPaymentId));
+export function paidFils(
+  payments: {
+    id: string;
+    amount: { toString(): string };
+    status: string;
+    reversalOfPaymentId: string | null;
+  }[],
+) {
+  const reversed = new Set(
+    payments.filter((p) => p.reversalOfPaymentId).map((p) => p.reversalOfPaymentId),
+  );
   return payments
     .filter((p) => p.status === 'COMPLETED' && !reversed.has(p.id))
     .reduce((sum, p) => sum + toFils(p.amount.toString()), 0);
@@ -166,7 +293,11 @@ type PaymentLike = {
 };
 
 /** Paid, balance and state of an invoice — the one rule the staff screens, customer pages and documents share. */
-export function invoiceBalance(invoice: { totalAmount: { toString(): string }; status: InvoiceStatus; payments: PaymentLike[] }) {
+export function invoiceBalance(invoice: {
+  totalAmount: { toString(): string };
+  status: InvoiceStatus;
+  payments: PaymentLike[];
+}) {
   const paid = paidFils(invoice.payments);
   const total = toFils(invoice.totalAmount.toString());
   return {
@@ -186,7 +317,9 @@ export function receiptBalances(
   invoice: { totalAmount: { toString(): string }; payments: PaymentLike[] },
   paymentId: string,
 ) {
-  const ordered = [...invoice.payments].sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime() || a.id.localeCompare(b.id));
+  const ordered = [...invoice.payments].sort(
+    (a, b) => a.receivedAt.getTime() - b.receivedAt.getTime() || a.id.localeCompare(b.id),
+  );
   const index = ordered.findIndex((p) => p.id === paymentId);
   if (index < 0) throw new NotFoundError('payment');
   const total = toFils(invoice.totalAmount.toString());
@@ -220,21 +353,36 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
     requirePermission(user, 'invoice.create', { branchId: jobCard.branchId });
     if (normalizeStatus(jobCard.status) !== 'READY') {
-      throw new DomainError('An invoice can only be created once the job has passed its quality check and is ready.');
+      throw new DomainError(
+        'An invoice can only be created once the job has passed its quality check and is ready.',
+      );
     }
     const existing = await tx.invoice.findFirst({
-      where: { organizationId: user.organizationId, jobCardId: jobCard.id, status: { notIn: ['VOID', 'CANCELLED'] } },
+      where: {
+        organizationId: user.organizationId,
+        jobCardId: jobCard.id,
+        status: { notIn: ['VOID', 'CANCELLED'] },
+      },
       select: { invoiceNumber: true },
     });
-    if (existing) throw new DomainError(`This job is already invoiced (${existing.invoiceNumber}).`);
+    if (existing)
+      throw new DomainError(`This job is already invoiced (${existing.invoiceNumber}).`);
 
     const billing = await buildBilling(tx, user.organizationId, jobCard.id);
-    if (billing.billable.length === 0) throw new DomainError('There is no approved, completed work to bill.');
+    if (billing.billable.length === 0)
+      throw new DomainError('There is no approved, completed work to bill.');
 
-    const organization = await tx.organization.findUniqueOrThrow({ where: { id: user.organizationId } });
+    const organization = await tx.organization.findUniqueOrThrow({
+      where: { id: user.organizationId },
+    });
     const customer = jobCard.customer;
     const today = parseCalendarDate(localDateString())!;
-    const invoiceNumber = await allocateDocumentNumber(tx, user.organizationId, jobCard.branchId, 'TAX_INVOICE');
+    const invoiceNumber = await allocateDocumentNumber(
+      tx,
+      user.organizationId,
+      jobCard.branchId,
+      'TAX_INVOICE',
+    );
     const now = new Date();
 
     const invoice = await tx.invoice.create({
@@ -250,9 +398,7 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
         issueDate: today,
         supplyDate: today,
         dueDate: today,
-        subtotal: billing.totals.subtotal,
-        taxAmount: billing.totals.taxAmount,
-        totalAmount: billing.totals.totalAmount,
+        ...totalsData(billing.totals),
         sellerLegalName: organization.legalName ?? organization.name,
         sellerTaxNumber: organization.taxNumber,
         sellerAddress: organization.address,
@@ -271,11 +417,7 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
           invoiceId: invoice.id,
           itemType: line.source.labourId ? 'LABOUR' : 'PART',
           description: line.description,
-          quantity: line.amounts.quantity,
-          unitPrice: line.amounts.unitPrice,
-          lineTotal: line.amounts.lineTotal,
-          taxRate: line.amounts.taxRate,
-          taxAmount: line.amounts.taxAmount,
+          ...lineData(line.amounts),
           labourId: line.source.labourId ?? null,
           partUsageId: line.source.partUsageId ?? null,
         },
@@ -301,6 +443,7 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
         invoiceNumber,
         jobCardId: jobCard.id,
         lines: billing.billable.length,
+        discountAmount: billing.totals.discountAmount,
         subtotal: billing.totals.subtotal,
         taxAmount: billing.totals.taxAmount,
         totalAmount: billing.totals.totalAmount,
@@ -316,7 +459,13 @@ const invoiceDetail = {
   items: {
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     include: {
-      labour: { select: { hours: true, rate: true, estimateItem: { select: { estimate: { select: { kind: true, estimateNumber: true } } } } } },
+      labour: {
+        select: {
+          hours: true,
+          rate: true,
+          estimateItem: { select: { estimate: { select: { kind: true, estimateNumber: true } } } },
+        },
+      },
       partUsage: {
         select: {
           quantity: true,
@@ -336,13 +485,22 @@ const invoiceDetail = {
 /** The job's live invoice with lines, payments and computed balance — or null. */
 export async function getJobInvoice(user: AuthenticatedUser, jobCardId: string) {
   const invoice = await prisma.invoice.findFirst({
-    where: { organizationId: user.organizationId, jobCardId, status: { notIn: ['VOID', 'CANCELLED'] } },
+    where: {
+      organizationId: user.organizationId,
+      jobCardId,
+      status: { notIn: ['VOID', 'CANCELLED'] },
+    },
     include: invoiceDetail,
   });
   if (!invoice) return null;
   requirePermission(user, 'invoice.view', { branchId: invoice.branchId });
   const balance = invoiceBalance(invoice);
-  return { ...invoice, paidAmount: balance.paid, balanceDue: balance.balance, paymentState: balance.state };
+  return {
+    ...invoice,
+    paidAmount: balance.paid,
+    balanceDue: balance.balance,
+    paymentState: balance.state,
+  };
 }
 
 /**
@@ -363,7 +521,12 @@ export async function getInvoiceDetail(user: AuthenticatedUser, invoiceId: strin
   if (!invoice) throw new NotFoundError('invoice');
   requirePermission(user, 'invoice.view', { branchId: invoice.branchId });
   const balance = invoiceBalance(invoice);
-  return { ...invoice, paidAmount: balance.paid, balanceDue: balance.balance, paymentState: balance.state };
+  return {
+    ...invoice,
+    paidAmount: balance.paid,
+    balanceDue: balance.balance,
+    paymentState: balance.state,
+  };
 }
 
 export type JobInvoice = NonNullable<Awaited<ReturnType<typeof getJobInvoice>>>;
@@ -373,9 +536,16 @@ const paymentSchema = z.object({
   amount: z
     .string({ error: 'Enter the amount received.' })
     .trim()
-    .refine((value) => /^\d+(\.\d{1,2})?$/.test(value) && Number(value) > 0, 'Enter an amount like 250 or 250.50.'),
-  method: z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'CHEQUE', 'ONLINE'], { error: 'Choose how the customer paid.' }),
-  receivedAt: z.string({ error: 'Enter when the payment was received.' }).min(1, 'Enter when the payment was received.'),
+    .refine(
+      (value) => /^\d+(\.\d{1,2})?$/.test(value) && Number(value) > 0,
+      'Enter an amount like 250 or 250.50.',
+    ),
+  method: z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'CHEQUE', 'ONLINE'], {
+    error: 'Choose how the customer paid.',
+  }),
+  receivedAt: z
+    .string({ error: 'Enter when the payment was received.' })
+    .min(1, 'Enter when the payment was received.'),
   referenceNumber: z.string().trim().max(100).optional(),
   notes: z.string().trim().max(1000).optional(),
 });
@@ -398,7 +568,8 @@ export async function recordInvoicePayment(
   const input = parseInput(paymentSchema, rawInput);
   const receivedAt = parseLocalDateTime(input.receivedAt);
   if (!receivedAt) throw new DomainError('Enter a valid date and time.', 'receivedAt');
-  if (receivedAt.getTime() > Date.now() + 5 * 60 * 1000) throw new DomainError("A payment can't be dated in the future.", 'receivedAt');
+  if (receivedAt.getTime() > Date.now() + 5 * 60 * 1000)
+    throw new DomainError("A payment can't be dated in the future.", 'receivedAt');
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'payment.record');
@@ -406,22 +577,35 @@ export async function recordInvoicePayment(
     // always locked before invoices, everywhere, so two paths can never take
     // the pair in opposite orders.
     const target = await tx.invoice.findFirst({
-      where: { id: invoiceId, organizationId: user.organizationId, status: { notIn: ['VOID', 'CANCELLED'] } },
+      where: {
+        id: invoiceId,
+        organizationId: user.organizationId,
+        status: { notIn: ['VOID', 'CANCELLED'] },
+      },
       select: { id: true, jobCardId: true },
     });
     if (!target) throw new NotFoundError('invoice');
-    const jobCard = target.jobCardId ? await lockJob(tx, user.organizationId, target.jobCardId) : null;
+    const jobCard = target.jobCardId
+      ? await lockJob(tx, user.organizationId, target.jobCardId)
+      : null;
 
     await tx.$executeRaw`SELECT id FROM invoices WHERE id = ${target.id}::uuid FOR UPDATE`;
-    const invoice = await tx.invoice.findFirstOrThrow({ where: { id: target.id, organizationId: user.organizationId } });
+    const invoice = await tx.invoice.findFirstOrThrow({
+      where: { id: target.id, organizationId: user.organizationId },
+    });
     requirePermission(user, 'payment.create', { branchId: invoice.branchId });
-    if (invoice.invoiceType !== 'TAX_INVOICE') throw new DomainError('Payments can only be recorded against a tax invoice.');
+    if (invoice.invoiceType !== 'TAX_INVOICE')
+      throw new DomainError('Payments can only be recorded against a tax invoice.');
     if (invoice.status === 'PAID') throw new DomainError('This invoice is already fully paid.');
     if (invoice.status !== 'ISSUED' && invoice.status !== 'PARTIALLY_PAID') {
       throw new DomainError('This invoice cannot take payments.');
     }
     // The form's time is minute-precision, so compare against the minute of issue.
-    if (receivedAt.getTime() < Math.floor(invoice.issuedAt!.getTime() / 60000) * 60000) throw new DomainError("A payment can't be dated before the invoice was issued.", 'receivedAt');
+    if (receivedAt.getTime() < Math.floor(invoice.issuedAt!.getTime() / 60000) * 60000)
+      throw new DomainError(
+        "A payment can't be dated before the invoice was issued.",
+        'receivedAt',
+      );
 
     const payments = await tx.payment.findMany({
       where: { organizationId: user.organizationId, invoiceId: invoice.id },
@@ -431,10 +615,18 @@ export async function recordInvoicePayment(
     const balance = total - paidFils(payments);
     const amount = toFils(input.amount);
     if (amount > balance) {
-      throw new DomainError(`That is more than the balance due (${filsToString(balance)}).`, 'amount');
+      throw new DomainError(
+        `That is more than the balance due (${filsToString(balance)}).`,
+        'amount',
+      );
     }
 
-    const paymentNumber = await allocateDocumentNumber(tx, user.organizationId, invoice.branchId, 'PAYMENT_RECEIPT');
+    const paymentNumber = await allocateDocumentNumber(
+      tx,
+      user.organizationId,
+      invoice.branchId,
+      'PAYMENT_RECEIPT',
+    );
     const payment = await tx.payment.create({
       data: {
         organizationId: user.organizationId,
@@ -498,7 +690,11 @@ export async function recordPayment(user: AuthenticatedUser, jobCardId: string, 
   if (!jobCard) throw new NotFoundError('job card');
   requirePermission(user, 'payment.create', { branchId: jobCard.branchId });
   const invoice = await prisma.invoice.findFirst({
-    where: { organizationId: user.organizationId, jobCardId: jobCard.id, status: { notIn: ['VOID', 'CANCELLED'] } },
+    where: {
+      organizationId: user.organizationId,
+      jobCardId: jobCard.id,
+      status: { notIn: ['VOID', 'CANCELLED'] },
+    },
     select: { id: true },
   });
   if (!invoice) throw new DomainError('Create the invoice before recording a payment.');
@@ -516,20 +712,32 @@ const deliverySchema = z.object({
  * PAID → DELIVERED: hands the vehicle back. Only a fully paid job can be
  * delivered — V1 has no delivery-on-credit rule. Records who and when.
  */
-export async function deliverVehicle(user: AuthenticatedUser, jobCardId: string, rawInput: unknown) {
+export async function deliverVehicle(
+  user: AuthenticatedUser,
+  jobCardId: string,
+  rawInput: unknown,
+) {
   const input = parseInput(deliverySchema, rawInput);
   const signature = await prepareSignature(input.signature, user.organizationId, jobCardId);
   return prisma.$transaction(async (tx) => {
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
     requirePermission(user, 'job_card.close', { branchId: jobCard.branchId });
     const invoice = await tx.invoice.findFirst({
-      where: { organizationId: user.organizationId, jobCardId: jobCard.id, status: { notIn: ['VOID', 'CANCELLED'] } },
-      include: { payments: { select: { id: true, amount: true, status: true, reversalOfPaymentId: true } } },
+      where: {
+        organizationId: user.organizationId,
+        jobCardId: jobCard.id,
+        status: { notIn: ['VOID', 'CANCELLED'] },
+      },
+      include: {
+        payments: { select: { id: true, amount: true, status: true, reversalOfPaymentId: true } },
+      },
     });
     if (!invoice) throw new DomainError('The job has not been invoiced yet.');
     const balance = toFils(invoice.totalAmount.toString()) - paidFils(invoice.payments);
     if (balance > 0 || invoice.status !== 'PAID') {
-      throw new DomainError(`The vehicle can't be delivered with a balance due (${filsToString(Math.max(balance, 0))}).`);
+      throw new DomainError(
+        `The vehicle can't be delivered with a balance due (${filsToString(Math.max(balance, 0))}).`,
+      );
     }
     if (normalizeStatus(jobCard.status) !== 'PAID') {
       throw new DomainError('Only a fully paid job can be delivered.');
@@ -570,14 +778,22 @@ export async function deliverVehicle(user: AuthenticatedUser, jobCardId: string,
       action: 'job_card.delivered',
       entityType: 'JobCard',
       entityId: jobCard.id,
-      afterData: { deliveredAt: deliveredAt.toISOString(), deliveredByUserId: user.id, notes: emptyToNull(input.notes), handoverSigned: Boolean(signature) },
+      afterData: {
+        deliveredAt: deliveredAt.toISOString(),
+        deliveredByUserId: user.id,
+        notes: emptyToNull(input.notes),
+        handoverSigned: Boolean(signature),
+      },
     });
   });
 }
 
 /** Billing preview for the READY screen (read-only). */
 export async function getBillingPreview(user: AuthenticatedUser, jobCardId: string) {
-  const jobCard = await prisma.jobCard.findFirst({ where: { id: jobCardId, organizationId: user.organizationId }, select: { branchId: true } });
+  const jobCard = await prisma.jobCard.findFirst({
+    where: { id: jobCardId, organizationId: user.organizationId },
+    select: { branchId: true },
+  });
   if (!jobCard) throw new NotFoundError('job card');
   requirePermission(user, 'invoice.view', { branchId: jobCard.branchId });
   return buildBilling(prisma, user.organizationId, jobCardId);

@@ -10,7 +10,13 @@ import { DomainError, NotFoundError } from '@/lib/errors';
 import { prepareSignature, recordSignature } from '@/lib/media/signatures';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
-import { calculateLine, calculateTotals } from '@/lib/money';
+import {
+  discountFields,
+  lineData,
+  lineSchema,
+  priceDocument,
+  totalsData,
+} from '@/lib/billing/document-lines';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { endOfLocalDay, localDateString, parseCalendarDate } from '@/lib/format';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
@@ -294,54 +300,27 @@ export async function createQuotation(user: AuthenticatedUser, rawInput: unknown
   });
 }
 
-const lineSchema = z.object({
-  itemType: z.enum(['LABOUR', 'PART'], { error: 'Choose labour or part.' }),
-  description: z
-    .string({ error: 'Every line needs a description.' })
-    .trim()
-    .min(1, 'Every line needs a description.')
-    .max(300),
-  quantity: z.string().trim().min(1, 'Enter a quantity.'),
-  unitPrice: z.string().trim().min(1, 'Enter a price.'),
-  taxRate: z.string().trim().optional(),
-});
-
 const draftSchema = z.object({
   items: z.array(lineSchema).max(100, 'An estimate can have at most 100 lines.'),
+  /** A discount on the whole quotation, after the lines' own. */
+  ...discountFields,
   validUntil: z
     .string({ error: 'Choose how long the quotation is valid.' })
     .min(1, 'Choose how long the quotation is valid.'),
 });
 
-function priceLines(items: z.infer<typeof lineSchema>[], defaultVatRate: string) {
-  return items.map((item, index) => {
-    try {
-      return {
-        ...item,
-        amounts: calculateLine({
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          taxRate: item.taxRate || defaultVatRate,
-        }),
-      };
-    } catch (error) {
-      throw new DomainError(
-        `Line ${index + 1}: ${error instanceof Error ? error.message : 'invalid amount.'}`,
-        `items.${index}`,
-      );
-    }
-  });
-}
-
-/** Replaces a draft's lines and recalculates Subtotal / VAT / Total on the server. */
+/** Replaces a draft's lines and discounts, and prices it again on the server. */
 export async function saveEstimateDraft(
   user: AuthenticatedUser,
   estimateId: string,
   rawInput: unknown,
 ) {
   const input = parseInput(draftSchema, rawInput);
-  const lines = priceLines(input.items, await resolveDefaultVatRate(user.organizationId));
-  const totals = calculateTotals(lines.map((line) => line.amounts));
+  const { lines, totals } = priceDocument(
+    input.items,
+    await resolveDefaultVatRate(user.organizationId),
+    input,
+  );
   const validUntil = parseCalendarDate(input.validUntil);
   if (!validUntil) throw new DomainError('Choose a valid date.', 'validUntil');
 
@@ -369,17 +348,13 @@ export async function saveEstimateDraft(
           estimateId: estimate.id,
           itemType: line.itemType,
           description: line.description,
-          quantity: line.amounts.quantity,
-          unitPrice: line.amounts.unitPrice,
-          lineTotal: line.amounts.lineTotal,
-          taxRate: line.amounts.taxRate,
-          taxAmount: line.amounts.taxAmount,
+          ...lineData(line.amounts),
         },
       });
     }
     return tx.estimate.update({
       where: { id: estimate.id },
-      data: { ...totals, validUntil },
+      data: { ...totalsData(totals), validUntil },
     });
   });
 }
@@ -675,6 +650,9 @@ export async function reviseEstimate(user: AuthenticatedUser, estimateId: string
         estimateNumber: `${rootEstimateNumber(source.estimateNumber)}-R${version}`,
         version,
         status: 'DRAFT',
+        discountType: source.discountType,
+        discountValue: source.discountValue,
+        discountAmount: source.discountAmount,
         subtotal: source.subtotal,
         taxAmount: source.taxAmount,
         totalAmount: source.totalAmount,
@@ -692,6 +670,9 @@ export async function reviseEstimate(user: AuthenticatedUser, estimateId: string
           description: item.description,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
+          discountType: item.discountType,
+          discountValue: item.discountValue,
+          discountAmount: item.discountAmount,
           lineTotal: item.lineTotal,
           taxRate: item.taxRate,
           taxAmount: item.taxAmount,
@@ -971,7 +952,8 @@ export async function deleteDraftQuotation(user: AuthenticatedUser, estimateId: 
     requirePermission(user, 'job_card.edit', { branchId: estimate.branchId });
     const blocker = draftDeleteBlocker({ ...estimate, nextVersions: estimate._count.nextVersions });
     if (blocker) throw new DomainError(blocker);
-    if (estimate._count.approvals > 0) throw new DomainError('This quotation has a customer decision on it.');
+    if (estimate._count.approvals > 0)
+      throw new DomainError('This quotation has a customer decision on it.');
 
     await tx.estimate.delete({ where: { id: estimate.id } });
     await writeAuditLog(tx, {

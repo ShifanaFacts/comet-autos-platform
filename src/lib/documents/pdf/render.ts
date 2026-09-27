@@ -10,6 +10,7 @@ import {
   formatAed,
   formatQuantity,
   formatRate,
+  hasLineDiscounts,
   hasMixedVatRates,
   type CustomerDocumentModel,
   type DocumentTone,
@@ -47,7 +48,8 @@ const BOTTOM = A4.height - 70;
  * Item table columns, laid out like the workshop's own quotation sheet:
  * S.No · Type · Description · Qty · Price · Amount. A per-line VAT column
  * appears only when the lines are not all at one rate — otherwise the
- * totals already say "VAT 5%". Numeric columns give their right edge.
+ * totals already say "VAT 5%" — and a Discount column only when a line has
+ * a discount. Numeric columns give their right edge.
  */
 interface Columns {
   no: number;
@@ -56,15 +58,21 @@ interface Columns {
   qty: number;
   price: number;
   vat: number | null;
+  discount: number | null;
   amount: number;
   descWidth: number;
 }
 
-function columns(withVat: boolean): Columns {
+function columns(withVat: boolean, withDiscount: boolean): Columns {
   const base = { no: MARGIN + 30, type: MARGIN + 40, desc: MARGIN + 92, amount: RIGHT - 12 };
-  const numeric = withVat
-    ? { qty: MARGIN + 322, price: MARGIN + 392, vat: MARGIN + 428 }
-    : { qty: MARGIN + 350, price: MARGIN + 425, vat: null };
+  const numeric =
+    withVat && withDiscount
+      ? { qty: MARGIN + 270, price: MARGIN + 338, vat: MARGIN + 370, discount: MARGIN + 425 }
+      : withDiscount
+        ? { qty: MARGIN + 290, price: MARGIN + 360, vat: null, discount: MARGIN + 420 }
+        : withVat
+          ? { qty: MARGIN + 322, price: MARGIN + 392, vat: MARGIN + 428, discount: null }
+          : { qty: MARGIN + 350, price: MARGIN + 425, vat: null, discount: null };
   return { ...base, ...numeric, descWidth: numeric.qty - base.desc - 40 };
 }
 
@@ -211,13 +219,14 @@ function tableHeader(layout: Layout, col: Columns) {
   page.text('QTY', col.qty, y, { ...style, align: 'right' });
   page.text('PRICE', col.price, y, { ...style, align: 'right' });
   if (col.vat !== null) page.text('VAT', col.vat, y, { ...style, align: 'right' });
+  if (col.discount !== null) page.text('DISCOUNT', col.discount, y, { ...style, align: 'right' });
   page.text('AMOUNT', col.amount, y, { ...style, align: 'right' });
   layout.y += 30;
 }
 
 function sections(layout: Layout, doc: CustomerDocumentModel) {
   if (doc.sections.length === 0) return;
-  const col = columns(hasMixedVatRates(doc.sections));
+  const col = columns(hasMixedVatRates(doc.sections), hasLineDiscounts(doc.sections));
   layout.ensure(80);
   tableHeader(layout, col);
   // One running number across the whole table, like the paper sheet.
@@ -240,7 +249,8 @@ function sections(layout: Layout, doc: CustomerDocumentModel) {
       const { page } = layout;
       const base = layout.y + 9;
       page.text(String(number), col.no, base, { size: 9.5, color: MUTED, align: 'right' });
-      if (line.type) page.text(line.type, col.type, base, { font: 'bold', size: 7.5, color: MUTED });
+      if (line.type)
+        page.text(line.type, col.type, base, { font: 'bold', size: 7.5, color: MUTED });
       description.forEach((text, index) =>
         page.text(text, col.desc, base + index * 12.5, { size: 9.5, color: INK }),
       );
@@ -256,6 +266,13 @@ function sections(layout: Layout, doc: CustomerDocumentModel) {
       });
       if (col.vat !== null) {
         page.text(formatRate(line.taxRate), col.vat, base, {
+          size: 9.5,
+          color: MUTED,
+          align: 'right',
+        });
+      }
+      if (col.discount !== null && line.discount !== null) {
+        page.text(`-${formatAed(line.discount)}`, col.discount, base, {
           size: 9.5,
           color: MUTED,
           align: 'right',

@@ -37,11 +37,11 @@ let b: TestOrg;
 let estimateId: string;
 
 const valid = (over: Record<string, unknown> = {}) => ({
-  name: 'Comet Autos Test',
-  legalName: 'Comet Autos Workshop LLC',
+  name: 'Mohammed Mowla Garage Test',
+  legalName: 'Mohammed Mowla Auto Garage LLC',
   address: 'Al Qusais, Dubai',
   phone: '04 555 1234',
-  email: 'Service@Comet.Test',
+  email: 'Service@Garage.Test',
   taxNumber: '100200300400003',
   isVatRegistered: 'true',
   vatRate: '5',
@@ -102,8 +102,8 @@ describe('workshop settings', () => {
 
   test('details are saved, normalised, and audited', async () => {
     const saved = await updateOrganizationSettings(a.owner, valid());
-    assert.equal(saved.name, 'Comet Autos Test');
-    assert.equal(saved.email, 'service@comet.test', 'email is lower-cased');
+    assert.equal(saved.name, 'Mohammed Mowla Garage Test');
+    assert.equal(saved.email, 'service@garage.test', 'email is lower-cased');
     assert.equal(saved.taxNumber, '100200300400003');
     assert.ok(
       await prisma.auditLog.findFirst({
@@ -197,10 +197,10 @@ describe('workshop settings', () => {
   test('the workshop name and TRN reach the customer document', async () => {
     await updateOrganizationSettings(
       a.owner,
-      valid({ name: 'Comet Autos Al Qusais', taxNumber: '100999888777666' }),
+      valid({ name: 'Mohammed Mowla Al Qusais', taxNumber: '100999888777666' }),
     );
     const document = await getQuotationDocument(a.owner, estimateId);
-    assert.equal(document.seller.name, 'Comet Autos Al Qusais');
+    assert.equal(document.seller.name, 'Mohammed Mowla Al Qusais');
     assert.equal(document.seller.taxNumber, '100999888777666');
   });
 
@@ -228,7 +228,7 @@ describe('workshop settings', () => {
     const ours = await getOrganizationSettings(a.owner);
     assert.equal(theirs.name, 'Other Workshop');
     assert.equal(theirs.vatRate, '0.00');
-    assert.equal(ours.name, 'Comet Autos Al Qusais', 'unchanged by the other workshop');
+    assert.equal(ours.name, 'Mohammed Mowla Al Qusais', 'unchanged by the other workshop');
     assert.equal(await resolveDefaultVatRate(a.organizationId), '5.00');
   });
 

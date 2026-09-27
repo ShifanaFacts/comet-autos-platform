@@ -89,9 +89,9 @@ before(async () => {
   await prisma.organization.update({
     where: { id: a.organizationId },
     data: {
-      name: 'Comet Autos',
+      name: 'Mohammed Mowla Auto Garage',
       phone: '04 555 1234',
-      email: 'service@comet.test',
+      email: 'service@garage.test',
       taxNumber: '100200300400003',
     },
   });
@@ -155,7 +155,7 @@ describe('customer documents and sharing', () => {
     assert.equal(decoded, shared.message);
     for (const expected of [
       'Hello Ahmed Al Marzooqi,',
-      'Your quotation from Comet Autos is ready.',
+      'Your quotation from Mohammed Mowla Auto Garage is ready.',
       'Vehicle: Toyota Camry',
       `Registration: ${plate}`,
       'Total: AED 897.75',
@@ -216,7 +216,7 @@ describe('customer documents and sharing', () => {
       'AED 897.75',
       'AED 42.75',
       'VAT 5%',
-      'Comet Autos',
+      'Mohammed Mowla Auto Garage',
       'Valid until',
       'S.NO',
       'TYPE',
@@ -415,7 +415,7 @@ describe('customer documents and sharing', () => {
     assert.match(shared.link, /\/customer\/invoice\/[A-Za-z0-9_-]{43}$/);
     const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
     for (const expected of [
-      'Your invoice from Comet Autos is ready.',
+      'Your invoice from Mohammed Mowla Auto Garage is ready.',
       `Invoice: ${invoice.invoiceNumber}`,
       'Total: AED 897.75',
       'Paid: AED 897.75',
@@ -500,7 +500,7 @@ describe('customer documents and sharing', () => {
 
     const message = invoiceMessage({
       customerName: 'Sara & Co #1',
-      workshopName: 'Comet Autos',
+      workshopName: 'Mohammed Mowla Auto Garage',
       vehicle: 'Nissan Patrol',
       plateNumber: 'A 12345',
       number: 'INV-000124',
@@ -522,7 +522,7 @@ describe('customer documents and sharing', () => {
     assert.ok(
       quotationMessage({
         customerName: '',
-        workshopName: 'Comet Autos',
+        workshopName: 'Mohammed Mowla Auto Garage',
         vehicle: null,
         plateNumber: null,
         number: 'EST-1',

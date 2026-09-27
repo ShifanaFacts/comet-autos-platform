@@ -874,6 +874,5 @@ describe('a renamed workshop', () => {
     const fresh = await getInvoiceDocument(shop.owner, after.invoiceId);
     assert.equal(fresh.seller.name, 'New Name Auto LLC');
     assert.match(fresh.fileName, /^New-Name-Auto-LLC-Tax-invoice-/);
-    assert.ok(!fresh.fileName.includes('Comet'), 'the file is named for the workshop, not the app');
   });
 });

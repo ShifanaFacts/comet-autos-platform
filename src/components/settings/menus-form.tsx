@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { setHiddenMenusAction } from '@/app/(app)/settings/actions';
 import { ALWAYS_SHOWN_MENUS, NAV_GROUPS, STANDARD_JOB_CARD_MENUS } from '@/lib/nav';
@@ -11,6 +11,11 @@ import { cn } from '@/lib/utils';
  * Which menus the workshop sees. Each switch saves as it is flipped. Some
  * are fixed: the ones the app can't be used without, and the standard job
  * card's own screens while the minimal job card is on.
+ *
+ * Saving redraws the menu around every page, which takes a moment: the
+ * switch that was flipped shows a spinner until it is done, and the others
+ * wait (two saves at once would race each other) without greying out, so
+ * the screen never looks frozen.
  */
 export function MenusForm({
   hiddenMenus,
@@ -21,8 +26,8 @@ export function MenusForm({
   detailedJobCards: boolean;
   canEdit: boolean;
 }) {
-  const router = useRouter();
   const [hidden, setHidden] = useState(hiddenMenus);
+  const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -31,11 +36,14 @@ export function MenusForm({
     const next = show ? hidden.filter((h) => h !== href) : [...hidden, href];
     setError(null);
     setHidden(next);
+    setSaving(href);
     startTransition(async () => {
+      // The action revalidates the layout, so its response already carries
+      // the redrawn menu — no second refresh is needed.
       const result = await setHiddenMenusAction(next);
+      setSaving(null);
       if (result.ok) {
         toast.success(show ? `${label} shown` : `${label} hidden`);
-        router.refresh();
       } else {
         setHidden(previous);
         setError(result.error ?? 'Could not change the menus.');
@@ -61,13 +69,16 @@ export function MenusForm({
               const locked = ALWAYS_SHOWN_MENUS.includes(item.href);
               const standardOnly = !detailedJobCards && STANDARD_JOB_CARD_MENUS.includes(item.href);
               const shown = locked || (!standardOnly && !hidden.includes(item.href));
-              const note = locked
-                ? 'Always shown'
-                : standardOnly
-                  ? 'Shown with the standard job card'
-                  : item.soon
-                    ? 'Coming soon'
-                    : null;
+              const note =
+                saving === item.href
+                  ? 'Saving…'
+                  : locked
+                    ? 'Always shown'
+                    : standardOnly
+                      ? 'Shown with the standard job card'
+                      : item.soon
+                        ? 'Coming soon'
+                        : null;
               return (
                 <li
                   key={item.href}
@@ -83,7 +94,9 @@ export function MenusForm({
                   <MenuSwitch
                     label={item.label}
                     checked={shown}
-                    disabled={!canEdit || locked || standardOnly || isPending}
+                    disabled={!canEdit || locked || standardOnly}
+                    busy={isPending}
+                    saving={saving === item.href}
                     onChange={(show) => toggle(item.href, item.label, show)}
                   />
                 </li>
@@ -105,11 +118,18 @@ function MenuSwitch({
   label,
   checked,
   disabled,
+  busy,
+  saving,
   onChange,
 }: {
   label: string;
   checked: boolean;
+  /** Can't be changed at all — shown dimmed. */
   disabled: boolean;
+  /** Another save is running — this one waits, but stays at full strength. */
+  busy: boolean;
+  /** This switch's own save is running. */
+  saving: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
@@ -118,10 +138,15 @@ function MenuSwitch({
       role="switch"
       aria-checked={checked}
       aria-label={`Show ${label}`}
-      disabled={disabled}
+      aria-busy={saving || undefined}
+      disabled={disabled || busy}
       onClick={() => onChange(!checked)}
-      className="flex min-h-11 shrink-0 items-center disabled:cursor-not-allowed disabled:opacity-50"
+      className={cn(
+        'flex min-h-11 shrink-0 items-center gap-2',
+        disabled ? 'cursor-not-allowed opacity-50' : busy ? 'cursor-wait' : null,
+      )}
     >
+      {saving ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : null}
       <span
         className={cn(
           'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',

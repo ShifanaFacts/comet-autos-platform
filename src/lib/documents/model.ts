@@ -24,6 +24,9 @@ export interface DocumentLine {
   quantity: string;
   unitPrice: string;
   taxRate: string | null;
+  /** The AED taken off this line, or null when it has no discount. */
+  discount: string | null;
+  /** Quantity × price, less the line's discount. */
   lineTotal: string;
 }
 
@@ -45,6 +48,11 @@ export function hasMixedVatRates(sections: DocumentSection[]): boolean {
     ),
   );
   return rates.size > 1;
+}
+
+/** Lines only need a discount column when at least one of them has a discount. */
+export function hasLineDiscounts(sections: DocumentSection[]): boolean {
+  return sections.some((s) => s.lines.some((l) => l.discount !== null));
 }
 
 export interface DocumentField {

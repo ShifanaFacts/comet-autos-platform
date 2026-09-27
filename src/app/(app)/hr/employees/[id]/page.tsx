@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowRight, ClipboardCheck, Pencil, ShieldCheck, Wrench } from 'lucide-react';
+import { ArrowRight, Banknote, ClipboardCheck, Pencil, ShieldCheck, Wrench } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { getEmployeeDetail } from '@/lib/hr/employees';
+import { canSeePay, getSalaryHistory } from '@/lib/hr/payroll';
 import { NotFoundError } from '@/lib/errors';
-import { formatDate, formatDateTime } from '@/lib/format';
+import { formatCalendarDate, formatDate, formatDateTime, formatMoney } from '@/lib/format';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -12,6 +13,8 @@ import { JobStatusBadge } from '@/components/shared/job-status-badge';
 import { LinkButton } from '@/components/shared/link-button';
 import { StatusPill } from '@/components/shared/status-pill';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
+import { InlineForm } from '@/components/shared/inline-form';
+import { SalaryForm } from '@/components/hr/payroll-forms';
 
 export default async function EmployeePage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -27,6 +30,8 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
   }
   const { employee, openJobs, recentLabour, counts } = detail;
   const canManage = hasPermission(user, 'payroll.create');
+  // Pay is shown only to those who prepare or approve payroll.
+  const pay = canSeePay(user) ? await getSalaryHistory(user, employee.id) : null;
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -207,6 +212,86 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
               </dl>
             </Panel>
           </Section>
+
+          {pay ? (
+            <div id="salary" className="scroll-mt-24">
+              <Section title="Salary" description="Per month. Payroll uses the salary in force.">
+                <Panel padding="none" className="overflow-hidden">
+                  {pay.current ? (
+                    <dl className="grid grid-cols-3 gap-4 px-4 py-5 text-sm sm:px-6">
+                      <div className="flex flex-col gap-1">
+                        <dt className="text-xs font-medium text-muted-foreground">Basic</dt>
+                        <dd className="font-medium tabular-nums">
+                          {formatMoney(pay.current.basicSalary)}
+                        </dd>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <dt className="text-xs font-medium text-muted-foreground">Allowances</dt>
+                        <dd className="font-medium tabular-nums">
+                          {formatMoney(pay.current.allowances)}
+                        </dd>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <dt className="text-xs font-medium text-muted-foreground">Total</dt>
+                        <dd className="font-semibold tabular-nums">
+                          {formatMoney(pay.current.total)}
+                        </dd>
+                      </div>
+                    </dl>
+                  ) : (
+                    <p className="flex items-center gap-2 px-4 py-5 text-sm text-muted-foreground sm:px-6">
+                      <Banknote className="size-4" />
+                      No salary in force — this person is left out of payroll.
+                    </p>
+                  )}
+                  {pay.upcoming ? (
+                    <p className="border-t border-border px-4 py-3 text-xs text-muted-foreground sm:px-6">
+                      Changes to {formatMoney(pay.upcoming.basicSalary)} basic from{' '}
+                      {formatCalendarDate(pay.upcoming.effectiveFrom)}.
+                    </p>
+                  ) : null}
+                  {pay.history.length > 1 ? (
+                    <ul className="divide-y divide-border border-t border-border text-xs">
+                      {pay.history.map((row) => (
+                        <li
+                          key={row.id}
+                          className="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-6"
+                        >
+                          <span className="text-muted-foreground tabular-nums">
+                            {formatCalendarDate(row.effectiveFrom)}
+                            {row.effectiveTo
+                              ? ` – ${formatCalendarDate(row.effectiveTo)}`
+                              : ' onwards'}
+                          </span>
+                          <span className="tabular-nums">{formatMoney(row.total)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {canManage ? (
+                    <InlineForm
+                      label={pay.current ? 'Change salary' : 'Set salary'}
+                      hint="From a date. The same date as the latest salary corrects it."
+                      icon={<Banknote className="size-4" />}
+                      defaultOpen={!pay.current && !pay.upcoming}
+                    >
+                      <SalaryForm
+                        employeeId={employee.id}
+                        current={
+                          pay.current
+                            ? {
+                                basicSalary: pay.current.basicSalary.toString(),
+                                allowances: pay.current.allowances.toString(),
+                              }
+                            : null
+                        }
+                      />
+                    </InlineForm>
+                  ) : null}
+                </Panel>
+              </Section>
+            </div>
+          ) : null}
 
           <Section title="Work recorded" description="Across every job, all time.">
             <Panel padding="none">

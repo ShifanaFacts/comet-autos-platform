@@ -1,6 +1,6 @@
 # External Integrations
 
-Comet Autos does not depend on external providers unless a feature
+Mohammed Mowla Auto Garage does not depend on external providers unless a feature
 genuinely needs one. This document tracks every integration boundary from
 the V1 build instruction, what's implemented, what's mocked, and exactly
 what you (the product owner) need to configure and when.

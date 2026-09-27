@@ -4,6 +4,7 @@ import { requireUser, requirePermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getInvoiceDetail } from '@/lib/billing/invoice';
 import { invoiceEditBlocker } from '@/lib/billing/invoice-changes';
+import { editableBill, editableLine } from '@/lib/billing/editable-lines';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { formatCalendarDate } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -44,22 +45,14 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
             invoiceId={invoice.id}
             defaultVatRate={defaultVatRate}
             notes={invoice.notes ?? ''}
-            lines={invoice.items.map((item, index) => ({
-              key: `existing-${index}`,
-              itemType: item.itemType === 'LABOUR' ? 'LABOUR' : 'PART',
-              description: item.description,
-              quantity: trimNumber(item.quantity.toString()),
-              unitPrice: item.unitPrice.toString(),
-              taxRate: trimNumber(item.taxRate?.toString() ?? '0'),
-            }))}
+            issueDate={invoice.issueDate.toISOString().slice(0, 10)}
+            dueDate={(invoice.dueDate ?? invoice.issueDate).toISOString().slice(0, 10)}
+            customerReference={invoice.customerReference ?? ''}
+            bill={editableBill(invoice)}
+            lines={invoice.items.map((item, index) => editableLine(item, `existing-${index}`, '0'))}
           />
         )}
       </Panel>
     </Stack>
   );
-}
-
-/** "2.000" → "2", "5.00" → "5", "1.50" → "1.5". */
-function trimNumber(value: string) {
-  return value.includes('.') ? value.replace(/\.?0+$/, '') : value;
 }

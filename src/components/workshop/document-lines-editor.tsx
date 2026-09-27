@@ -5,36 +5,34 @@ import { Package, Plus, Trash2, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+  calculateDocument,
   calculateLine,
-  calculateTotals,
   formatMilli,
+  readDiscount,
   signedToMilli,
+  toFils,
+  type DiscountType,
+  type DocumentTotals,
   type LineAmounts,
 } from '@/lib/money';
 import { formatMoney } from '@/lib/format';
+import type { BillDiscount, EditableLine, LineType } from '@/lib/billing/editable-lines';
 import { cn } from '@/lib/utils';
 
 /*
  * Typing the lines of a quotation or an invoice, laid out like the
  * workshop's own sheet: one numbered list, each line marked Parts or
- * Labour, then Qty, Price and Amount, with the totals underneath.
+ * Labour, then Qty, Price, Discount and Amount, with the totals — and a
+ * discount on the whole bill — underneath.
  *
  * Every figure shown while typing comes from lib/money — the same rules the
  * server prices with — so the total on screen is the total on the document.
  * The server still prices every line again; nothing here is trusted.
  */
 
-export type LineType = 'PART' | 'LABOUR';
+export type { BillDiscount, EditableLine, LineType };
 
-export interface EditableLine {
-  key: string;
-  itemType: LineType;
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  /** Percent; defaults to the organization's rate. */
-  taxRate: string;
-}
+export const NO_BILL_DISCOUNT: BillDiscount = { type: 'PERCENT', value: '' };
 
 /** "5.00" → "5" for the rate input. */
 export const trimRate = (rate: string) => (rate.includes('.') ? rate.replace(/\.?0+$/, '') : rate);
@@ -49,7 +47,29 @@ export function newEditableLine(itemType: LineType, defaultVatRate: string): Edi
     quantity: '1',
     unitPrice: '',
     taxRate: trimRate(defaultVatRate),
+    discountType: 'PERCENT',
+    discount: '',
   };
+}
+
+/** The lines as the server expects them — blank lines left out. */
+export function linesPayload(lines: EditableLine[]) {
+  return lines
+    .filter((line) => !isBlankLine(line))
+    .map(({ itemType, description, quantity, unitPrice, taxRate, discountType, discount }) => ({
+      itemType,
+      description,
+      quantity,
+      unitPrice,
+      taxRate,
+      discountType,
+      discount,
+    }));
+}
+
+/** The bill discount as the server expects it. */
+export function billDiscountPayload(bill: BillDiscount) {
+  return { discountType: bill.type, discount: bill.value };
 }
 
 function price(line: EditableLine, defaultVatRate: string): LineAmounts | null {
@@ -58,6 +78,7 @@ function price(line: EditableLine, defaultVatRate: string): LineAmounts | null {
       quantity: line.quantity,
       unitPrice: line.unitPrice,
       taxRate: line.taxRate || defaultVatRate,
+      discount: readDiscount(line.discountType, line.discount),
     });
   } catch {
     return null;
@@ -68,36 +89,57 @@ function price(line: EditableLine, defaultVatRate: string): LineAmounts | null {
 export const isBlankLine = (line: EditableLine) =>
   line.description.trim() === '' && line.unitPrice.trim() === '';
 
-/** The priced state of the lines, for the parent's buttons and messages. */
-export function useLineTotals(lines: EditableLine[], defaultVatRate: string) {
+/** The priced state of the lines and bill, for the parent's buttons and messages. */
+export function useLineTotals(
+  lines: EditableLine[],
+  defaultVatRate: string,
+  bill: BillDiscount = NO_BILL_DISCOUNT,
+) {
   return useMemo(() => {
     const priced = lines.map((line) => ({ line, amounts: price(line, defaultVatRate) }));
     const used = priced.filter((entry) => !isBlankLine(entry.line));
-    const totals = calculateTotals(used.flatMap((entry) => (entry.amounts ? [entry.amounts] : [])));
+    const amounts = used.flatMap((entry) => (entry.amounts ? [entry.amounts] : []));
+    let totals: DocumentTotals;
+    let billError: string | null = null;
+    try {
+      totals = calculateDocument(amounts, readDiscount(bill.type, bill.value)).totals;
+    } catch (error) {
+      billError = error instanceof Error ? error.message : 'Check the discount.';
+      totals = calculateDocument(amounts).totals;
+    }
     const rates = new Set(
       used.map((entry) => formatMilli(signedToMilli(entry.line.taxRate || defaultVatRate))),
     );
     return {
       priced,
       totals,
+      billError,
       vatLabel: rates.size === 1 ? `VAT ${[...rates][0]}%` : 'VAT',
-      /** Some line is half-filled or has an amount that doesn't parse. */
-      incomplete: used.some((entry) => !entry.amounts || entry.line.description.trim() === ''),
+      /** Some line is half-filled, an amount doesn't parse, or the bill discount doesn't. */
+      incomplete:
+        billError !== null ||
+        used.some((entry) => !entry.amounts || entry.line.description.trim() === ''),
       count: used.length,
     };
-  }, [lines, defaultVatRate]);
+  }, [lines, defaultVatRate, bill]);
 }
 
 export function DocumentLinesEditor({
   lines,
   onChange,
+  bill,
+  onBillChange,
   defaultVatRate,
 }: {
   lines: EditableLine[];
   onChange: (lines: EditableLine[]) => void;
+  /** The discount on the whole bill. */
+  bill: BillDiscount;
+  onBillChange: (bill: BillDiscount) => void;
   defaultVatRate: string;
 }) {
-  const { priced, totals, vatLabel } = useLineTotals(lines, defaultVatRate);
+  const { priced, totals, vatLabel, billError } = useLineTotals(lines, defaultVatRate, bill);
+  const billOff = toFils(totals.discountAmount) > 0;
   const rootRef = useRef<HTMLDivElement>(null);
   /** A line just added, whose description should take the focus once it renders. */
   const focusLine = useRef<string | null>(null);
@@ -209,6 +251,18 @@ export function DocumentLinesEditor({
                   numeric
                 />
               </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-muted-foreground">Discount</span>
+                <DiscountInput
+                  label={`Line ${n} discount`}
+                  type={line.discountType}
+                  value={line.discount}
+                  onChange={(discount) =>
+                    update(line.key, { discountType: discount.type, discount: discount.value })
+                  }
+                  large
+                />
+              </div>
               <p className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Amount</span>
                 <LineAmount line={line} amounts={amounts} />
@@ -232,6 +286,7 @@ export function DocumentLinesEditor({
               <th className="w-20 px-2 py-2.5 text-right">Qty</th>
               <th className="w-28 px-2 py-2.5 text-right">Price</th>
               <th className="w-20 px-2 py-2.5 text-right">VAT %</th>
+              <th className="w-36 px-2 py-2.5 text-right">Discount</th>
               <th className="w-28 px-3 py-2.5 text-right">Amount</th>
               <th className="w-12 px-2 py-2.5">
                 <span className="sr-only">Remove</span>
@@ -292,6 +347,16 @@ export function DocumentLinesEditor({
                       className="text-right tabular-nums"
                     />
                   </td>
+                  <td className="px-2 py-2">
+                    <DiscountInput
+                      label={`Line ${n} discount`}
+                      type={line.discountType}
+                      value={line.discount}
+                      onChange={(discount) =>
+                        update(line.key, { discountType: discount.type, discount: discount.value })
+                      }
+                    />
+                  </td>
                   <td className="px-3 py-2 text-right">
                     <LineAmount line={line} amounts={amounts} />
                   </td>
@@ -337,7 +402,30 @@ export function DocumentLinesEditor({
         </Button>
       </div>
 
-      <dl className="flex flex-col gap-2 self-stretch rounded-xl bg-muted/50 px-4 py-4 text-sm sm:self-end sm:w-80">
+      <dl className="flex flex-col gap-2 self-stretch rounded-xl bg-muted/50 px-4 py-4 text-sm sm:w-96 sm:self-end">
+        <div className="flex justify-between gap-4">
+          <dt className="text-muted-foreground">Subtotal</dt>
+          <dd className="tabular-nums">{formatMoney(totals.linesTotal)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <dt className="text-muted-foreground">Discount on the bill</dt>
+          <dd className="flex items-center gap-3">
+            <DiscountInput
+              label="Discount on the bill"
+              type={bill.type}
+              value={bill.value}
+              onChange={onBillChange}
+            />
+            <span className="w-24 text-right tabular-nums">
+              {billOff ? `−${formatMoney(totals.discountAmount)}` : '—'}
+            </span>
+          </dd>
+        </div>
+        {billError ? (
+          <p role="alert" className="text-right text-xs font-medium text-destructive">
+            {billError}
+          </p>
+        ) : null}
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">Total excl. VAT</dt>
           <dd className="tabular-nums">{formatMoney(totals.subtotal)}</dd>
@@ -396,10 +484,69 @@ function TypeSwitch({
 }
 
 function LineAmount({ line, amounts }: { line: EditableLine; amounts: LineAmounts | null }) {
-  if (amounts)
-    return <span className="font-semibold tabular-nums">{formatMoney(amounts.lineTotal)}</span>;
+  if (amounts) {
+    const off = toFils(amounts.discountAmount) > 0;
+    return (
+      <span className="inline-flex flex-col items-end">
+        <span className="font-semibold tabular-nums">{formatMoney(amounts.lineTotal)}</span>
+        {off ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            less {formatMoney(amounts.discountAmount)}
+          </span>
+        ) : null}
+      </span>
+    );
+  }
   if (line.unitPrice.trim() === '') return <span className="text-muted-foreground">—</span>;
   return <span className="text-xs font-medium text-destructive">Check the numbers</span>;
+}
+
+/**
+ * A discount box: the value, and a switch between a percentage and an AED
+ * amount beside it. Blank means no discount.
+ */
+function DiscountInput({
+  label,
+  type,
+  value,
+  onChange,
+  large = false,
+}: {
+  label: string;
+  type: DiscountType;
+  value: string;
+  onChange: (discount: BillDiscount) => void;
+  large?: boolean;
+}) {
+  const other: DiscountType = type === 'PERCENT' ? 'AMOUNT' : 'PERCENT';
+  const unit = (kind: DiscountType) => (kind === 'PERCENT' ? 'percent' : 'AED');
+  return (
+    <span className="flex">
+      <Input
+        aria-label={`${label} (${unit(type)})`}
+        inputMode="decimal"
+        value={value}
+        placeholder="0"
+        onChange={(event) => onChange({ type, value: event.target.value })}
+        className={cn(
+          'min-w-0 rounded-r-none text-right tabular-nums',
+          large ? 'h-12 text-base' : 'w-20',
+        )}
+      />
+      <button
+        type="button"
+        onClick={() => onChange({ type: other, value })}
+        title={`Switch to ${unit(other)}`}
+        aria-label={`${label}: switch to ${unit(other)}`}
+        className={cn(
+          'shrink-0 rounded-r-lg border border-l-0 border-input bg-muted/40 px-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+          large ? 'h-12 min-w-14' : 'h-9 min-w-11',
+        )}
+      >
+        {type === 'PERCENT' ? '%' : 'AED'}
+      </button>
+    </span>
+  );
 }
 
 function LabelledInput({

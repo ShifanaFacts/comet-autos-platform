@@ -3,6 +3,9 @@ import type { PaymentMethod } from '@/generated/prisma/enums';
 import type { WorkflowStatus } from '@/lib/workshop/stages';
 import type { JobWorkspace } from '@/lib/workshop/workspace';
 import type { BillableLine, BillingNote, JobInvoice } from '@/lib/billing/invoice';
+import type { DocumentTotals } from '@/lib/money';
+import { toFils } from '@/lib/money';
+import { billDiscountTotals } from '@/components/workshop/estimate-lines';
 import { StagePhotosPanel } from '@/components/media/stage-photos-panel';
 import {
   formatCalendarDate,
@@ -74,8 +77,12 @@ type Row = {
   quantity: string;
   unitPrice: string;
   taxRate: string;
+  /** The AED the line's discount took off ("0.00" for none). */
+  discountAmount: string;
   lineTotal: string;
 };
+
+const discounted = (row: Row) => toFils(row.discountAmount) > 0;
 
 function LineGroups({ rows }: { rows: Row[] }) {
   const groups = (['Labour', 'Parts', 'Additional approved work'] as const)
@@ -100,6 +107,9 @@ function LineGroups({ rows }: { rows: Row[] }) {
                     { label: 'Quantity', value: trimQuantity(row.quantity) },
                     { label: 'Price', value: formatMoney(row.unitPrice) },
                     { label: 'VAT', value: `${trimQuantity(row.taxRate)}%` },
+                    ...(discounted(row)
+                      ? [{ label: 'Discount', value: `−${formatMoney(row.discountAmount)}` }]
+                      : []),
                   ]}
                 />
               ))}
@@ -132,6 +142,11 @@ function LineGroups({ rows }: { rows: Row[] }) {
                   </td>
                   <td className="px-4 py-4 text-right font-semibold tabular-nums whitespace-nowrap">
                     {formatMoney(row.lineTotal)}
+                    {discounted(row) ? (
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        less {formatMoney(row.discountAmount)}
+                      </span>
+                    ) : null}
                   </td>
                 </tr>
               ))}
@@ -164,7 +179,7 @@ export function BillingSections({
   preview: {
     billable: BillableLine[];
     notes: BillingNote[];
-    totals: { subtotal: string; taxAmount: string; totalAmount: string };
+    totals: DocumentTotals;
   } | null;
   canInvoice: boolean;
   canPay: boolean;
@@ -202,10 +217,12 @@ export function BillingSections({
                 quantity: line.amounts.quantity,
                 unitPrice: line.amounts.unitPrice,
                 taxRate: line.amounts.taxRate,
+                discountAmount: line.amounts.discountAmount,
                 lineTotal: line.amounts.lineTotal,
               }))}
             />
             <Totals
+              discounts={billDiscountTotals(preview.totals)}
               subtotal={preview.totals.subtotal}
               tax={preview.totals.taxAmount}
               total={preview.totals.totalAmount}
@@ -266,10 +283,12 @@ export function BillingSections({
                 quantity: item.quantity.toString(),
                 unitPrice: item.unitPrice.toString(),
                 taxRate: item.taxRate?.toString() ?? '0',
+                discountAmount: item.discountAmount.toString(),
                 lineTotal: item.lineTotal.toString(),
               }))}
             />
             <Totals
+              discounts={billDiscountTotals(invoice)}
               subtotal={invoice.subtotal.toString()}
               tax={invoice.taxAmount.toString()}
               total={invoice.totalAmount.toString()}
@@ -407,12 +426,15 @@ export function BillingSections({
 }
 
 function Totals({
+  discounts,
   subtotal,
   tax,
   total,
   paid,
   balance,
 }: {
+  /** The lines' total and the bill discount, when there is one. */
+  discounts: { label: string; amount: { toString(): string } }[];
   subtotal: string;
   tax: string;
   total: string;
@@ -421,8 +443,14 @@ function Totals({
 }) {
   return (
     <dl className="ml-auto flex w-full flex-col gap-2 text-sm sm:w-80">
+      {discounts.map((row) => (
+        <div key={row.label} className="flex justify-between">
+          <dt className="text-muted-foreground">{row.label}</dt>
+          <dd className="tabular-nums">{formatMoney(row.amount)}</dd>
+        </div>
+      ))}
       <div className="flex justify-between">
-        <dt className="text-muted-foreground">Subtotal</dt>
+        <dt className="text-muted-foreground">Total excl. VAT</dt>
         <dd className="tabular-nums">{formatMoney(subtotal)}</dd>
       </div>
       <div className="flex justify-between">

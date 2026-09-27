@@ -18,7 +18,7 @@ import { PERMISSION_CODES } from '../src/lib/auth/permission-catalog.js';
 const SEED_OWNER_EMAIL = 'shifanachennara@gmail.com';
 // Dev-only default password — change immediately in any non-local
 // environment. This script never runs outside local development.
-const SEED_OWNER_PASSWORD = 'CometAutos#2026';
+const SEED_OWNER_PASSWORD = 'MowlaGarage#2026';
 
 async function main() {
   const organization = await prisma.organization.upsert({
@@ -26,8 +26,8 @@ async function main() {
     update: {},
     create: {
       id: '00000000-0000-7000-8000-000000000001',
-      name: 'Comet Autos',
-      legalName: 'Comet Autos Workshop LLC',
+      name: 'Mohammed Mowla Auto Garage',
+      legalName: 'Mohammed Mowla Auto Garage LLC',
       address: 'Al Qusais, Dubai, UAE',
       baseCurrency: 'AED',
     },
