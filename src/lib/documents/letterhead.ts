@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { NotFoundError } from '@/lib/errors';
+import { getBrand } from '@/lib/brand/brand';
 
 /*
  * What the company letterhead prints, taken from the workshop's Settings:
@@ -9,23 +10,37 @@ import { NotFoundError } from '@/lib/errors';
  */
 
 export interface LetterheadDetails {
-  /** The name as registered — the letterhead's headline and watermark. */
+  /** The name as registered — the letterhead's headline. */
   legalName: string;
   phone: string;
   email: string;
   address: string;
+  /** Starts downloaded file names, e.g. "mohammed-mowla-auto-garage". */
+  filePrefix: string;
+}
+
+/** Everything a letterhead shows: the Settings details and the extras kept with the letter. */
+export interface Letterhead extends Omit<LetterheadDetails, 'filePrefix'> {
+  arabicName: string;
+  website: string;
+  /** The logo as a data URL, or empty. */
+  logo: string;
 }
 
 export async function getLetterheadDetails(user: AuthenticatedUser): Promise<LetterheadDetails> {
-  const organization = await prisma.organization.findUnique({
-    where: { id: user.organizationId },
-    select: { name: true, legalName: true, phone: true, email: true, address: true },
-  });
+  const [organization, brand] = await Promise.all([
+    prisma.organization.findUnique({
+      where: { id: user.organizationId },
+      select: { name: true, legalName: true, phone: true, email: true, address: true },
+    }),
+    getBrand(user.organizationId),
+  ]);
   if (!organization) throw new NotFoundError('workshop');
   return {
     legalName: organization.legalName ?? organization.name,
     phone: organization.phone ?? '',
     email: organization.email ?? '',
     address: organization.address ?? '',
+    filePrefix: brand.filePrefix,
   };
 }

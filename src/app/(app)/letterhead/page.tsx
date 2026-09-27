@@ -1,4 +1,4 @@
-import { requireUser } from '@/lib/auth/authorize';
+import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { getLetterheadDetails } from '@/lib/documents/letterhead';
 import { PageHeader, Stack } from '@/components/layout/primitives';
 import { LetterheadEditor } from '@/components/documents/letterhead-editor';
@@ -19,7 +19,11 @@ export default async function LetterheadPage() {
           description="Write a letter on the company letterhead, then print it or save it as a PDF from the print window."
         />
       </div>
-      <LetterheadEditor details={details} storageKey={`org:${user.organizationId}`} />
+      <LetterheadEditor
+        details={details}
+        storageKey={`org:${user.organizationId}`}
+        canEditSettings={hasPermission(user, 'accounting.edit')}
+      />
     </Stack>
   );
 }
