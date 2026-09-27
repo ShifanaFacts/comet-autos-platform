@@ -1,46 +1,55 @@
 'use client';
 
-import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent } from 'react';
 import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
-  Bold,
-  CalendarDays,
-  Eraser,
-  Heading,
-  ImagePlus,
-  Italic,
-  List,
-  ListOrdered,
-  Mail,
-  Phone,
-  Printer,
-  Trash2,
-  Underline,
-  Globe,
-  type LucideIcon,
-} from 'lucide-react';
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react';
+import Link from 'next/link';
+import { FileDown, FilePlus2, ImagePlus, Loader2, Printer, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ConfirmAction } from '@/components/shared/confirm-action';
-import { formatDate } from '@/lib/format';
-import { cleanPastedHtml } from '@/lib/documents/letter-paste';
-import type { LetterheadDetails } from '@/lib/documents/letterhead';
+import { LetterheadSheet } from '@/components/documents/letterhead-sheet';
+import {
+  EMPTY_FORMAT,
+  FONT_SIZES,
+  LETTER_FONTS,
+  LetterToolbar,
+  type FormatState,
+  type LetterToolbarActions,
+} from '@/components/documents/letter-toolbar';
+import { formatDate, localDateString } from '@/lib/format';
+import { cleanPastedHtml, plainTextToHtml } from '@/lib/documents/letter-paste';
+import {
+  LETTER_PAGE,
+  TEXT_TOP,
+  letterHtml,
+  paginate,
+  wrapLooseText,
+} from '@/lib/documents/letter-pages';
+import type { Letterhead, LetterheadDetails } from '@/lib/documents/letterhead';
 import { cn } from '@/lib/utils';
 
 /*
- * A letter on the company letterhead: typed here, printed or saved as a PDF
- * from the browser's print dialog.
+ * A letter on the company letterhead, written like a Word document: it
+ * fills A4 pages, adding pages as the text grows, and prints, saves as a
+ * PDF or downloads as a Word file with the letterhead on every page.
  *
  * The name, phone, email and address come from Settings. The Arabic name,
- * website and logo are kept in this browser (with the draft), so nothing
- * about the letterhead is written into the code.
+ * website and logo are kept in this browser, with the draft.
  *
- * The body is a contentEditable area with a small toolbar. Text pasted from
- * Word or a web page keeps its bold, italic, underline, headings and lists;
- * everything else — fonts, colours, images, links, scripts — is dropped
- * (see lib/documents/letter-paste.ts).
+ * The text is a contentEditable column over the page sheets, formatted
+ * through the toolbar (document.execCommand — deprecated, but the one
+ * formatting API every browser supports without a library). Pasted text
+ * keeps its formatting but nothing else (lib/documents/letter-paste.ts).
  */
 
 interface LocalExtras {
@@ -50,46 +59,28 @@ interface LocalExtras {
   logo: string;
 }
 
+interface Draft {
+  html: string;
+  lineSpacing: number;
+}
+
 const EMPTY_EXTRAS: LocalExtras = { arabicName: '', website: '', logo: '' };
-/** A plain office typeface; each computer uses the first it has. */
-const LETTER_FONT = "Calibri, Carlito, 'Segoe UI', Arial, sans-serif";
-const ARABIC_FONT = "'Traditional Arabic', 'Segoe UI', 'Noto Naskh Arabic', serif";
 /** Large enough for a logo, small enough for browser storage. */
 const MAX_LOGO_BYTES = 300 * 1024;
 
-interface Tool {
-  label: string;
-  icon: LucideIcon;
-  /** A document.execCommand command. */
-  command: string;
-  value?: string;
-  /** Inserts today's date, worked out when pressed. */
-  today?: boolean;
-}
+/** Word's defaults for a new document. */
+const BASE_FONT = 'Calibri';
+const BASE_SIZE_PT = 11;
+const DEFAULT_LINE_SPACING = 1.15;
+/** Fonts to fall back on where Calibri isn't installed (Carlito matches its size). */
+const FONT_FALLBACK = "Carlito, 'Segoe UI', Arial, sans-serif";
+/**
+ * Word's "single" line is about 1.2 times the font size; CSS's line-height
+ * is a plain multiple of it. This keeps the spacing the same in both.
+ */
+const WORD_LINE_HEIGHT = 1.2;
 
-const TOOLS: Tool[] = [
-  { label: 'Bold', icon: Bold, command: 'bold' },
-  { label: 'Italic', icon: Italic, command: 'italic' },
-  { label: 'Underline', icon: Underline, command: 'underline' },
-  { label: 'Heading', icon: Heading, command: 'formatBlock', value: 'h3' },
-  { label: 'Bulleted list', icon: List, command: 'insertUnorderedList' },
-  { label: 'Numbered list', icon: ListOrdered, command: 'insertOrderedList' },
-  { label: 'Align left', icon: AlignLeft, command: 'justifyLeft' },
-  { label: 'Centre', icon: AlignCenter, command: 'justifyCenter' },
-  { label: 'Align right', icon: AlignRight, command: 'justifyRight' },
-  { label: 'Insert today’s date', icon: CalendarDays, command: 'insertText', today: true },
-  { label: 'Clear formatting', icon: Eraser, command: 'removeFormat' },
-];
-
-/** The letterhead's double line: a heavy rule over a hairline. */
-function Rule({ className }: { className?: string }) {
-  return (
-    <div aria-hidden className={cn('flex flex-col gap-0.5', className)}>
-      <div className="h-0.75 bg-neutral-600" />
-      <div className="h-px bg-neutral-600" />
-    </div>
-  );
-}
+const EMPTY_LETTER = '<p><br></p>';
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -108,35 +99,143 @@ function write(key: string, value: unknown) {
   }
 }
 
-/** Runs a formatting command on the current selection in the letter. */
-function format(command: string, value?: string) {
-  // execCommand is the one formatting API every browser supports for
-  // contentEditable without a library; it is deprecated but not going away.
-  document.execCommand(command, false, value);
+function isEmpty(letter: HTMLElement) {
+  return !letter.textContent?.trim() && !letter.querySelector('hr, li');
 }
+
+/** The formatting at the cursor, for the toolbar. */
+function readFormat(anchor: Node | null): FormatState {
+  const state = (command: string) => document.queryCommandState(command);
+  const block = document.queryCommandValue('formatBlock').toLowerCase();
+  const element = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
+  const computed = element ? getComputedStyle(element) : null;
+  const family =
+    computed?.fontFamily
+      .split(',')[0]
+      ?.trim()
+      .replace(/^["']|["']$/g, '') ?? '';
+  const points = computed ? Math.round(parseFloat(computed.fontSize) * 0.75 * 2) / 2 : 0;
+
+  return {
+    bold: state('bold'),
+    italic: state('italic'),
+    underline: state('underline'),
+    strike: state('strikeThrough'),
+    align: state('justifyCenter')
+      ? 'center'
+      : state('justifyRight')
+        ? 'right'
+        : state('justifyFull')
+          ? 'justify'
+          : 'left',
+    list: state('insertOrderedList') ? 'ol' : state('insertUnorderedList') ? 'ul' : null,
+    block: block === 'h2' || block === 'h3' ? block : 'p',
+    font: LETTER_FONTS.find((font) => font.toLowerCase() === family.toLowerCase()) ?? '',
+    size: FONT_SIZES.some((size) => size === points) ? String(points) : '',
+  };
+}
+
+const mm = (value: number) => `${value}mm`;
 
 export function LetterheadEditor({
   details,
   storageKey,
+  canEditSettings,
 }: {
   details: LetterheadDetails;
   /** Scopes what this browser keeps to one workshop. */
   storageKey: string;
+  /** Whether to offer a link to Settings when a contact detail is missing. */
+  canEditSettings: boolean;
 }) {
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const letterRef = useRef<HTMLDivElement>(null);
+  /** The selection in the letter, restored after a toolbar control takes focus. */
+  const savedRange = useRef<Range | null>(null);
+  /** The size last picked, for text typed after picking it. */
+  const pickedSize = useRef<number | null>(null);
   const [extras, setExtras] = useState<LocalExtras>(EMPTY_EXTRAS);
+  const [lineSpacing, setLineSpacing] = useState(DEFAULT_LINE_SPACING);
+  const [pageCount, setPageCount] = useState(1);
+  const [empty, setEmpty] = useState(true);
+  const [format, setFormat] = useState<FormatState>(EMPTY_FORMAT);
   const [logoError, setLogoError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const extrasKey = `${storageKey}:letterhead`;
   const draftKey = `${storageKey}:letter-draft`;
+
+  /** Contact details Settings lacks, so the footer can't show them. */
+  const missing = (
+    [
+      ['phone number', details.phone],
+      ['email', details.email],
+      ['address', details.address],
+    ] as const
+  )
+    .filter(([, value]) => !value)
+    .map(([label]) => label);
+
+  const letterhead: Letterhead = {
+    legalName: details.legalName,
+    phone: details.phone,
+    email: details.email,
+    address: details.address,
+    ...extras,
+  };
+
+  /** Re-lays the pages after any change to the text. */
+  const layout = useCallback(() => {
+    const letter = letterRef.current;
+    if (!letter) return;
+    wrapLooseText(letter);
+    setPageCount(paginate(letter));
+    setEmpty(isEmpty(letter));
+  }, []);
+
+  const saveDraft = useCallback(
+    (spacing: number) => {
+      const letter = letterRef.current;
+      if (letter)
+        write(draftKey, { html: letterHtml(letter), lineSpacing: spacing } satisfies Draft);
+    },
+    [draftKey],
+  );
 
   // Load what this browser kept: the extra details and the last draft.
   useEffect(() => {
     const timeout = setTimeout(() => {
       setExtras({ ...EMPTY_EXTRAS, ...read<Partial<LocalExtras>>(extrasKey, {}) });
-      if (bodyRef.current) bodyRef.current.innerHTML = read<string>(draftKey, '');
+      // Drafts kept before line spacing existed are plain HTML.
+      const draft = read<Draft | string>(draftKey, '');
+      const html = typeof draft === 'string' ? draft : draft.html;
+      if (typeof draft !== 'string') setLineSpacing(draft.lineSpacing);
+      if (letterRef.current) letterRef.current.innerHTML = html || EMPTY_LETTER;
+      layout();
     }, 0);
     return () => clearTimeout(timeout);
-  }, [extrasKey, draftKey]);
+  }, [extrasKey, draftKey, layout]);
+
+  // Line spacing changes every line's height; web fonts arriving change
+  // widths. Either moves text between pages.
+  useEffect(() => {
+    const frame = requestAnimationFrame(layout);
+    document.fonts?.ready.then(layout).catch(() => {});
+    return () => cancelAnimationFrame(frame);
+  }, [lineSpacing, layout]);
+
+  // Follow the cursor: remember it, and show its formatting on the toolbar.
+  useEffect(() => {
+    function onSelectionChange() {
+      const letter = letterRef.current;
+      const selection = window.getSelection();
+      if (!letter || !selection?.rangeCount) return;
+      const range = selection.getRangeAt(0);
+      if (!letter.contains(range.commonAncestorContainer)) return;
+      savedRange.current = range.cloneRange();
+      setFormat(readFormat(selection.focusNode));
+    }
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => document.removeEventListener('selectionchange', onSelectionChange);
+  }, []);
 
   function updateExtras(patch: Partial<LocalExtras>) {
     setExtras((current) => {
@@ -146,16 +245,124 @@ export function LetterheadEditor({
     });
   }
 
-  function saveDraft() {
-    if (bodyRef.current) write(draftKey, bodyRef.current.innerHTML);
+  /**
+   * Sizes are applied as the largest of the browser's seven legacy sizes,
+   * then swapped for the size picked — the only way execCommand can set
+   * an exact size.
+   */
+  function applyPickedSize() {
+    const letter = letterRef.current;
+    if (!letter || pickedSize.current === null) return;
+    const size = `${pickedSize.current}pt`;
+    for (const span of Array.from(letter.querySelectorAll<HTMLElement>('span'))) {
+      if (span.style.fontSize === 'xxx-large') span.style.fontSize = size;
+    }
+    for (const font of Array.from(letter.querySelectorAll('font[size="7"]'))) {
+      const span = document.createElement('span');
+      span.style.fontSize = size;
+      span.append(...Array.from(font.childNodes));
+      font.replaceWith(span);
+    }
+  }
+
+  function changed() {
+    applyPickedSize();
+    layout();
+    saveDraft(lineSpacing);
+  }
+
+  function focusLetter() {
+    const letter = letterRef.current;
+    if (!letter) return;
+    letter.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    if (savedRange.current && selection) {
+      selection.removeAllRanges();
+      selection.addRange(savedRange.current);
+    }
+  }
+
+  function exec(command: string, value?: string) {
+    document.execCommand('styleWithCSS', false, 'true');
+    document.execCommand(command, false, value);
+  }
+
+  const actions: LetterToolbarActions = {
+    run(command, value) {
+      focusLetter();
+      exec(command, value);
+      changed();
+      setFormat(readFormat(window.getSelection()?.focusNode ?? null));
+    },
+    setFontSize(points) {
+      focusLetter();
+      pickedSize.current = points;
+      exec('fontSize', '7');
+      changed();
+      setFormat((current) => ({ ...current, size: String(points) }));
+    },
+    insertDate() {
+      actions.run('insertText', formatDate(new Date()));
+    },
+    insertPageBreak() {
+      actions.run('insertHTML', `<hr>${EMPTY_LETTER}`);
+    },
+  };
+
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      actions.insertPageBreak();
+    } else if (event.key === 'Tab') {
+      event.preventDefault();
+      // In a list, Tab moves the item in or out a level; elsewhere it's a tab.
+      if (format.list) actions.run(event.shiftKey ? 'outdent' : 'indent');
+      else if (!event.shiftKey) actions.run('insertText', '\t');
+    }
   }
 
   function onPaste(event: ClipboardEvent<HTMLDivElement>) {
     event.preventDefault();
     const html = event.clipboardData.getData('text/html');
-    if (html) format('insertHTML', cleanPastedHtml(html));
-    else format('insertText', event.clipboardData.getData('text/plain'));
-    saveDraft();
+    const text = event.clipboardData.getData('text/plain');
+    if (html) exec('insertHTML', cleanPastedHtml(html));
+    // Several lines become paragraphs; a few words just join the line.
+    else if (/[\r\n]/.test(text)) exec('insertHTML', plainTextToHtml(text));
+    else exec('insertText', text);
+    changed();
+  }
+
+  /** Puts the cursor at the end of `element`'s text, in the letter. */
+  function caretToEnd(element: HTMLElement) {
+    letterRef.current?.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+
+  /** A click on a page below the text puts the cursor at the end of the letter. */
+  function onPageMouseDown(event: MouseEvent<HTMLDivElement>) {
+    const letter = letterRef.current;
+    if (!letter || letter.contains(event.target as Node)) return;
+    event.preventDefault();
+    const last = letter.lastElementChild;
+    caretToEnd(last instanceof HTMLElement && last.tagName !== 'HR' ? last : letter);
+  }
+
+  /** Starts a new page after the text, with the cursor at its top. */
+  function addPage() {
+    const letter = letterRef.current;
+    if (!letter) return;
+    const paragraph = document.createElement('p');
+    paragraph.append(document.createElement('br'));
+    letter.append(document.createElement('hr'), paragraph);
+    layout();
+    saveDraft(lineSpacing);
+    caretToEnd(paragraph);
+    paragraph.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
   function onLogo(event: ChangeEvent<HTMLInputElement>) {
@@ -170,26 +377,59 @@ export function LetterheadEditor({
     reader.readAsDataURL(file);
   }
 
-  function run(command: string, value?: string) {
-    bodyRef.current?.focus();
-    format(command, value);
-    saveDraft();
+  function changeLineSpacing(spacing: number) {
+    setLineSpacing(spacing);
+    saveDraft(spacing);
   }
 
+  /** Empties the letter the way Select all + Delete would, so Ctrl+Z brings it back. */
+  /**
+   * Starts a new letter: the text, its formatting and the line spacing go;
+   * the letterhead details stay. Replaces the content outright — the
+   * confirmation dialog is open and holds focus, so editing commands, which
+   * act only where the cursor is, can't reach the letter.
+   */
   function clearLetter() {
-    if (bodyRef.current) bodyRef.current.innerHTML = '';
-    saveDraft();
+    const letter = letterRef.current;
+    if (!letter) return;
+    letter.innerHTML = EMPTY_LETTER;
+    savedRange.current = null;
+    pickedSize.current = null;
+    setFormat(EMPTY_FORMAT);
+    setLineSpacing(DEFAULT_LINE_SPACING);
+    layout();
+    saveDraft(DEFAULT_LINE_SPACING);
   }
 
-  function apply(tool: Tool) {
-    run(tool.command, tool.today ? formatDate(new Date()) : tool.value);
+  async function downloadWord() {
+    const letter = letterRef.current;
+    if (!letter) return;
+    setDownloading(true);
+    try {
+      // The Word library is only loaded when a letter is downloaded.
+      const { letterDocx } = await import('@/lib/documents/letter-docx');
+      const blob = await letterDocx(letterHtml(letter), letterhead, {
+        font: BASE_FONT,
+        size: BASE_SIZE_PT,
+        lineSpacing,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${details.filePrefix}-letter-${localDateString()}.docx`;
+      link.click();
+      // Give the browser a moment to start the download before letting go.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      toast.error('The Word file could not be made. Try again, or print to PDF instead.');
+    } finally {
+      setDownloading(false);
+    }
   }
 
-  const contact: { icon: LucideIcon; value: string }[] = [
-    { icon: Phone, value: details.phone },
-    { icon: Mail, value: details.email },
-    { icon: Globe, value: extras.website },
-  ].filter((item) => item.value);
+  const pageStyle = (index: number): CSSProperties => ({
+    top: `calc(${index} * (${mm(LETTER_PAGE.height)} + var(--letter-gap)))`,
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -235,167 +475,130 @@ export function LetterheadEditor({
             The name, phone, email and address come from Settings. These three are kept in this
             browser only.
           </p>
+          {missing.length ? (
+            <p
+              role="status"
+              className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 sm:col-span-3"
+            >
+              The letterhead has no {missing.join(' or ')} because Settings has none.{' '}
+              {canEditSettings ? (
+                <Link href="/settings" className="font-medium underline underline-offset-2">
+                  Add it in Settings
+                </Link>
+              ) : (
+                'Ask someone who manages Settings to add it.'
+              )}
+            </p>
+          ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div
-            role="toolbar"
-            aria-label="Formatting"
-            className="flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"
-          >
-            {TOOLS.map((tool) => {
-              const Icon = tool.icon;
-              return (
-                <Button
-                  key={tool.label}
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={tool.label}
-                  title={tool.label}
-                  // Keep the selection in the letter while the button is pressed.
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => apply(tool)}
-                >
-                  <Icon />
-                </Button>
-              );
-            })}
-          </div>
-          <div className="ml-auto flex flex-wrap gap-2">
-            <ConfirmAction
-              trigger={
-                <Button variant="outline">
-                  <Trash2 />
-                  New letter
-                </Button>
-              }
-              title="Start a new letter?"
-              description="The text of this letter is cleared. The letterhead details stay."
-              confirmLabel="Clear letter"
-              onConfirm={async () => clearLetter()}
-            />
-            <Button onClick={() => window.print()}>
-              <Printer />
-              Print / Save as PDF
+        <div className="sticky top-[calc(4.5rem+env(safe-area-inset-top))] z-20 flex flex-col gap-2">
+          <LetterToolbar
+            format={format}
+            actions={actions}
+            lineSpacing={lineSpacing}
+            onLineSpacing={changeLineSpacing}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {pageCount} {pageCount === 1 ? 'page' : 'pages'}
+            </span>
+            <Button variant="ghost" size="sm" onClick={addPage}>
+              <FilePlus2 />
+              Add page
             </Button>
+            <div className="ml-auto flex flex-wrap gap-2">
+              <ConfirmAction
+                trigger={
+                  <Button variant="outline">
+                    <Trash2 />
+                    New letter
+                  </Button>
+                }
+                title="Start a new letter?"
+                description="The text of this letter is cleared. The letterhead details stay."
+                confirmLabel="Clear letter"
+                onConfirm={async () => clearLetter()}
+              />
+              <Button variant="outline" onClick={downloadWord} disabled={downloading}>
+                {downloading ? <Loader2 className="animate-spin" /> : <FileDown />}
+                Download Word
+              </Button>
+              <Button onClick={() => window.print()}>
+                <Printer />
+                Print / Save as PDF
+              </Button>
+            </div>
           </div>
         </div>
       </div>
 
       {/*
-       * The A4 page — the only thing printed.
-       *
-       * On screen it is one sheet. In print the header, footer and watermark
-       * are fixed to the page, so the browser repeats them on every page of a
-       * long letter; the table's header and footer rows are blank spacers the
-       * browser also repeats, keeping the text clear of them on each page.
-       * Sizes: header 38mm + 8mm gap, footer 28mm + 8mm gap.
+       * The pages: A4 sheets stacked with a gap, the letter laid over them.
+       * lib/documents/letter-pages.ts moves text that reaches a sheet's
+       * footer to the next sheet; the print stylesheet closes the gaps.
        */}
-      <div className="overflow-x-auto pb-2">
-        <article
-          className="letterhead-page relative mx-auto flex min-h-[297mm] w-[210mm] flex-col bg-white px-[18mm] text-black shadow-md ring-1 ring-black/5 print:block print:min-h-0 print:w-auto print:shadow-none print:ring-0"
-          style={{ fontFamily: LETTER_FONT }}
-          aria-label="Letter"
+      <div className="overflow-x-auto pb-6">
+        <div
+          className="letterhead-page relative mx-auto text-black"
+          onMouseDown={onPageMouseDown}
+          style={
+            {
+              '--letter-gap': mm(LETTER_PAGE.gap),
+              width: mm(LETTER_PAGE.width),
+              height: `calc(${pageCount} * ${mm(LETTER_PAGE.height)} + ${pageCount - 1} * var(--letter-gap))`,
+            } as CSSProperties
+          }
         >
+          {Array.from({ length: pageCount }, (_, index) => (
+            <LetterheadSheet key={index} letterhead={letterhead} style={pageStyle(index)} />
+          ))}
+
+          {empty ? (
+            <p
+              aria-hidden
+              className="letter-placeholder pointer-events-none absolute text-neutral-400"
+              style={{
+                top: mm(TEXT_TOP),
+                left: mm(LETTER_PAGE.textMargin),
+                fontFamily: `${BASE_FONT}, ${FONT_FALLBACK}`,
+                fontSize: `${BASE_SIZE_PT}pt`,
+              }}
+            >
+              Type or paste the letter here…
+            </p>
+          ) : null}
+
           <div
-            aria-hidden
-            className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 print:fixed"
-          >
-            {extras.logo ? (
-              // eslint-disable-next-line @next/next/no-img-element -- a local data URL, not a remote image
-              <img src={extras.logo} alt="" className="w-[125mm] max-w-none opacity-[0.09]" />
-            ) : (
-              <p className="w-[150mm] text-center text-[34px] leading-tight font-black tracking-[2px] uppercase opacity-[0.07]">
-                {details.legalName}
-              </p>
+            ref={letterRef}
+            contentEditable
+            suppressContentEditableWarning
+            role="textbox"
+            aria-multiline
+            aria-label="Letter text"
+            spellCheck
+            onInput={changed}
+            onBlur={() => saveDraft(lineSpacing)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            className={cn(
+              'relative wrap-break-word whitespace-pre-wrap outline-none tab-4',
+              // Paragraph spacing, headings and lists match the Word export (letter-docx.ts).
+              '[&_div]:mb-[6pt] [&_p]:mb-[6pt] [&_h2]:mt-[12pt] [&_h2]:mb-[6pt] [&_h3]:mt-[12pt] [&_h3]:mb-[6pt]',
+              '[&_h2]:text-[16pt] [&_h2]:font-bold [&_h3]:text-[13pt] [&_h3]:font-bold',
+              '[&_ol]:mb-[6pt] [&_ol]:list-decimal [&_ol]:pl-[7mm] [&_ul]:mb-[6pt] [&_ul]:list-disc [&_ul]:pl-[7mm]',
+              '[&_ol_ol]:mb-0 [&_ol_ol]:list-[lower-alpha] [&_ul_ul]:mb-0 [&_ul_ul]:list-[circle]',
+              '[&_hr]:my-2 [&_hr]:border-dashed [&_hr]:border-neutral-300',
             )}
-          </div>
-
-          <header className="relative flex h-[38mm] items-center gap-5 pt-[12mm] print:fixed print:inset-x-[18mm] print:top-0">
-            <div className="min-w-0 flex-1">
-              {extras.arabicName ? (
-                <p
-                  dir="rtl"
-                  className="w-fit text-[19px] leading-snug font-bold text-neutral-800"
-                  style={{ fontFamily: ARABIC_FONT }}
-                >
-                  {extras.arabicName}
-                </p>
-              ) : null}
-              <Rule className="mt-1.5" />
-              <p className="mt-2 text-[15px] tracking-[0.6px] text-neutral-700 uppercase">
-                {details.legalName}
-              </p>
-            </div>
-            {extras.logo ? (
-              // eslint-disable-next-line @next/next/no-img-element -- a local data URL, not a remote image
-              <img
-                src={extras.logo}
-                alt=""
-                className="max-h-[26mm] max-w-[48mm] shrink-0 object-contain"
-              />
-            ) : null}
-          </header>
-
-          <table className="relative my-[8mm] w-full border-collapse print:my-0">
-            <thead className="hidden print:table-header-group">
-              <tr>
-                <td className="h-[46mm] p-0" />
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="p-0 align-top">
-                  <div
-                    ref={bodyRef}
-                    contentEditable
-                    suppressContentEditableWarning
-                    role="textbox"
-                    aria-multiline
-                    aria-label="Letter text"
-                    data-placeholder="Type or paste the letter here…"
-                    onInput={saveDraft}
-                    onBlur={saveDraft}
-                    onPaste={onPaste}
-                    className={cn(
-                      'min-h-[150mm] px-[6mm] text-[14.5px] leading-relaxed outline-none print:min-h-0',
-                      'empty:before:text-neutral-400 empty:before:content-[attr(data-placeholder)]',
-                      '[&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:text-[18px] [&_h3]:font-bold [&_h4]:font-bold',
-                      '[&_ol]:list-decimal [&_ol]:pl-7 [&_ul]:list-disc [&_ul]:pl-7 [&_li]:my-0.5',
-                      '[&_ol_ol]:list-[lower-alpha] [&_ul_ul]:list-[circle]',
-                      '[&_p]:my-2 [&_div]:min-h-lh [&_li]:break-inside-avoid',
-                    )}
-                  />
-                </td>
-              </tr>
-            </tbody>
-            <tfoot className="hidden print:table-footer-group">
-              <tr>
-                <td className="h-[36mm] p-0" />
-              </tr>
-            </tfoot>
-          </table>
-
-          <footer className="relative mt-auto flex h-[28mm] flex-col justify-end pb-[10mm] print:fixed print:inset-x-[18mm] print:bottom-0">
-            <Rule />
-            {contact.length ? (
-              <div className="mt-3 flex flex-wrap items-center justify-around gap-x-6 gap-y-1 text-[13px] text-neutral-800">
-                {contact.map(({ icon: Icon, value }) => (
-                  <span key={value} className="flex items-center gap-1.5">
-                    <Icon className="size-3.5" aria-hidden />
-                    {value}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            {details.address ? (
-              <p className="mt-1 text-center text-[13px] font-semibold text-neutral-800">
-                {details.address}
-              </p>
-            ) : null}
-          </footer>
-        </article>
+            style={{
+              paddingTop: mm(TEXT_TOP),
+              paddingInline: mm(LETTER_PAGE.textMargin),
+              fontFamily: `${BASE_FONT}, ${FONT_FALLBACK}`,
+              fontSize: `${BASE_SIZE_PT}pt`,
+              lineHeight: lineSpacing * WORD_LINE_HEIGHT,
+            }}
+          />
+        </div>
       </div>
     </div>
   );

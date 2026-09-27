@@ -267,15 +267,14 @@
   }
 }
 /*
- * Printing a letter on the letterhead (/letterhead): only the A4 page is
- * printed. Everything that isn't the page or one of its ancestors is
+ * Printing a letter on the letterhead (/letterhead): only the pages are
+ * printed. Everything that isn't the page stack or one of its ancestors is
  * removed, so the app's sidebar, bars and controls leave no blank pages.
  *
- * The letter has its own named page with no margin — its header and footer
- * sit where the margins would be — so other printouts keep the browser's.
- * Its ancestors lose any transform or animation: those would pin the
- * letterhead's fixed header and footer to the first page instead of
- * repeating them on every page.
+ * The stack is laid out as A4 sheets with a gap between them on screen
+ * (--letter-gap, see lib/documents/letter-pages.ts). On paper the gap is 0,
+ * so each sheet lands exactly on one printed page — on its own named page
+ * with no margin, which leaves other printouts the browser's margins.
  */
 @page letterhead {
   size: A4;
@@ -303,10 +302,21 @@
   }
   .letterhead-page {
     page: letterhead;
+    --letter-gap: 0px !important;
     margin: 0 !important;
-    box-shadow: none !important;
-    --tw-ring-shadow: 0 0 #0000 !important;
+    overflow: hidden;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
+  }
+  .letterhead-page .letter-sheet {
+    box-shadow: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+  }
+  /* A page break shows as a dashed line on screen only. */
+  .letterhead-page hr {
+    visibility: hidden;
+  }
+  .letterhead-page .letter-placeholder {
+    display: none !important;
   }
 }
