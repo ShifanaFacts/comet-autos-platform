@@ -54,10 +54,10 @@ import {
 import { localDateString } from '@/lib/format';
 import { createTestOrg, expectDomainError, RUN, type TestOrg } from './support';
 
-const COMET_ORG = '00000000-0000-7000-8000-000000000001';
+const SEED_ORG = '00000000-0000-7000-8000-000000000001';
 
-async function cometCounts() {
-  const where = { organizationId: COMET_ORG };
+async function seedCounts() {
+  const where = { organizationId: SEED_ORG };
   return {
     parts: await prisma.part.count({ where }),
     suppliers: await prisma.supplier.count({ where }),
@@ -131,10 +131,10 @@ async function jobInRepair(
 
 let a: TestOrg;
 let b: TestOrg;
-let cometBefore: Awaited<ReturnType<typeof cometCounts>>;
+let seedBefore: Awaited<ReturnType<typeof seedCounts>>;
 
 before(async () => {
-  cometBefore = await cometCounts();
+  seedBefore = await seedCounts();
   a = await createTestOrg('InvA');
   b = await createTestOrg('InvB');
 });
@@ -889,7 +889,7 @@ describe('inventory management', () => {
     assert.equal((reversed.afterData as { reason: string }).reason, 'Entered on the wrong part');
   });
 
-  test('existing Comet Autos data is untouched', async () => {
-    assert.deepEqual(await cometCounts(), cometBefore);
+  test('existing Mohammed Mowla Auto Garage data is untouched', async () => {
+    assert.deepEqual(await seedCounts(), seedBefore);
   });
 });

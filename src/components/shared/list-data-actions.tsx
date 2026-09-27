@@ -28,9 +28,10 @@ import { cn } from '@/lib/utils';
  * Spreadsheet in, spreadsheet out, on the list itself.
  *
  * Export downloads exactly what the screen is showing — the same search and
- * filters, just without the page limit. Import is offered only on the lists
- * where it is safe (customers, vehicles, parts, suppliers); documents are
- * export-only so their numbering and VAT can't be bypassed.
+ * filters, just without the page limit. Import brings master data in, and
+ * the job cards, quotations and invoices a workshop carries over from its
+ * old system — priced and numbered by the app's own rules, never trusted
+ * from the file.
  *
  * On a phone both collapse into one menu, so they never compete with the
  * screen's primary action.
@@ -44,6 +45,7 @@ export function ListDataActions({
   canImport = false,
   label,
   columns = [],
+  note,
 }: {
   entity: string;
   search?: string;
@@ -51,6 +53,8 @@ export function ListDataActions({
   /** What the rows are called, e.g. "customers". */
   label: string;
   columns?: ImportColumn[];
+  /** How the file is laid out, when it isn't one row per record. */
+  note?: string;
 }) {
   const [importing, setImporting] = useState(false);
   // Closing the dialog bumps this, which remounts it — so the next import
@@ -115,6 +119,7 @@ export function ListDataActions({
           entity={entity}
           label={label}
           columns={columns}
+          note={note}
           open={importing}
           onOpenChange={setImportOpen}
         />
@@ -127,12 +132,14 @@ function ImportDialog({
   entity,
   label,
   columns,
+  note,
   open,
   onOpenChange,
 }: {
   entity: string;
   label: string;
   columns: ImportColumn[];
+  note?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -167,8 +174,8 @@ function ImportDialog({
         <DialogHeader>
           <DialogTitle>Import {label}</DialogTitle>
           <DialogDescription>
-            A CSV file, one row per {label.replace(/s$/, '')}. Rows already on file are skipped, and
-            if any row can&apos;t be read nothing is imported.
+            {note ?? `A CSV file, one row per ${label.replace(/s$/, '')}.`} Rows already on file are
+            skipped, and if any row can&apos;t be read nothing is imported.
           </DialogDescription>
         </DialogHeader>
 

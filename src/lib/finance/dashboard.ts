@@ -33,7 +33,8 @@ import { getCustomerOutstanding, getSupplierOutstanding } from '@/lib/finance/ou
 /** Invoices that represent real revenue. DRAFT, VOID and CANCELLED do not. */
 const REVENUE_STATUSES: InvoiceStatus[] = ['ISSUED', 'PARTIALLY_PAID', 'PAID'];
 
-export type PeriodKey = 'today' | 'week' | 'month' | 'custom';
+export type PeriodKey =
+  'today' | 'week' | 'month' | 'last-month' | 'quarter' | 'last-quarter' | 'year' | 'custom';
 
 export interface ResolvedPeriod {
   key: PeriodKey;
@@ -54,6 +55,11 @@ const asDate = (day: string) => new Date(`${day}T00:00:00Z`);
 const asInstant = (day: string) => new Date(`${day}T00:00:00${OFFSET}`);
 const addDays = (day: string, days: number) =>
   localDateString(new Date(asInstant(day).getTime() + days * 86_400_000));
+/** The first day of a month, "YYYY-MM-01"; months outside 1–12 roll over the year. */
+const monthStart = (year: number, month: number) => {
+  const date = new Date(Date.UTC(year, month - 1, 1));
+  return date.toISOString().slice(0, 10);
+};
 
 /**
  * Turns a period choice into the exact window used by every figure, so the
@@ -79,6 +85,24 @@ export function resolvePeriod(input: {
     const weekday = (asInstant(today).getUTCDay() + 6) % 7;
     from = addDays(today, -weekday);
     label = 'This week';
+  } else if (input.period === 'last-month') {
+    key = 'last-month';
+    const [year, month] = today.split('-').map(Number);
+    from = monthStart(year, month - 1);
+    to = addDays(monthStart(year, month), -1);
+    label = 'Last month';
+  } else if (input.period === 'quarter' || input.period === 'last-quarter') {
+    // Calendar quarters — the periods a UAE VAT return is usually filed for.
+    key = input.period;
+    const [year, month] = today.split('-').map(Number);
+    const first = month - ((month - 1) % 3) - (key === 'last-quarter' ? 3 : 0);
+    from = monthStart(year, first);
+    if (key === 'last-quarter') to = addDays(monthStart(year, first + 3), -1);
+    label = key === 'quarter' ? 'This quarter' : 'Last quarter';
+  } else if (input.period === 'year') {
+    key = 'year';
+    from = `${today.slice(0, 4)}-01-01`;
+    label = 'This year';
   } else if (
     input.period === 'custom' &&
     DATE_ONLY.test(input.from ?? '') &&

@@ -1,6 +1,40 @@
 # Project Status
 
-Last updated: 2026-09-21
+Last updated: 2026-09-27
+
+## Phase 15: Leave, payroll, VAT, accounting & reports (uncommitted)
+
+The last five "Coming soon" modules, built on the existing schema — **no
+migration**. The placeholder component is gone and nothing in the menu is
+marked "Soon" any more.
+
+- **Leave** (`/hr/leave`, `lib/hr/leave.ts`) — record, approve/reject,
+  cancel. No two live leaves may overlap for one person (re-checked on
+  approval). Days are inclusive calendar days. Approving and withdrawing
+  approved leave need `payroll.approve`; an approver can record-and-approve
+  in one step.
+- **Payroll** (`/hr/payroll`, `lib/hr/payroll.ts`) — salary history on the
+  employee page (a new salary closes the old one the day before; history
+  only moves forward). One run per month: CALCULATED → APPROVED → PAID, or
+  CANCELLED (re-running the month reopens it). Salary in force on the last
+  day, pro-rated for joiners/leavers, minus approved UNPAID leave; deductions
+  editable with a reason until approved. Absences are shown, not deducted.
+  Pay is visible only with `payroll.create` or `payroll.approve`.
+- **VAT** (`/finance/vat`, `lib/finance/vat.ts`) — VAT201-shaped return for
+  a period: output tax from tax invoices, input tax from expenses **and parts
+  received** (dated per delivery from the stock ledger). Zero-rated lines
+  split out, a bill discount spread proportionally.
+- **Accounting** (`/finance/accounting`, `lib/finance/accounting.ts`) —
+  profit & loss (sales by parts/labour, cost of parts fitted on the invoiced
+  jobs net of returns, expenses by category, approved payroll), cash in & out,
+  and chart-of-accounts management. Derived on request; still no journal.
+- **Reports** (`/reports`, `lib/reports/workshop.ts`) — sales by month,
+  top customers, jobs/turnaround, technician hours, makes, parts fitted.
+  Each section only for the role that covers it.
+
+Shared: the finance period picker takes a target path and presets (added
+last month, quarter, last quarter, year). Tests: `tests/leave-payroll.test.ts`,
+`tests/accounts-reports.test.ts` — **not yet run** against the hosted DB.
 
 ## Phase 14: Supplier payments & payables (uncommitted)
 
@@ -651,11 +685,11 @@ default, CHECK constraints — one explicit transaction).
 ## Stage: Phase 1 — Architecture, auth, design system, and the first real vertical slice
 
 This session did two things: (1) a product-owner-directed architecture
-reversal — Comet Autos is a dedicated internal workshop application, not a
+reversal — Mohammed Mowla Auto Garage is a dedicated internal workshop application, not a
 SaaS platform, so the NestJS API split from ADR-007 was replaced with a
 single Next.js application talking to PostgreSQL directly via Prisma
 ([ADR-008](docs/11-decisions/ADR-008-single-nextjs-application.md)) — and
-(2) a full premium-UI pass establishing the Comet Autos design system
+(2) a full premium-UI pass establishing the garage design system
 (Graphite + Electric Violet + Silver + White) and rebuilding the shell,
 dashboard, Quick Check-In, and Job Card screens on top of it. Everything
 below is real and working against the local database, not a mockup.
@@ -739,7 +773,7 @@ icons) for Inspection/Diagnosis/Estimate/Work/QC/Invoice/Documents.
 **Every other nav destination** renders an explicit, styled "not built
 yet" empty state rather than a 404 or fake data.
 
-**Dev seed data** (`prisma/seed.ts`): Comet Autos org, Al Qusais branch,
+**Dev seed data** (`prisma/seed.ts`): Mohammed Mowla Auto Garage org, Al Qusais branch,
 the full V1 permission catalog, an Owner role/user
 (`shifanachennara@gmail.com`), 3 sample customers/vehicles.
 
@@ -799,11 +833,12 @@ external provider.
   `src/lib/workshop/stages.ts` and `job-status.ts`. Flag for
   revisiting (as an additive schema change) if Phases 2/4 find it too
   coarse in practice.
-- **Turbopack is disabled on this dev machine**: the app's `dev`/`build`
-  scripts pass `--webpack`. This machine's Windows Application Control
-  policy blocks the native `@next/swc-win32-x64-msvc` binary Turbopack
-  needs; webpack produces identical output. Revisit if the policy changes
-  or on a different machine.
+- **Turbopack is back on for `dev`** (2026-09-27): the native
+  `@next/swc-win32-x64-msvc` binary that Windows Application Control used to
+  block now loads on this machine, and a full `next build --turbopack` passes
+  (~53s). `dev` uses Turbopack again — webpack's per-route compiles were what
+  made first page loads take minutes. `build` still passes `--webpack`; switch
+  it too once a Turbopack build has been deployed and checked.
 - Dashboard's "Today's sales"/"Collections"/"Customer outstanding" figures
   are real queries but will show AED 0.00 until Phase 5 (Invoicing) exists
   — there's simply no invoice/payment data yet, not a bug.

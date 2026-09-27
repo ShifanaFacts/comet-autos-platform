@@ -7,6 +7,7 @@ import { formatCalendarDate, formatMoney } from '@/lib/format';
 import { filsToString, toFils } from '@/lib/money';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { ListDataActions } from '@/components/shared/list-data-actions';
+import { canImport, importColumns, importNote } from '@/lib/data-transfer/imports';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LinkButton } from '@/components/shared/link-button';
 import { StatusPill } from '@/components/shared/status-pill';
@@ -77,6 +78,9 @@ export default async function InvoicesPage({
             <ListDataActions
               entity="invoices"
               label="invoices"
+              canImport={canImport(user, 'invoices')}
+              columns={importColumns('invoices')}
+              note={importNote('invoices')}
               search={new URLSearchParams(
                 Object.entries(params).filter(([, value]) => Boolean(value)) as [string, string][],
               ).toString()}

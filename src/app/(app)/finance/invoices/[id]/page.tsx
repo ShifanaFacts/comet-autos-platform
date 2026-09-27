@@ -15,7 +15,7 @@ import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { StatusPill } from '@/components/shared/status-pill';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
-import { DocumentLinesView } from '@/components/workshop/estimate-lines';
+import { DocumentLinesView, billDiscountTotals } from '@/components/workshop/estimate-lines';
 import { StaffDocumentActions } from '@/components/documents/document-actions';
 import { InvoicePaymentForm } from '@/components/finance/invoice-payment-form';
 import { ReversePaymentButton, VoidInvoiceButton } from '@/components/finance/invoice-corrections';
@@ -98,7 +98,17 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
             )}
           </span>
         }
-        description={`For ${customer.name} · issued ${formatCalendarDate(invoice.issueDate)}`}
+        description={[
+          `For ${customer.name}`,
+          `issued ${formatCalendarDate(invoice.issueDate)}`,
+          // Due on receipt needs no mention; a later date does.
+          invoice.dueDate && invoice.dueDate > invoice.issueDate
+            ? `due ${formatCalendarDate(invoice.dueDate)}`
+            : null,
+          invoice.customerReference ? `order no. ${invoice.customerReference}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
         leading={vehicle ? <VehiclePlate plateNumber={vehicle.plateNumber} /> : undefined}
         actions={
           isVoid ? undefined : (
@@ -155,6 +165,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
             <DocumentLinesView
               lines={invoice.items}
               totals={[
+                ...billDiscountTotals(invoice),
                 { label: 'Total excl. VAT', amount: invoice.subtotal },
                 { label: 'VAT', amount: invoice.taxAmount },
                 { label: 'Total', amount: invoice.totalAmount, strong: true },

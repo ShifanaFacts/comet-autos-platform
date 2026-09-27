@@ -8,7 +8,7 @@
  * dinosaur. Uploads, forms and data requests pass straight through.
  */
 
-const CACHE = 'comet-offline-v1';
+const CACHE = 'garage-offline-v1';
 const OFFLINE_URL = '/offline.html';
 
 self.addEventListener('install', (event) => {

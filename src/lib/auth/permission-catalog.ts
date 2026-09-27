@@ -165,18 +165,20 @@ export const PERMISSION_MODULES: PermissionModule[] = [
   {
     key: 'accounting',
     label: 'Accounting & settings',
-    covers: 'Expenses, VAT, and the workshop’s own details on customer documents.',
+    covers: 'Expenses, VAT, the accounts, and the workshop’s own details on customer documents.',
     permissions: [
       {
         code: 'accounting.view',
         label: 'View accounts',
-        detail: 'Expenses, VAT and the workshop settings screen.',
+        detail:
+          'Expenses, the VAT return, profit & loss, cash and the chart of accounts, and the workshop settings screen.',
       },
       { code: 'accounting.create', label: 'Record expenses', detail: 'Enter an expense.' },
       {
         code: 'accounting.edit',
         label: 'Edit accounts & settings',
-        detail: 'Void expenses, and change the workshop details and VAT rate.',
+        detail:
+          'Void expenses, manage the chart of accounts, and change the workshop details and VAT rate.',
       },
       {
         code: 'accounting.export',
@@ -198,9 +200,13 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       {
         code: 'payroll.create',
         label: 'Manage employees & payroll',
-        detail: 'Add and edit employees, and prepare payroll.',
+        detail: 'Add and edit employees, record leave, set salaries and prepare payroll.',
       },
-      { code: 'payroll.approve', label: 'Approve payroll', detail: 'Sign off a payroll run.' },
+      {
+        code: 'payroll.approve',
+        label: 'Approve leave & payroll',
+        detail: 'Approve or reject leave, sign off a payroll run and record it as paid.',
+      },
       {
         code: 'payroll.export',
         label: 'Export payroll',

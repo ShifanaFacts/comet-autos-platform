@@ -3,7 +3,7 @@ import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 
-export const SESSION_COOKIE_NAME = 'comet_session';
+export const SESSION_COOKIE_NAME = 'garage_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 
 // Session tokens are high-entropy random values, not user-chosen secrets —

@@ -4,16 +4,18 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { hasPermission, requirePermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { formatCalendarDate, formatDate, formatDateTime, localDateString } from '@/lib/format';
-import { formatMilli, signedToMilli } from '@/lib/money';
+import { filsToString, formatMilli, signedToMilli, toFils } from '@/lib/money';
 import { invoiceBalance, receiptBalances } from '@/lib/billing/invoice';
 import {
   formatAed,
+  formatRate,
   type CustomerDocumentModel,
   type DocumentLine,
   type DocumentLineType,
   type DocumentSection,
   type DocumentSeller,
   type DocumentTone,
+  type DocumentTotal,
 } from '@/lib/documents/model';
 
 /*
@@ -73,7 +75,10 @@ const vehicleLabel = (v: { make: string; model: string; year: number | null }) =
   [v.make, v.model, v.year].filter(Boolean).join(' ');
 /** "Mohammed-Mowla-Auto-Garage-LLC-Tax-invoice-INV-000003": the workshop's own name, not the app's. */
 const fileName = (seller: { name: string }, title: string, number: string) => {
-  const workshop = seller.name.trim().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const workshop = seller.name
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
   return `${workshop ? `${workshop}-` : ''}${title.replace(/\s+/g, '-')}-${number}`;
 };
 
@@ -148,6 +153,7 @@ function quotationModel(
     quantity: item.quantity.toString(),
     unitPrice: item.unitPrice.toString(),
     taxRate: item.taxRate?.toString() ?? null,
+    discount: lineDiscount(item.discountAmount),
     lineTotal: item.lineTotal.toString(),
   });
   // One numbered list in the order the lines were entered, each marked
@@ -210,6 +216,7 @@ function quotationModel(
           : [],
     sections,
     totals: [
+      ...billDiscountRows(estimate),
       { label: 'Total excl. VAT', amount: estimate.subtotal.toString() },
       { label: vatLabel(sections.flatMap((s) => s.lines)), amount: estimate.taxAmount.toString() },
       { label: 'Total', amount: estimate.totalAmount.toString(), emphasis: 'total' },
@@ -327,6 +334,34 @@ const PAYMENT_STATE = {
   PAID: { label: 'Paid', tone: 'success' },
 } as const;
 
+/** The AED a line's discount took off, or null for a line without one. */
+function lineDiscount(amount: { toString(): string }): string | null {
+  return toFils(amount.toString()) > 0 ? amount.toString() : null;
+}
+
+/**
+ * With a discount on the whole bill, the totals show the lines' total, the
+ * discount taken off it, and then the taxable total as usual. Without one,
+ * nothing: the totals read exactly as before.
+ */
+function billDiscountRows(document: {
+  discountType: string | null;
+  discountValue: { toString(): string } | null;
+  discountAmount: { toString(): string };
+  subtotal: { toString(): string };
+}): DocumentTotal[] {
+  const off = toFils(document.discountAmount.toString());
+  if (off === 0) return [];
+  const label =
+    document.discountType === 'PERCENT' && document.discountValue
+      ? `Discount (${formatRate(document.discountValue.toString())})`
+      : 'Discount';
+  return [
+    { label: 'Subtotal', amount: filsToString(toFils(document.subtotal.toString()) + off) },
+    { label, amount: filsToString(-off) },
+  ];
+}
+
 /** Payments that count, for listing on the invoice and choosing receipts. */
 function countedPayments<
   P extends { id: string; status: string; reversalOfPaymentId: string | null },
@@ -354,6 +389,7 @@ function invoiceModel(invoice: InvoiceRecord, seller: DocumentSeller): CustomerD
       quantity: item.quantity.toString(),
       unitPrice: item.unitPrice.toString(),
       taxRate: item.taxRate?.toString() ?? null,
+      discount: lineDiscount(item.discountAmount),
       lineTotal: item.lineTotal.toString(),
     };
     (kind === 'ADDITIONAL' ? additional : main).push(line);
@@ -378,12 +414,20 @@ function invoiceModel(invoice: InvoiceRecord, seller: DocumentSeller): CustomerD
       ...(invoice.supplyDate
         ? [{ label: 'Date of supply', value: formatCalendarDate(invoice.supplyDate) }]
         : []),
+      // Due on receipt needs no line of its own; a later date does.
+      ...(invoice.dueDate && invoice.dueDate > invoice.issueDate
+        ? [{ label: 'Due date', value: formatCalendarDate(invoice.dueDate) }]
+        : []),
+      ...(invoice.customerReference
+        ? [{ label: 'Your order no.', value: invoice.customerReference }]
+        : []),
       ...(invoice.jobCard ? [{ label: 'Job card', value: invoice.jobCard.jobNumber }] : []),
     ],
     ...invoiceParties(invoice),
     narrative: [],
     sections,
     totals: [
+      ...billDiscountRows(invoice),
       { label: 'Total excl. VAT', amount: invoice.subtotal.toString() },
       { label: vatLabel(sections.flatMap((s) => s.lines)), amount: invoice.taxAmount.toString() },
       { label: 'Total', amount: balance.total, emphasis: 'total' },

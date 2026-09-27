@@ -7,7 +7,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
-import { calculateTotals, filsToString, toFils } from '@/lib/money';
+import { filsToString, toFils } from '@/lib/money';
 import { emptyToNull } from '@/lib/normalize';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import {
@@ -16,7 +16,14 @@ import {
   type WorkflowStatus,
 } from '@/lib/workshop/job-status';
 import { paidFils } from '@/lib/billing/invoice';
-import { lineSchema, priceLines } from '@/lib/billing/direct-invoice';
+import { readDueDate } from '@/lib/billing/direct-invoice';
+import {
+  discountFields,
+  lineData,
+  lineSchema,
+  priceDocument,
+  totalsData,
+} from '@/lib/billing/document-lines';
 
 /*
  * Correcting billing after the fact. Three doors, each narrow on purpose:
@@ -76,6 +83,7 @@ function lineSnapshot(
     quantity: { toString(): string };
     unitPrice: { toString(): string };
     taxRate: { toString(): string } | null;
+    discountAmount: { toString(): string };
     lineTotal: { toString(): string };
   }[],
 ) {
@@ -85,6 +93,7 @@ function lineSnapshot(
     quantity: item.quantity.toString(),
     unitPrice: item.unitPrice.toString(),
     taxRate: item.taxRate?.toString() ?? '0',
+    discountAmount: item.discountAmount.toString(),
     lineTotal: item.lineTotal.toString(),
   }));
 }
@@ -98,6 +107,13 @@ const updateSchema = z.object({
     .array(lineSchema)
     .min(1, 'An invoice needs at least one line.')
     .max(100, 'An invoice can have at most 100 lines.'),
+  ...discountFields,
+  dueDate: z.string().trim().optional(),
+  customerReference: z
+    .string()
+    .trim()
+    .max(60, "Keep the customer's order number under 60 characters.")
+    .optional(),
   notes: z.string().trim().max(1000, 'Keep the notes under 1000 characters.').optional(),
   requestKey: z.string().optional(),
 });
@@ -122,9 +138,10 @@ export function invoiceEditBlocker(invoice: {
 }
 
 /**
- * Replaces the lines (and notes) of an unpaid invoice. Priced by the same
- * rules as a new one; the number, dates, customer and vehicle don't change,
- * but the seller and customer details are refreshed to the current ones.
+ * Replaces the lines, discounts, due date, order number and notes of an
+ * unpaid invoice. Priced by the same rules as a new one; the number, issue
+ * date, customer and vehicle don't change, but the seller and customer
+ * details are refreshed to the current ones.
  */
 export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, rawInput: unknown) {
   const input = parseInput(updateSchema, rawInput);
@@ -141,8 +158,8 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
     });
     if (blocker) throw new DomainError(blocker);
 
-    const lines = priceLines(input.items, defaultVatRate);
-    const totals = calculateTotals(lines.map((line) => line.amounts));
+    const { lines, totals } = priceDocument(input.items, defaultVatRate, input);
+    const dueDate = readDueDate(input.dueDate, invoice.issueDate);
 
     await tx.invoiceItem.deleteMany({
       where: { organizationId: user.organizationId, invoiceId: invoice.id },
@@ -154,11 +171,7 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
           invoiceId: invoice.id,
           itemType: line.itemType,
           description: line.description,
-          quantity: line.amounts.quantity,
-          unitPrice: line.amounts.unitPrice,
-          lineTotal: line.amounts.lineTotal,
-          taxRate: line.amounts.taxRate,
-          taxAmount: line.amounts.taxAmount,
+          ...lineData(line.amounts),
         },
       });
     }
@@ -187,9 +200,9 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
     await tx.invoice.update({
       where: { id: invoice.id },
       data: {
-        subtotal: totals.subtotal,
-        taxAmount: totals.taxAmount,
-        totalAmount: totals.totalAmount,
+        ...totalsData(totals),
+        dueDate,
+        customerReference: emptyToNull(input.customerReference),
         notes: emptyToNull(input.notes),
         ...parties,
       },
@@ -204,9 +217,12 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
       entityId: invoice.id,
       beforeData: {
         lines: lineSnapshot(invoice.items),
+        discountAmount: invoice.discountAmount.toString(),
         subtotal: invoice.subtotal.toString(),
         taxAmount: invoice.taxAmount.toString(),
         totalAmount: invoice.totalAmount.toString(),
+        dueDate: invoice.dueDate?.toISOString().slice(0, 10) ?? null,
+        customerReference: invoice.customerReference,
         notes: invoice.notes,
         sellerLegalName: invoice.sellerLegalName,
         sellerTaxNumber: invoice.sellerTaxNumber,
@@ -222,11 +238,15 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
           quantity: line.amounts.quantity,
           unitPrice: line.amounts.unitPrice,
           taxRate: line.amounts.taxRate,
+          discountAmount: line.amounts.discountAmount,
           lineTotal: line.amounts.lineTotal,
         })),
+        discountAmount: totals.discountAmount,
         subtotal: totals.subtotal,
         taxAmount: totals.taxAmount,
         totalAmount: totals.totalAmount,
+        dueDate: dueDate.toISOString().slice(0, 10),
+        customerReference: emptyToNull(input.customerReference),
         notes: emptyToNull(input.notes),
         ...parties,
       },

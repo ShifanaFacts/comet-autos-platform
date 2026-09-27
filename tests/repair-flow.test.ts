@@ -27,15 +27,15 @@ import { getStockOnHand } from '@/lib/inventory/stock';
 import { localDateString } from '@/lib/format';
 import { createTestOrg, expectDomainError, historyStatuses, jobStatus, RUN, type TestOrg } from './support';
 
-const COMET_ORG = '00000000-0000-7000-8000-000000000001';
+const SEED_ORG = '00000000-0000-7000-8000-000000000001';
 const PARTS = [
   { sku: 'AC-CLUTCH', name: 'AC compressor clutch', cost: '310.00', price: '480.00', stock: '2' },
   { sku: 'PADS', name: 'Brake pad set', cost: '95.00', price: '180.00', stock: '5' },
   { sku: 'OIL', name: 'Engine oil 1 L', cost: '18.00', price: '32.00', stock: '10' },
 ];
 
-async function cometCounts() {
-  const where = { organizationId: COMET_ORG };
+async function seedCounts() {
+  const where = { organizationId: SEED_ORG };
   return {
     jobCards: await prisma.jobCard.count({ where }),
     estimates: await prisma.estimate.count({ where }),
@@ -88,10 +88,10 @@ async function jobToEstimate(org: TestOrg, suffix: string, approve: boolean) {
 
 let a: TestOrg;
 let b: TestOrg;
-let before_: Awaited<ReturnType<typeof cometCounts>>;
+let before_: Awaited<ReturnType<typeof seedCounts>>;
 
 before(async () => {
-  before_ = await cometCounts();
+  before_ = await seedCounts();
   a = await createTestOrg('RepairA', PARTS);
   b = await createTestOrg('RepairB', PARTS);
 });
@@ -439,7 +439,7 @@ describe('repair → quality check → ready', () => {
     await getRepairWorkspace(b.viewer, other.jobCardId);
   });
 
-  test('14. existing Comet Autos data is untouched', async () => {
-    assert.deepEqual(await cometCounts(), before_);
+  test('14. existing Mohammed Mowla Auto Garage data is untouched', async () => {
+    assert.deepEqual(await seedCounts(), before_);
   });
 });

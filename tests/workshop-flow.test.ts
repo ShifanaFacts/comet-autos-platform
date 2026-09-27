@@ -8,7 +8,7 @@
  * plus the invalid cases (duplicates, bad input, permissions, tokens,
  * illegal status transitions).
  *
- * Every run creates its own throwaway organizations, so the real Comet Autos
+ * Every run creates its own throwaway organizations, so the real Mohammed Mowla Auto Garage
  * data is never touched and runs never interfere with each other.
  *
  *   npm run test:integration

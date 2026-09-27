@@ -7,7 +7,7 @@ import { NavList } from '@/components/shell/nav-list';
 import { BrandMark } from '@/components/shell/brand-mark';
 import type { Brand } from '@/lib/brand/brand';
 
-const COLLAPSE_STORAGE_KEY = 'comet:sidebar-collapsed';
+const COLLAPSE_STORAGE_KEY = 'garage:sidebar-collapsed';
 
 export function SidebarNav({
   allowedHrefs,

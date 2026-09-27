@@ -1,4 +1,4 @@
-// Comet Autos V1 Database Schema
+// Garage Management System — V1 Database Schema
 //
 // Status: FROZEN FOUNDATION SCHEMA — approved across multiple architect
 // review rounds. See docs/11-decisions for the ADRs behind the conventions
@@ -101,6 +101,12 @@ enum EstimateItemType {
   PART
   LABOUR
   OTHER
+}
+
+/// How a discount was entered: a percentage of the amount, or a fixed AED amount.
+enum DiscountType {
+  PERCENT
+  AMOUNT
 }
 
 enum ApprovalStatus {
@@ -913,6 +919,13 @@ model Estimate {
   /// Why the work is needed — used for ADDITIONAL work found during repair.
   notes             String?
   status            EstimateStatus @default(DRAFT)
+  /// Discount on the whole bill, taken after the lines' own discounts: a
+  /// percentage or a fixed amount (type + value, as entered), and the AED
+  /// it came to. `subtotal` is already net of it — the taxable amount —
+  /// so total = subtotal + VAT holds with or without a discount.
+  discountType      DiscountType? @map("discount_type")
+  discountValue     Decimal?      @map("discount_value") @db.Decimal(14, 2)
+  discountAmount    Decimal       @default(0) @map("discount_amount") @db.Decimal(14, 2)
   subtotal          Decimal        @db.Decimal(14, 2)
   taxAmount         Decimal        @default(0) @map("tax_amount") @db.Decimal(14, 2)
   totalAmount       Decimal        @map("total_amount") @db.Decimal(14, 2)
@@ -960,6 +973,13 @@ model EstimateItem {
   lineTotal      Decimal          @map("line_total") @db.Decimal(14, 2)
   taxRate        Decimal?         @map("tax_rate") @db.Decimal(5, 2)
   taxAmount      Decimal?         @map("tax_amount") @db.Decimal(14, 2)
+  /// The line's own discount: a percentage or a fixed amount (type +
+  /// value, as entered), and the AED it came to. `lineTotal` is net of it.
+  /// `taxAmount` is the VAT on this line after its share of the bill
+  /// discount too.
+  discountType   DiscountType? @map("discount_type")
+  discountValue  Decimal?      @map("discount_value") @db.Decimal(14, 2)
+  discountAmount Decimal       @default(0) @map("discount_amount") @db.Decimal(14, 2)
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -1378,10 +1398,19 @@ model Invoice {
   issueDate         DateTime      @map("issue_date") @db.Date
   supplyDate        DateTime?     @map("supply_date") @db.Date
   dueDate           DateTime?     @map("due_date") @db.Date
+  /// Discount on the whole bill, taken after the lines' own discounts: a
+  /// percentage or a fixed amount (type + value, as entered), and the AED
+  /// it came to. `subtotal` is already net of it — the taxable amount —
+  /// so total = subtotal + VAT holds with or without a discount.
+  discountType      DiscountType? @map("discount_type")
+  discountValue     Decimal?      @map("discount_value") @db.Decimal(14, 2)
+  discountAmount    Decimal       @default(0) @map("discount_amount") @db.Decimal(14, 2)
   subtotal          Decimal       @db.Decimal(14, 2)
   taxAmount         Decimal       @default(0) @map("tax_amount") @db.Decimal(14, 2)
   totalAmount       Decimal       @map("total_amount") @db.Decimal(14, 2)
   notes             String?
+  /// The customer's own purchase order (LPO) number, printed on the invoice.
+  customerReference String?       @map("customer_reference")
   /// Set when the invoice is voided (status VOID). The number is never reused.
   voidedAt          DateTime?     @map("voided_at") @db.Timestamptz
   voidReason        String?       @map("void_reason")
@@ -1444,6 +1473,13 @@ model InvoiceItem {
   lineTotal      Decimal  @map("line_total") @db.Decimal(14, 2)
   taxRate        Decimal? @map("tax_rate") @db.Decimal(5, 2)
   taxAmount      Decimal? @map("tax_amount") @db.Decimal(14, 2)
+  /// The line's own discount: a percentage or a fixed amount (type +
+  /// value, as entered), and the AED it came to. `lineTotal` is net of it.
+  /// `taxAmount` is the VAT on this line after its share of the bill
+  /// discount too.
+  discountType   DiscountType? @map("discount_type")
+  discountValue  Decimal?      @map("discount_value") @db.Decimal(14, 2)
+  discountAmount Decimal       @default(0) @map("discount_amount") @db.Decimal(14, 2)
   partUsageId    String?  @map("part_usage_id") @db.Uuid
   labourId       String?  @map("labour_id") @db.Uuid
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz

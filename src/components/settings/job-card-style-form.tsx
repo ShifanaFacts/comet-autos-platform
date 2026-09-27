@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
-import { CheckCircle2, ClipboardList, ListChecks, type LucideIcon } from 'lucide-react';
+import { CheckCircle2, ClipboardList, ListChecks, Loader2, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { setJobCardStyleAction } from '@/app/(app)/settings/actions';
 import { cn } from '@/lib/utils';
@@ -24,9 +23,11 @@ const STYLES: { detailed: boolean; icon: LucideIcon; title: string; description:
   },
 ];
 
-/** Picks which job card every job card opens as. Saves on tap. */
+/**
+ * Picks which job card every job card opens as. Saves on tap; the chosen
+ * card shows a spinner while the app around it is redrawn.
+ */
 export function JobCardStyleForm({ detailed, canEdit }: { detailed: boolean; canEdit: boolean }) {
-  const router = useRouter();
   const [current, setCurrent] = useState(detailed);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -37,10 +38,10 @@ export function JobCardStyleForm({ detailed, canEdit }: { detailed: boolean; can
     const previous = current;
     setCurrent(next);
     startTransition(async () => {
+      // The action revalidates the layout; its response carries the redraw.
       const result = await setJobCardStyleAction(next);
       if (result.ok) {
         toast.success(next ? 'Standard job card turned on' : 'Minimal job card turned on');
-        router.refresh();
       } else {
         setCurrent(previous);
         setError(result.error ?? 'Could not change the job card style.');
@@ -60,12 +61,14 @@ export function JobCardStyleForm({ detailed, canEdit }: { detailed: boolean; can
               type="button"
               role="radio"
               aria-checked={selected}
+              aria-busy={(selected && isPending) || undefined}
               disabled={!canEdit || isPending}
               onClick={() => choose(style.detailed)}
               className={cn(
                 'flex min-h-28 flex-col gap-2 rounded-xl border bg-card p-4 text-left transition-colors sm:p-5',
                 selected ? 'border-primary ring-1 ring-primary' : 'border-border',
-                canEdit && !selected ? 'hover:bg-muted/50' : null,
+                canEdit && !selected && !isPending ? 'hover:bg-muted/50' : null,
+                isPending ? 'cursor-wait' : null,
                 !canEdit && !selected ? 'opacity-60' : null,
               )}
             >
@@ -74,7 +77,14 @@ export function JobCardStyleForm({ detailed, canEdit }: { detailed: boolean; can
                   <Icon className="size-4 text-muted-foreground" />
                   {style.title}
                 </span>
-                {selected ? <CheckCircle2 className="size-5 text-primary" /> : null}
+                {selected && isPending ? (
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    Saving…
+                  </span>
+                ) : selected ? (
+                  <CheckCircle2 className="size-5 text-primary" />
+                ) : null}
               </span>
               <span className="text-sm text-muted-foreground">{style.description}</span>
             </button>

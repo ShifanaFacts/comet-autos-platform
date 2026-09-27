@@ -36,6 +36,7 @@ export function ReasonAction({
   placeholder,
   successMessage,
   requireReason = true,
+  tone = 'destructive',
   onConfirm,
 }: {
   trigger: ReactElement;
@@ -46,6 +47,8 @@ export function ReasonAction({
   placeholder?: string;
   successMessage: string;
   requireReason?: boolean;
+  /** `default` for a confirmation that is not undoing anything, e.g. an approval. */
+  tone?: 'destructive' | 'default';
   onConfirm: (input: { reason: string; requestKey: string }) => Promise<ActionResult>;
 }) {
   const router = useRouter();
@@ -116,7 +119,7 @@ export function ReasonAction({
           <Button variant="outline" onClick={() => setOpen(false)}>
             Never mind
           </Button>
-          <Button variant="destructive" disabled={isPending} onClick={confirm}>
+          <Button variant={tone} disabled={isPending} onClick={confirm}>
             {isPending ? 'Working…' : confirmLabel}
           </Button>
         </DialogFooter>

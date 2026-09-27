@@ -1,7 +1,7 @@
 # ADR-007: Next.js / NestJS Separation
 
 Status: **Superseded by [ADR-008](./ADR-008-single-nextjs-application.md)**
-on 2026-09-16 — Comet Autos is a single-business internal application, not
+on 2026-09-16 — Mohammed Mowla Auto Garage is a single-business internal application, not
 a multi-tenant SaaS platform, so the premise below (a client-agnostic API
 boundary for multiple future clients) no longer applies. Kept as historical
 record of the reasoning at the time; do not follow this ADR for new work.
@@ -10,7 +10,7 @@ Date: 2026-09-15
 
 ## Context
 
-Comet Autos is being built as a modular monolith that must remain workable as
+Mohammed Mowla Auto Garage is being built as a modular monolith that must remain workable as
 it grows into a multi-tenant SaaS platform serving a web app, a future mobile
 app, a future customer portal, AI-assisted workflows, and UAE e-invoicing
 integrations. We need one clear application/API boundary that all of those
@@ -26,7 +26,7 @@ database access independently.
   business logic, all database access (via Prisma), and is the only place
   authorization is enforced.
 - Next.js Server Components and Server Actions **do not** access Prisma or
-  PostgreSQL directly for core Comet Autos business operations, even though
+  PostgreSQL directly for core Mohammed Mowla Auto Garage business operations, even though
   the framework technically allows a Server Action to import a database
   client directly. Server Actions are permitted for presentation-layer
   concerns (e.g. calling the NestJS API, form handling), but never as a
@@ -75,7 +75,7 @@ privileged one.
 
 ## Why this remains a modular monolith rather than microservices
 
-At this stage, a single Comet Autos workshop (soon to become a small number of
+At this stage, a single Mohammed Mowla Auto Garage workshop (soon to become a small number of
 tenants) does not have the scale, team size, or operational need that would
 justify the deployment and coordination overhead of microservices (separate
 deployments, network calls between domains, distributed transactions, service

@@ -7,7 +7,7 @@ as further modules are built — see `PROJECT-STATUS.md` for the roadmap.
 
 ## System shape
 
-Comet Autos is a **single deployable Next.js application**, not a SaaS
+Mohammed Mowla Auto Garage is a **single deployable Next.js application**, not a SaaS
 platform:
 
 - **src/** — Next.js 16 + TypeScript, at the repo root. The entire
@@ -37,7 +37,7 @@ The schema (`prisma/schema.prisma`) retains `Organization`/`Branch`/`User`/
 `Role`/`Permission` models for internal access control (multiple staff
 roles, one workshop with room for more branches later), **not** for
 multi-tenant SaaS. In practice there is exactly one `Organization` row
-(Comet Autos) and one `Branch` row (Al Qusais) — see `prisma/seed.ts`.
+(Mohammed Mowla Auto Garage) and one `Branch` row (Al Qusais) — see `prisma/seed.ts`.
 
 RBAC is enforced via `UserRole` grants (organization-wide or branch-scoped)
 checked against the `Permission` catalog — see

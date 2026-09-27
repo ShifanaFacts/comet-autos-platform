@@ -5,6 +5,7 @@ import { listQuotations, type QuotationListItem } from '@/lib/workshop/quotation
 import { formatCalendarDate, formatDate, formatMoney } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { ListDataActions } from '@/components/shared/list-data-actions';
+import { canImport, importColumns, importNote } from '@/lib/data-transfer/imports';
 import { RecordCard, RecordList, TableWrap } from '@/components/shared/record-card';
 import {
   Table,
@@ -75,6 +76,9 @@ export default async function QuotationsPage({
             <ListDataActions
               entity="quotations"
               label="quotations"
+              canImport={canImport(user, 'quotations')}
+              columns={importColumns('quotations')}
+              note={importNote('quotations')}
               search={new URLSearchParams(
                 Object.entries(params).filter(([, value]) => Boolean(value)) as [string, string][],
               ).toString()}

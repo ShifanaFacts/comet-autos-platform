@@ -16,9 +16,11 @@ import {
 import { CustomerLinkPanel } from '@/components/workshop/customer-link-panel';
 import {
   DocumentLinesEditor,
-  isBlankLine,
+  billDiscountPayload,
+  linesPayload,
   newEditableLine,
   useLineTotals,
+  type BillDiscount,
   type EditableLine,
 } from '@/components/workshop/document-lines-editor';
 
@@ -33,6 +35,7 @@ export type DraftLine = EditableLine;
 export function QuotationBuilder({
   estimateId,
   initialLines,
+  initialBill,
   initialValidUntil,
   minValidUntil,
   recommendation,
@@ -41,6 +44,8 @@ export function QuotationBuilder({
 }: {
   estimateId: string;
   initialLines: DraftLine[];
+  /** The discount on the whole quotation, as saved. */
+  initialBill: BillDiscount;
   initialValidUntil: string;
   minValidUntil: string;
   recommendation: string | null;
@@ -53,26 +58,16 @@ export function QuotationBuilder({
   const [lines, setLines] = useState<DraftLine[]>(
     initialLines.length > 0 ? initialLines : [newEditableLine('PART', defaultVatRate)],
   );
+  const [bill, setBill] = useState<BillDiscount>(initialBill);
   const [validUntil, setValidUntil] = useState(initialValidUntil);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<{ link: string; whatsappUrl: string } | null>(null);
   const [pending, setPending] = useState<'save' | 'send' | null>(null);
   const [isPending, startTransition] = useTransition();
-  const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate);
+  const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate, bill);
 
   function payload() {
-    return {
-      validUntil,
-      items: lines
-        .filter((line) => !isBlankLine(line))
-        .map(({ itemType, description, quantity, unitPrice, taxRate }) => ({
-          itemType,
-          description,
-          quantity,
-          unitPrice,
-          taxRate,
-        })),
-    };
+    return { validUntil, items: linesPayload(lines), ...billDiscountPayload(bill) };
   }
 
   function save() {
@@ -122,7 +117,13 @@ export function QuotationBuilder({
         </div>
       ) : null}
 
-      <DocumentLinesEditor lines={lines} onChange={setLines} defaultVatRate={defaultVatRate} />
+      <DocumentLinesEditor
+        lines={lines}
+        onChange={setLines}
+        bill={bill}
+        onBillChange={setBill}
+        defaultVatRate={defaultVatRate}
+      />
 
       <Field
         label="Quotation valid until"
@@ -161,7 +162,11 @@ export function QuotationBuilder({
         <ConfirmAction
           tone="default"
           trigger={
-            <Button size="lg" className="h-12 sm:h-10" disabled={isPending || incomplete || count === 0}>
+            <Button
+              size="lg"
+              className="h-12 sm:h-10"
+              disabled={isPending || incomplete || count === 0}
+            >
               {pending === 'send' ? <Loader2 className="animate-spin" /> : <Send />}
               Send to customer
             </Button>

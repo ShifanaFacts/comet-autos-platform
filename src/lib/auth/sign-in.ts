@@ -47,7 +47,7 @@ async function findUser(identifier: string) {
 // A real bcrypt hash to check against when there is no such account, so a
 // wrong email takes as long to refuse as a wrong password.
 let decoyHash: Promise<string> | null = null;
-const decoy = () => (decoyHash ??= hashPassword('comet-autos-no-such-account'));
+const decoy = () => (decoyHash ??= hashPassword('garage-no-such-account'));
 
 export type SignInResult =
   { ok: true; user: { id: string; organizationId: string } } | { ok: false; error: string };

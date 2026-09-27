@@ -1,7 +1,6 @@
-import type { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
-import { requirePermission } from '@/lib/auth/authorize';
+import { hasPermission, requirePermission } from '@/lib/auth/authorize';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { claimRequestKey } from '@/lib/request-keys';
 import { compactPlate, phoneCore } from '@/lib/normalize';
@@ -10,9 +9,19 @@ import { createVehicle } from '@/lib/vehicles/service';
 import { createPart } from '@/lib/inventory/parts';
 import { createSupplier } from '@/lib/inventory/suppliers';
 import { csvTemplate, field, parseCsv } from '@/lib/data-transfer/csv';
+import {
+  fail,
+  rowNumber,
+  type ImportColumn,
+  type ImportDefinition,
+  type ImportOutcome,
+} from '@/lib/data-transfer/import-rows';
+import { DOCUMENT_IMPORTS } from '@/lib/data-transfer/document-imports';
+
+export type { ImportColumn, ImportOutcome } from '@/lib/data-transfer/import-rows';
 
 /*
- * Bringing a spreadsheet of master data in.
+ * Bringing a spreadsheet in.
  *
  * Every row goes through the same service the screen's form uses, so a row
  * is validated, normalized and audited exactly as if it had been typed —
@@ -20,56 +29,21 @@ import { csvTemplate, field, parseCsv } from '@/lib/data-transfer/csv';
  * if any row is wrong, nothing is written and the report says which row and
  * why. A row that already exists is reported as skipped, not duplicated.
  *
- * Documents (quotations, invoices, payments, job cards) are deliberately
- * not importable: their numbering, VAT and audit trail have to come from the
- * system that issued them.
+ * Master data (customers, vehicles, parts, suppliers) is defined here; the
+ * history a workshop brings with it — job cards, quotations and invoices
+ * from its old system — in lib/data-transfer/document-imports.ts.
  */
 
 /** A file bigger than this is refused rather than read into memory. */
 export const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 export const MAX_IMPORT_ROWS = 2000;
 
-export interface ImportColumn {
-  header: string;
-  required?: boolean;
-  example?: string;
-  hint?: string;
-}
-
-export interface ImportOutcome {
-  /** Rows written. */
-  created: number;
-  /** Rows that already existed, with what matched. */
-  skipped: { row: number; reason: string }[];
-  /** Rows that could not be read. Any of these and nothing is written. */
-  errors: { row: number; message: string }[];
-  total: number;
-}
-
-interface ImportDefinition {
-  label: string;
-  /** What the list is called on screen, for the report. */
-  noun: string;
-  permission: string;
-  columns: ImportColumn[];
-  run: (
-    tx: Prisma.TransactionClient,
-    user: AuthenticatedUser,
-    records: Record<string, string>[],
-    outcome: ImportOutcome,
-  ) => Promise<void>;
-}
-
-/** Row numbers in the report are the spreadsheet's own (header is row 1). */
-const rowNumber = (index: number) => index + 2;
-
-function fail(outcome: ImportOutcome, index: number, error: unknown) {
-  const message =
-    error instanceof DomainError
-      ? error.message
-      : 'This row could not be read. Check the columns against the template.';
-  outcome.errors.push({ row: rowNumber(index), message });
-}
+/**
+ * How long one import may hold its transaction. Every row is a few round
+ * trips to the database, so a file of a thousand rows needs minutes, not
+ * the five seconds an interactive transaction gets by default.
+ */
+const IMPORT_TIMEOUT_MS = 10 * 60 * 1000;
 
 export const IMPORTS: Record<string, ImportDefinition> = {
   customers: {
@@ -281,21 +255,47 @@ export const IMPORTS: Record<string, ImportDefinition> = {
       }
     },
   },
+
+  ...DOCUMENT_IMPORTS,
 };
 
 export function isImportable(entity: string): boolean {
   return Object.hasOwn(IMPORTS, entity);
 }
 
-/** The blank file to start from, with the headings and one example row. */
+/**
+ * Whether the user may import into this list: the permission to create what
+ * it holds, org-wide or at their own branch — where imported rows land.
+ */
+export function canImport(user: AuthenticatedUser, entity: string): boolean {
+  const definition = IMPORTS[entity];
+  if (!definition) return false;
+  return hasPermission(
+    user,
+    definition.permission,
+    user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
+  );
+}
+
+/** The blank file to start from, with the headings and an example row or two. */
 export function importTemplate(entity: string): { csv: string; label: string } {
   const definition = IMPORTS[entity];
   if (!definition) throw new NotFoundError('import');
-  return { csv: csvTemplate(definition.columns), label: definition.label };
+  const csv = csvTemplate(
+    definition.columns,
+    // Another line of the same document, so the layout explains itself.
+    definition.secondExample ? [definition.secondExample] : [],
+  );
+  return { csv, label: definition.label };
 }
 
 export function importColumns(entity: string): ImportColumn[] {
   return IMPORTS[entity]?.columns ?? [];
+}
+
+/** How the file is laid out, when it isn't simply one row per record. */
+export function importNote(entity: string): string | undefined {
+  return IMPORTS[entity]?.note;
 }
 
 /**
@@ -313,7 +313,11 @@ export async function importCsv(
 ): Promise<ImportOutcome> {
   const definition = IMPORTS[entity];
   if (!definition) throw new NotFoundError('import');
-  requirePermission(user, definition.permission);
+  requirePermission(
+    user,
+    definition.permission,
+    user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
+  );
 
   const sheet = parseCsv(text);
   if (sheet.records.length === 0) {
@@ -342,12 +346,15 @@ export async function importCsv(
   };
 
   try {
-    await prisma.$transaction(async (tx) => {
-      await claimRequestKey(tx, user, { requestKey }, `${entity}.import`);
-      await definition.run(tx, user, sheet.records, outcome);
-      // Nothing is written unless every row could be read.
-      if (outcome.errors.length > 0) throw new ImportRolledBack(outcome);
-    });
+    await prisma.$transaction(
+      async (tx) => {
+        await claimRequestKey(tx, user, { requestKey }, `${entity}.import`);
+        await definition.run(tx, user, sheet.records, outcome);
+        // Nothing is written unless every row could be read.
+        if (outcome.errors.length > 0) throw new ImportRolledBack(outcome);
+      },
+      { timeout: IMPORT_TIMEOUT_MS, maxWait: 15_000 },
+    );
   } catch (error) {
     if (error instanceof ImportRolledBack) {
       return { ...error.outcome, created: 0 };

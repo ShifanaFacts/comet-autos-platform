@@ -3,13 +3,15 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Save } from 'lucide-react';
-import { FormError, TextareaField } from '@/components/forms/fields';
+import { FormError, TextField, TextareaField } from '@/components/forms/fields';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import {
   DocumentLinesEditor,
-  isBlankLine,
+  billDiscountPayload,
+  linesPayload,
   useLineTotals,
+  type BillDiscount,
   type EditableLine,
 } from '@/components/workshop/document-lines-editor';
 import { formatMoney } from '@/lib/format';
@@ -19,11 +21,20 @@ import { updateInvoiceAction } from '../../actions';
 export function EditInvoiceForm({
   invoiceId,
   lines: initialLines,
+  bill: initialBill,
+  issueDate,
+  dueDate,
+  customerReference,
   notes,
   defaultVatRate,
 }: {
   invoiceId: string;
   lines: EditableLine[];
+  bill: BillDiscount;
+  /** YYYY-MM-DD; the due date can't be before it. */
+  issueDate: string;
+  dueDate: string;
+  customerReference: string;
   notes: string;
   defaultVatRate: string;
 }) {
@@ -32,28 +43,47 @@ export function EditInvoiceForm({
     { ok: false },
   );
   const [lines, setLines] = useState<EditableLine[]>(initialLines);
-  const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate);
+  const [bill, setBill] = useState<BillDiscount>(initialBill);
+  const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate, bill);
   const errors = state.fieldErrors ?? {};
-
-  const payload = JSON.stringify(
-    lines
-      .filter((line) => !isBlankLine(line))
-      .map(({ itemType, description, quantity, unitPrice, taxRate }) => ({
-        itemType,
-        description,
-        quantity,
-        unitPrice,
-        taxRate,
-      })),
-  );
+  const payload = JSON.stringify(linesPayload(lines));
+  const discount = billDiscountPayload(bill);
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-8">
       <input type="hidden" name="items" value={payload} />
+      <input type="hidden" name="discountType" value={discount.discountType} />
+      <input type="hidden" name="discount" value={discount.discount} />
       <section className="flex flex-col gap-4">
         <h2 className="text-base font-semibold tracking-tight">What is being billed</h2>
-        <DocumentLinesEditor lines={lines} onChange={setLines} defaultVatRate={defaultVatRate} />
+        <DocumentLinesEditor
+          lines={lines}
+          onChange={setLines}
+          bill={bill}
+          onBillChange={setBill}
+          defaultVatRate={defaultVatRate}
+        />
       </section>
+
+      <div className="grid gap-6 sm:grid-cols-2">
+        <TextField
+          label="Due date"
+          name="dueDate"
+          type="date"
+          min={issueDate}
+          defaultValue={dueDate}
+          error={errors.dueDate}
+          className="[&_input]:h-11"
+        />
+        <TextField
+          label="Customer's order no. (LPO)"
+          name="customerReference"
+          defaultValue={customerReference}
+          error={errors.customerReference}
+          hint="Optional — printed on the invoice."
+          className="[&_input]:h-11"
+        />
+      </div>
 
       <TextareaField
         label="Notes on the invoice"
@@ -64,7 +94,7 @@ export function EditInvoiceForm({
         className="[&_textarea]:min-h-16"
       />
 
-      <FormError message={state.error ?? errors.items} />
+      <FormError message={state.error ?? errors.items ?? errors.discount} />
 
       <div className="flex flex-col gap-3 border-t border-border pt-6 sm:flex-row sm:items-center">
         <SubmitButton

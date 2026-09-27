@@ -11,7 +11,8 @@ import { resolveDefaultVatRate } from '@/lib/tax';
 import { Grid, Panel, Section, Stack } from '@/components/layout/primitives';
 import { JobContextHeader } from '@/components/workshop/job-context-header';
 import { EstimateStatusPill } from '@/components/workshop/status-pills';
-import { EstimateLines, trimQuantity } from '@/components/workshop/estimate-lines';
+import { EstimateLines } from '@/components/workshop/estimate-lines';
+import { editableBill, editableLine } from '@/lib/billing/editable-lines';
 import { cn } from '@/lib/utils';
 import { QuotationBuilder } from '@/components/workshop/quotation-builder';
 import { NewLinkButton, RecordDecisionForm } from '@/components/workshop/quotation-controls';
@@ -103,16 +104,10 @@ export default async function AdditionalWorkPage({
                     : localDateString()
                 }
                 minValidUntil={localDateString()}
+                initialBill={editableBill(estimate)}
                 initialLines={estimate.items
                   .filter((item) => item.itemType !== 'OTHER')
-                  .map((item) => ({
-                    key: item.id,
-                    itemType: item.itemType as 'LABOUR' | 'PART',
-                    description: item.description,
-                    quantity: trimQuantity(item.quantity.toString()),
-                    unitPrice: item.unitPrice.toString(),
-                    taxRate: trimQuantity(item.taxRate?.toString() ?? defaultVatRate),
-                  }))}
+                  .map((item) => editableLine(item, item.id, defaultVatRate))}
               />
             </Panel>
           ) : estimate.items.length > 0 ? (

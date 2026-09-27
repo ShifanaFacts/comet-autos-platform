@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Prisma } from '@/generated/prisma/client';
-import type { EstimateItemType, JobCardStatus } from '@/generated/prisma/enums';
+import type { JobCardStatus } from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
@@ -9,7 +9,15 @@ import { allocateDocumentNumber } from '@/lib/numbering';
 import { DomainError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
-import { calculateLine, calculateTotals, toFils, type LineAmounts } from '@/lib/money';
+import {
+  discountFields,
+  lineData,
+  lineSchema,
+  priceDocument,
+  storedLineAmounts,
+  storedTotals,
+  totalsData,
+} from '@/lib/billing/document-lines';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { emptyToNull } from '@/lib/normalize';
@@ -30,19 +38,6 @@ import { CLOSED_JOB_STATUSES } from '@/lib/workshop/stages';
  * balance rules (lib/billing/invoice) — only the source of the lines differs.
  */
 
-export const lineSchema = z.object({
-  /** Parts or labour — printed in the invoice's TYPE column. */
-  itemType: z.enum(['PART', 'LABOUR'], { error: 'Choose parts or labour for every line.' }),
-  description: z
-    .string({ error: 'Every line needs a description.' })
-    .trim()
-    .min(1, 'Every line needs a description.')
-    .max(300, 'Keep a line description under 300 characters.'),
-  quantity: z.string().trim().min(1, 'Enter a quantity.'),
-  unitPrice: z.string().trim().min(1, 'Enter a price.'),
-  taxRate: z.string().trim().optional(),
-});
-
 const directInvoiceSchema = z.object({
   customerId: z.uuid({ error: 'Choose the customer this invoice is for.' }),
   /** Optional: not every invoice is about a car the workshop has on file. */
@@ -52,33 +47,34 @@ const directInvoiceSchema = z.object({
   /** Optional: copies the quotation's lines instead of typing them. */
   estimateId: z.union([z.literal(''), z.uuid()]).optional(),
   items: z.array(lineSchema).max(100, 'An invoice can have at most 100 lines.').optional(),
+  /** A discount on the whole bill, after the lines' own. */
+  ...discountFields,
+  /** YYYY-MM-DD; blank means due on the day it is issued. */
+  dueDate: z.string().trim().optional(),
+  customerReference: z
+    .string()
+    .trim()
+    .max(60, "Keep the customer's order number under 60 characters.")
+    .optional(),
   notes: z.string().trim().max(1000, 'Keep the notes under 1000 characters.').optional(),
   requestKey: z.string().optional(),
 });
 
-export type DirectInvoiceInput = z.input<typeof directInvoiceSchema>;
-
-/** Prices typed lines through the shared money rules — never a second formula. */
-export function priceLines(items: z.infer<typeof lineSchema>[], defaultVatRate: string) {
-  return items.map((item, index) => {
-    try {
-      return {
-        itemType: item.itemType as EstimateItemType,
-        description: item.description,
-        amounts: calculateLine({
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          taxRate: item.taxRate || defaultVatRate,
-        }),
-      };
-    } catch (error) {
-      throw new DomainError(
-        `Line ${index + 1}: ${error instanceof Error ? error.message : 'invalid amount.'}`,
-        `items.${index}`,
-      );
-    }
-  });
+/**
+ * When an invoice is due: the date chosen, which may not be before it was
+ * issued, or — left blank — the day it was issued (due on receipt).
+ */
+export function readDueDate(value: string | undefined, issueDate: Date): Date {
+  if (!value) return issueDate;
+  const dueDate = parseCalendarDate(value);
+  if (!dueDate) throw new DomainError('Choose a valid due date.', 'dueDate');
+  if (dueDate < issueDate) {
+    throw new DomainError('The due date cannot be before the invoice date.', 'dueDate');
+  }
+  return dueDate;
 }
+
+export type DirectInvoiceInput = z.input<typeof directInvoiceSchema>;
 
 /**
  * The quotation's own lines, already priced when it was saved. They are
@@ -110,25 +106,14 @@ async function linesFromEstimate(
   }
   return {
     estimate,
-    lines: estimate.items.map((item) => {
-      const lineTotal = item.lineTotal.toString();
-      const taxAmount = (item.taxAmount ?? 0).toString();
-      return {
-        itemType: item.itemType,
-        description: item.description,
-        amounts: {
-          quantity: item.quantity.toString(),
-          unitPrice: item.unitPrice.toString(),
-          lineTotal,
-          taxRate: (item.taxRate ?? 0).toString(),
-          taxAmount,
-          // Derived from the stored figures, so the invoice totals to
-          // exactly what the customer was quoted.
-          lineTotalFils: toFils(lineTotal),
-          taxFils: toFils(taxAmount),
-        } satisfies LineAmounts,
-      };
-    }),
+    // The stored figures — discounts included — so the invoice totals to
+    // exactly what the customer was quoted.
+    lines: estimate.items.map((item) => ({
+      itemType: item.itemType,
+      description: item.description,
+      amounts: storedLineAmounts(item),
+    })),
+    totals: storedTotals(estimate),
   };
 }
 
@@ -185,7 +170,8 @@ export async function createDirectInvoice(
 
     // Job cards are locked before invoices, everywhere.
     let branchId = user.primaryBranchId!;
-    let jobCard: { id: string; branchId: string; status: JobCardStatus; vehicleId: string } | null = null;
+    let jobCard: { id: string; branchId: string; status: JobCardStatus; vehicleId: string } | null =
+      null;
     if (input.jobCardId) {
       await tx.$executeRaw`SELECT id FROM job_cards WHERE id = ${input.jobCardId}::uuid AND organization_id = ${user.organizationId}::uuid FOR UPDATE`;
       const found = await tx.jobCard.findFirst({
@@ -209,9 +195,17 @@ export async function createDirectInvoice(
         select: { invoiceNumber: true },
       });
       if (live) {
-        throw new DomainError(`That job card is already invoiced (${live.invoiceNumber}).`, 'jobCardId');
+        throw new DomainError(
+          `That job card is already invoiced (${live.invoiceNumber}).`,
+          'jobCardId',
+        );
       }
-      jobCard = { id: found.id, branchId: found.branchId, status: found.status, vehicleId: found.vehicleId };
+      jobCard = {
+        id: found.id,
+        branchId: found.branchId,
+        status: found.status,
+        vehicleId: found.vehicleId,
+      };
       branchId = found.branchId;
       vehicleId = vehicleId ?? found.vehicleId;
     }
@@ -236,7 +230,10 @@ export async function createDirectInvoice(
           },
           select: { invoiceNumber: true },
         });
-        if (live) throw new DomainError(`That quotation's job card is already invoiced (${live.invoiceNumber}).`);
+        if (live)
+          throw new DomainError(
+            `That quotation's job card is already invoiced (${live.invoiceNumber}).`,
+          );
         requirePermission(user, 'invoice.create', { branchId: found.branchId });
         jobCard = found;
         branchId = found.branchId;
@@ -244,12 +241,19 @@ export async function createDirectInvoice(
       }
     }
 
-    const lines = source ? source.lines : priceLines(input.items ?? [], defaultVatRate);
-    const totals = calculateTotals(lines.map((line) => line.amounts));
+    const { lines, totals } = source ?? priceDocument(input.items ?? [], defaultVatRate, input);
 
-    const organization = await tx.organization.findUniqueOrThrow({ where: { id: user.organizationId } });
+    const organization = await tx.organization.findUniqueOrThrow({
+      where: { id: user.organizationId },
+    });
     const today = parseCalendarDate(localDateString())!;
-    const invoiceNumber = await allocateDocumentNumber(tx, user.organizationId, branchId, 'TAX_INVOICE');
+    const dueDate = readDueDate(input.dueDate, today);
+    const invoiceNumber = await allocateDocumentNumber(
+      tx,
+      user.organizationId,
+      branchId,
+      'TAX_INVOICE',
+    );
     const now = new Date();
 
     const invoice = await tx.invoice.create({
@@ -264,10 +268,9 @@ export async function createDirectInvoice(
         status: 'ISSUED',
         issueDate: today,
         supplyDate: today,
-        dueDate: today,
-        subtotal: totals.subtotal,
-        taxAmount: totals.taxAmount,
-        totalAmount: totals.totalAmount,
+        dueDate,
+        ...totalsData(totals),
+        customerReference: emptyToNull(input.customerReference),
         notes: emptyToNull(input.notes),
         sellerLegalName: organization.legalName ?? organization.name,
         sellerTaxNumber: organization.taxNumber,
@@ -287,11 +290,7 @@ export async function createDirectInvoice(
           invoiceId: invoice.id,
           itemType: line.itemType,
           description: line.description,
-          quantity: line.amounts.quantity,
-          unitPrice: line.amounts.unitPrice,
-          lineTotal: line.amounts.lineTotal,
-          taxRate: line.amounts.taxRate,
-          taxAmount: line.amounts.taxAmount,
+          ...lineData(line.amounts),
         },
       });
     }
@@ -324,6 +323,7 @@ export async function createDirectInvoice(
         customerId: customer.id,
         vehicleId,
         lines: lines.length,
+        discountAmount: totals.discountAmount,
         subtotal: totals.subtotal,
         taxAmount: totals.taxAmount,
         totalAmount: totals.totalAmount,
