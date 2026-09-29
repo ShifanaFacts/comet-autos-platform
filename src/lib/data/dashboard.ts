@@ -4,7 +4,7 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { CLOSED_JOB_STATUSES, WORKFLOW_STAGES } from '@/lib/workshop/stages';
 import { localDateString, localDayRange, parseCalendarDate } from '@/lib/format';
 import { filsToString, toFils } from '@/lib/money';
-import { invoiceBalance, paidFils } from '@/lib/billing/invoice';
+import { invoiceBalance } from '@/lib/billing/invoice';
 import { getStockByPart, resolveInventoryBranch, stockState } from '@/lib/inventory/stock';
 
 /*
@@ -115,9 +115,19 @@ export async function getFinanceSnapshot(organizationId: string) {
       },
       select: { totalAmount: true },
     }),
-    prisma.payment.findMany({
-      where: { organizationId, receivedAt: { gte: today.start, lt: today.end } },
-      select: { id: true, amount: true, status: true, reversalOfPaymentId: true },
+    // Collected today: payments received today that still count — completed,
+    // not a reversal, and never reversed. A reversed payment keeps status
+    // COMPLETED (the reversal is its own REVERSED row, maybe on another day),
+    // so the relation filter, not the status, is what leaves it out.
+    prisma.payment.aggregate({
+      where: {
+        organizationId,
+        receivedAt: { gte: today.start, lt: today.end },
+        status: 'COMPLETED',
+        reversalOfPaymentId: null,
+        reversals: { none: {} },
+      },
+      _sum: { amount: true },
     }),
   ]);
 
@@ -130,7 +140,7 @@ export async function getFinanceSnapshot(organizationId: string) {
       todaysInvoices.reduce((sum, invoice) => sum + toFils(invoice.totalAmount.toString()), 0),
     ),
     todaysInvoiceCount: todaysInvoices.length,
-    todaysCollections: filsToString(paidFils(todaysPayments.filter((p) => !p.reversalOfPaymentId))),
+    todaysCollections: filsToString(toFils(todaysPayments._sum.amount?.toString() ?? '0')),
     customerOutstanding: filsToString(outstandingFils),
     unpaidInvoices: openInvoices.length,
   };
@@ -274,7 +284,14 @@ export async function getTodaysActivity(
       : Promise.resolve([]),
     options.includeMoney
       ? prisma.payment.findMany({
-          where: { organizationId, receivedAt: window, reversalOfPaymentId: null, status: 'COMPLETED' },
+          // Receipts that stand: a reversed one is not money taken today.
+          where: {
+            organizationId,
+            receivedAt: window,
+            status: 'COMPLETED',
+            reversalOfPaymentId: null,
+            reversals: { none: {} },
+          },
           orderBy: { receivedAt: 'desc' },
           take,
           select: {
