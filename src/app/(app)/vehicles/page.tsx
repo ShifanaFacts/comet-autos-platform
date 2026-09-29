@@ -110,7 +110,7 @@ export default async function VehiclesPage({
                       <TableCell>
                         <Link
                           href={`/vehicles/${vehicle.id}`}
-                          className="after:absolute after:inset-0"
+                          className="row-link"
                         >
                           <VehiclePlate
                             plateNumber={vehicle.plateNumber}

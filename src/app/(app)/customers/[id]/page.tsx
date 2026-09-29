@@ -291,7 +291,7 @@ export default async function CustomerDetailPage({
                     <TableCell>
                       <Link
                         href={`/job-cards/${job.id}`}
-                        className="font-medium after:absolute after:inset-0 hover:underline"
+                        className="font-medium row-link hover:underline"
                       >
                         {job.jobNumber}
                       </Link>

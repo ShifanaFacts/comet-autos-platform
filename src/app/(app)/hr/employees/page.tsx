@@ -138,7 +138,7 @@ export default async function EmployeesPage({
                       <TableCell>
                         <Link
                           href={`/hr/employees/${employee.id}`}
-                          className="font-medium after:absolute after:inset-0 hover:underline"
+                          className="font-medium row-link hover:underline"
                         >
                           {employee.name}
                         </Link>

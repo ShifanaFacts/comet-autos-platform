@@ -8,6 +8,7 @@ import { SidebarNav } from '@/components/shell/sidebar-nav';
 import { BottomNav } from '@/components/shell/bottom-nav';
 import { Topbar } from '@/components/shell/topbar';
 import { SessionGuard } from '@/components/shell/session-guard';
+import { RowLinks } from '@/components/shell/row-links';
 import { PageContainer } from '@/components/layout/primitives';
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -34,6 +35,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen bg-background">
       <SessionGuard />
+      <RowLinks />
       <SidebarNav allowedHrefs={allowedHrefs} brand={brand} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar

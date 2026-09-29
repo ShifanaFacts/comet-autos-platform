@@ -170,7 +170,7 @@ export default async function QuotationsPage({
                   title={
                     <Link
                       href={`/quotations/${quotation.id}`}
-                      className="after:absolute after:inset-0"
+                      className="row-link"
                     >
                       {quotation.estimateNumber}
                     </Link>
@@ -224,7 +224,7 @@ export default async function QuotationsPage({
                       <TableCell>
                         <Link
                           href={`/quotations/${quotation.id}`}
-                          className="font-medium after:absolute after:inset-0"
+                          className="font-medium row-link"
                         >
                           {quotation.estimateNumber}
                         </Link>
