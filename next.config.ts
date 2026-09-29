@@ -33,7 +33,16 @@ const nextConfig: NextConfig = {
     },
   },
   async headers() {
-    return [{ source: '/:path*', headers: SECURITY_HEADERS }];
+    // Document PDFs are printed from a hidden frame on the page that asks for
+    // them, so this site — and only this site — may frame them. A later rule
+    // overrides the same header from an earlier one.
+    const framedBySelf = [{ key: 'X-Frame-Options', value: 'SAMEORIGIN' }];
+    return [
+      { source: '/:path*', headers: SECURITY_HEADERS },
+      { source: '/documents/:path*', headers: framedBySelf },
+      { source: '/customer/:kind/:token/pdf', headers: framedBySelf },
+      { source: '/customer/invoice/:token/receipts/:number/pdf', headers: framedBySelf },
+    ];
   },
 };
 

@@ -34,9 +34,21 @@ function contentSecurityPolicy(nonce: string) {
   ].join('; ');
 }
 
+/**
+ * A document PDF (a quotation, invoice, receipt or credit note). The
+ * browser's own PDF viewer shows it, so the page policy — written for HTML,
+ * with `object-src 'none'` — would only get in the viewer's way. Its one rule
+ * is that nothing but this site may frame it: that is how Print works.
+ */
+const isDocumentPdf = (pathname: string) =>
+  pathname.startsWith('/documents/') ||
+  (pathname.startsWith('/customer/') && pathname.endsWith('/pdf'));
+
 export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
-  const csp = contentSecurityPolicy(nonce);
+  const csp = isDocumentPdf(request.nextUrl.pathname)
+    ? "frame-ancestors 'self'"
+    : contentSecurityPolicy(nonce);
 
   const isPublicRoute =
     request.nextUrl.pathname.startsWith('/login') ||
