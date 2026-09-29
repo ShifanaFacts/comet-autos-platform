@@ -21,6 +21,7 @@ import { resolveDefaultVatRate } from '@/lib/tax';
 import { endOfLocalDay, localDateString, parseCalendarDate } from '@/lib/format';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 import { issueAccessToken, revokeAccessTokens } from '@/lib/customer-access/tokens';
+import { resolveTaxCodes } from '@/lib/accounting/tax-codes';
 
 /** Default quotation validity when a new estimate is created. Editable per estimate. */
 export const DEFAULT_QUOTE_VALIDITY_DAYS = 14;
@@ -320,6 +321,7 @@ export async function saveEstimateDraft(
     input.items,
     await resolveDefaultVatRate(user.organizationId),
     input,
+    await resolveTaxCodes(prisma, user.organizationId, input.items),
   );
   const validUntil = parseCalendarDate(input.validUntil);
   if (!validUntil) throw new DomainError('Choose a valid date.', 'validUntil');
@@ -349,6 +351,7 @@ export async function saveEstimateDraft(
           itemType: line.itemType,
           description: line.description,
           vatTreatment: line.vatTreatment,
+          taxCodeId: line.taxCodeId,
           ...lineData(line.amounts),
         },
       });

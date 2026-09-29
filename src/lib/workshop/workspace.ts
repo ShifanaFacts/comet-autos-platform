@@ -226,16 +226,18 @@ export function getNextAction(workspace: JobWorkspace): NextAction {
     case 'READY':
       return {
         tone: 'action',
-        title: 'Create the invoice',
-        description: 'Quality check passed. Bill the approved work, then take payment before handing the vehicle back.',
+        title: 'Work completed — create the invoice',
+        description:
+          'Bill the work. The vehicle can then be handed over — paid now, or on credit with the balance paid later.',
         href: `${base}#invoice`,
         label: 'Review invoice',
       };
     case 'INVOICED':
       return {
         tone: 'waiting',
-        title: 'Waiting for payment',
-        description: 'The invoice is issued. Record payments as the customer pays.',
+        title: 'Take payment or deliver',
+        description:
+          'The invoice is issued. Record payments as the customer pays — or hand the vehicle over on credit and collect the balance later.',
         href: `${base}#payments`,
         label: 'Record payment',
       };
@@ -336,4 +338,13 @@ export async function getWorkQueues(user: AuthenticatedUser) {
   ]);
 
   return { awaitingInspection, inInspection, awaitingDiagnosis, needsEstimate, estimates };
+}
+
+/** Whether labour or parts were recorded against the job — work only the standard card bills from. */
+export async function jobHasRepairRecords(user: AuthenticatedUser, jobCardId: string) {
+  const [labour, parts] = await Promise.all([
+    prisma.labour.count({ where: { organizationId: user.organizationId, jobCardId } }),
+    prisma.partUsage.count({ where: { organizationId: user.organizationId, jobCardId } }),
+  ]);
+  return labour + parts > 0;
 }

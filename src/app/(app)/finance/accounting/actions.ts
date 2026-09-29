@@ -20,6 +20,8 @@ import {
   saveOpeningBalances,
 } from '@/lib/accounting/opening-balances';
 import { closeFinancialYear, reopenFinancialYear } from '@/lib/accounting/year-end';
+import { createTaxCode, updateTaxCode } from '@/lib/accounting/tax-codes';
+import { createPaymentMode, updatePaymentMode } from '@/lib/accounting/payment-modes';
 
 function refresh() {
   revalidatePath('/finance', 'layout');
@@ -167,6 +169,48 @@ export async function reopenFinancialYearAction(
 ): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() => reopenFinancialYear(user, entryId, input));
+  if (result.ok) refresh();
+  return toClientResult(result);
+}
+
+export async function createTaxCodeAction(
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => createTaxCode(user, formDataToObject(formData)));
+  if (result.ok) refresh();
+  return toClientResult(result);
+}
+
+export async function updateTaxCodeAction(
+  taxCodeId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => updateTaxCode(user, taxCodeId, formDataToObject(formData)));
+  if (result.ok) refresh();
+  return toClientResult(result);
+}
+
+export async function createPaymentModeAction(
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => createPaymentMode(user, formDataToObject(formData)));
+  if (result.ok) refresh();
+  return toClientResult(result);
+}
+
+export async function updatePaymentModeAction(
+  modeId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => updatePaymentMode(user, modeId, formDataToObject(formData)));
   if (result.ok) refresh();
   return toClientResult(result);
 }

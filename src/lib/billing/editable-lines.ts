@@ -22,6 +22,8 @@ export interface EditableLine {
   taxRate: string;
   /** How the line is treated for VAT. */
   vatTreatment: VatTreatment;
+  /** The tax code chosen; blank for a line priced by its treatment alone. */
+  taxCodeId: string;
   /** The line's discount: a percentage or an AED amount; blank for none. */
   discountType: DiscountType;
   discount: string;
@@ -54,6 +56,7 @@ export function editableLine(
     discountValue: Stored | null;
     accountId?: string | null;
     vatTreatment?: VatTreatment | null;
+    taxCodeId?: string | null;
   },
   key: string,
   defaultVatRate: string,
@@ -69,6 +72,7 @@ export function editableLine(
     discount: item.discountValue ? typed(item.discountValue) : '',
     accountId: item.accountId ?? '',
     vatTreatment: item.vatTreatment ?? treatmentFromRate(item.taxRate ?? defaultVatRate),
+    taxCodeId: item.taxCodeId ?? '',
   };
 }
 

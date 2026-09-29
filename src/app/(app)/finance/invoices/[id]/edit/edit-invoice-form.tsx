@@ -1,5 +1,6 @@
 'use client';
 
+import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import { useState } from 'react';
 import Link from 'next/link';
 import { Save } from 'lucide-react';
@@ -29,6 +30,7 @@ export function EditInvoiceForm({
   notes,
   defaultVatRate,
   incomeAccounts,
+  taxCodes,
 }: {
   invoiceId: string;
   /** Income accounts a line can book to; omitted, every line uses the default. */
@@ -41,6 +43,8 @@ export function EditInvoiceForm({
   customerReference: string;
   notes: string;
   defaultVatRate: string;
+  /** The sales tax codes a line can be given. */
+  taxCodes?: TaxCodeOption[];
 }) {
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
     (prev, formData) => updateInvoiceAction(invoiceId, prev, formData),
@@ -67,6 +71,7 @@ export function EditInvoiceForm({
           onBillChange={setBill}
           defaultVatRate={defaultVatRate}
           incomeAccounts={incomeAccounts}
+          taxCodes={taxCodes}
         />
       </section>
 

@@ -1,5 +1,6 @@
 'use client';
 
+import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Save, Send } from 'lucide-react';
@@ -41,6 +42,7 @@ export function QuotationBuilder({
   recommendation,
   customerName,
   defaultVatRate,
+  taxCodes,
 }: {
   estimateId: string;
   initialLines: DraftLine[];
@@ -52,11 +54,13 @@ export function QuotationBuilder({
   customerName: string;
   /** Organization default VAT rate, from lib/tax.ts on the server. */
   defaultVatRate: string;
+  /** The sales tax codes a line can be given. */
+  taxCodes?: TaxCodeOption[];
 }) {
   const router = useRouter();
   // Most lines on a workshop quotation are parts, so a new one starts as a part.
   const [lines, setLines] = useState<DraftLine[]>(
-    initialLines.length > 0 ? initialLines : [newEditableLine('PART', defaultVatRate)],
+    initialLines.length > 0 ? initialLines : [newEditableLine('PART', defaultVatRate, taxCodes?.find((code) => code.isDefault) ?? null)],
   );
   const [bill, setBill] = useState<BillDiscount>(initialBill);
   const [validUntil, setValidUntil] = useState(initialValidUntil);
@@ -123,6 +127,7 @@ export function QuotationBuilder({
         bill={bill}
         onBillChange={setBill}
         defaultVatRate={defaultVatRate}
+        taxCodes={taxCodes}
       />
 
       <Field

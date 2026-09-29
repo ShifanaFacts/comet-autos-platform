@@ -31,6 +31,8 @@ import {
   Landmark,
   Building2,
   BookOpen,
+  CreditCard,
+  Tags,
   BookText,
   CalendarCheck2,
   FolderOpen,
@@ -183,6 +185,18 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Chart of accounts',
         href: '/finance/accounting?view=accounts',
         icon: BookOpen,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Tax codes',
+        href: '/finance/accounting/tax-codes',
+        icon: Tags,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Payment modes',
+        href: '/finance/accounting/payment-modes',
+        icon: CreditCard,
         permission: 'accounting.view',
       },
       {

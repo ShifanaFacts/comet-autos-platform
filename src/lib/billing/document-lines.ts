@@ -48,6 +48,8 @@ export const lineSchema = z.object({
   taxRate: z.string().trim().optional(),
   /** How the line is treated for VAT; its rate follows from it. */
   vatTreatment: z.enum(['STANDARD', 'ZERO_RATED', 'EXEMPT', 'OUT_OF_SCOPE']).optional(),
+  /** The tax code chosen — when given, its rate and treatment decide the line's VAT. */
+  taxCodeId: z.union([z.literal(''), z.uuid()]).optional(),
   ...discountFields,
   /** The income account it books to; blank for the default of its type. */
   accountId: z.union([z.literal(''), z.uuid()]).optional(),
@@ -59,6 +61,8 @@ export interface PricedLine {
   itemType: EstimateItemType;
   description: string;
   vatTreatment: VatTreatment;
+  /** The tax code the line was priced by, or null for a line priced by treatment. */
+  taxCodeId: string | null;
   amounts: LineAmounts;
   /** Invoices only: the income account chosen, or null for the default. */
   accountId?: string | null;
@@ -103,18 +107,27 @@ export function priceDocument(
   items: TypedLine[],
   defaultVatRate: string,
   bill: { discountType?: DiscountType; discount?: string },
+  /** The tax codes named on the lines (lib/accounting/tax-codes.ts resolveTaxCodes). */
+  taxCodes: Map<string, { rate: string; treatment: VatTreatment }> = new Map(),
 ): { lines: PricedLine[]; totals: DocumentTotals } {
   const lines = items.map((item, index) => {
     try {
-      // A treatment decides the rate; a bare rate (an import) decides the treatment.
-      const vatTreatment = item.vatTreatment ?? treatmentFromRate(item.taxRate || defaultVatRate);
-      const taxRate = item.vatTreatment
-        ? rateFor(item.vatTreatment, defaultVatRate)
-        : item.taxRate || defaultVatRate;
+      // A tax code decides both; else a treatment decides the rate; else a
+      // bare rate (an import) decides the treatment.
+      const code = item.taxCodeId ? taxCodes.get(item.taxCodeId) : undefined;
+      if (item.taxCodeId && !code) throw new Error('choose a tax code that is in use.');
+      const vatTreatment =
+        code?.treatment ?? item.vatTreatment ?? treatmentFromRate(item.taxRate || defaultVatRate);
+      const taxRate = code
+        ? code.rate
+        : item.vatTreatment
+          ? rateFor(item.vatTreatment, defaultVatRate)
+          : item.taxRate || defaultVatRate;
       return {
         itemType: item.itemType as EstimateItemType,
         description: item.description,
         vatTreatment,
+        taxCodeId: code ? item.taxCodeId! : null,
         accountId: item.accountId || null,
         amounts: calculateLine({
           quantity: item.quantity,

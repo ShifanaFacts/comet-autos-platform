@@ -26,6 +26,7 @@ import {
   priceDocument,
   totalsData,
 } from '@/lib/billing/document-lines';
+import { resolveTaxCodes } from '@/lib/accounting/tax-codes';
 
 /*
  * Correcting billing after the fact. Three doors, each narrow on purpose:
@@ -174,7 +175,12 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
     });
     if (blocker) throw new DomainError(blocker);
 
-    const { lines, totals } = priceDocument(input.items, defaultVatRate, input);
+    const { lines, totals } = priceDocument(
+      input.items,
+      defaultVatRate,
+      input,
+      await resolveTaxCodes(tx, user.organizationId, input.items),
+    );
     await assertIncomeAccounts(tx, user.organizationId, lines);
     const dueDate = readDueDate(input.dueDate, invoice.issueDate);
 
@@ -190,6 +196,7 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
           description: line.description,
           accountId: line.accountId ?? null,
           vatTreatment: line.vatTreatment,
+          taxCodeId: line.taxCodeId ?? null,
           ...lineData(line.amounts),
         },
       });

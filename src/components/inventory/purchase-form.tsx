@@ -1,5 +1,6 @@
 'use client';
 
+import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import { useMemo, useRef, useState } from 'react';
 import { PackageCheck, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -34,6 +35,25 @@ interface Line {
   quantity: string;
   unitCost: string;
   taxRate: string;
+  /** The purchase tax code chosen; blank where the rate was typed. */
+  taxCodeId: string;
+}
+
+/**
+ * The code a line starts on: its own; else the standard code at its rate
+ * (zero-rated when it carries none); else the default.
+ */
+function codeFor(codes: TaxCodeOption[], taxCodeId: string | undefined, taxRate: string) {
+  if (!codes.length) return null;
+  if (taxCodeId) return codes.find((code) => code.id === taxCodeId) ?? null;
+  const rate = Number(taxRate || 0);
+  return (
+    (rate > 0
+      ? codes.find((code) => code.treatment === 'STANDARD' && Number(code.rate) === rate)
+      : codes.find((code) => code.treatment === 'ZERO_RATED')) ??
+    codes.find((code) => code.isDefault) ??
+    codes[0]
+  );
 }
 
 export interface PurchaseFormInitial {
@@ -41,7 +61,13 @@ export interface PurchaseFormInitial {
   supplierInvoiceNumber: string;
   supplierInvoiceDate: string;
   notes: string;
-  items: { partId: string; quantity: string; unitCost: string; taxRate: string }[];
+  items: {
+    partId: string;
+    quantity: string;
+    unitCost: string;
+    taxRate: string;
+    taxCodeId?: string | null;
+  }[];
 }
 
 /** Preview only — the server recalculates every amount when the purchase is saved. */
@@ -67,6 +93,7 @@ export function PurchaseForm({
   isNew,
   canReceive,
   cancelHref,
+  taxCodes = [],
 }: {
   action: (prev: ActionResult, formData: FormData) => Promise<ActionResult>;
   parts: PurchasePart[];
@@ -77,12 +104,22 @@ export function PurchaseForm({
   isNew: boolean;
   canReceive: boolean;
   cancelHref: string;
+  /** The purchase tax codes. Given, each line picks a code instead of typing a rate. */
+  taxCodes?: TaxCodeOption[];
 }) {
   const nextKey = useRef(initial?.items.length ?? 0);
   const intentRef = useRef<HTMLInputElement>(null);
   const [supplierId, setSupplierId] = useState(initial?.supplierId ?? '');
   const [lines, setLines] = useState<Line[]>(() =>
-    (initial?.items ?? []).map((item, index) => ({ key: index, ...item })),
+    (initial?.items ?? []).map((item, index) => {
+      const code = codeFor(taxCodes, item.taxCodeId ?? undefined, item.taxRate);
+      return {
+        key: index,
+        ...item,
+        taxRate: code ? code.rate : item.taxRate,
+        taxCodeId: code?.id ?? '',
+      };
+    }),
   );
   const [search, setSearch] = useState('');
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(action, { ok: false });
@@ -111,7 +148,12 @@ export function PurchaseForm({
         partId: part.id,
         quantity: '1',
         unitCost: part.cost,
-        taxRate: part.taxRate || defaultVat,
+        ...(() => {
+          const code = codeFor(taxCodes, undefined, part.taxRate || defaultVat);
+          return code
+            ? { taxRate: code.rate, taxCodeId: code.id }
+            : { taxRate: part.taxRate || defaultVat, taxCodeId: '' };
+        })(),
       },
     ]);
     setSearch('');
@@ -125,11 +167,12 @@ export function PurchaseForm({
   const totals =
     amounts.every(Boolean) && amounts.length > 0 ? calculateTotals(amounts as LineAmounts[]) : null;
   const payload = JSON.stringify(
-    lines.map(({ partId, quantity, unitCost, taxRate }) => ({
+    lines.map(({ partId, quantity, unitCost, taxRate, taxCodeId }) => ({
       partId,
       quantity,
       unitCost,
       taxRate,
+      taxCodeId,
     })),
   );
   const lineError = (index: number) =>
@@ -266,15 +309,38 @@ export function PurchaseForm({
                         className="h-11 text-right text-base tabular-nums md:text-sm"
                       />
                     </label>
-                    <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                      VAT %
-                      <Input
-                        value={line.taxRate}
-                        inputMode="decimal"
-                        onChange={(event) => update(line.key, { taxRate: event.target.value })}
-                        className="h-11 text-right text-base tabular-nums md:text-sm"
-                      />
-                    </label>
+                    {taxCodes.length ? (
+                      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                        Tax code
+                        <NativeSelect
+                          value={line.taxCodeId}
+                          onChange={(event) => {
+                            const code = taxCodes.find((c) => c.id === event.target.value);
+                            if (code) update(line.key, { taxCodeId: code.id, taxRate: code.rate });
+                          }}
+                          className="h-11 text-base md:text-sm"
+                        >
+                          {taxCodes.map((code) => (
+                            <option key={code.id} value={code.id}>
+                              {code.code}
+                              {code.treatment === 'STANDARD'
+                                ? ` ${code.rate.replace(/\.?0+$/, '')}%`
+                                : ''}
+                            </option>
+                          ))}
+                        </NativeSelect>
+                      </label>
+                    ) : (
+                      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                        VAT %
+                        <Input
+                          value={line.taxRate}
+                          inputMode="decimal"
+                          onChange={(event) => update(line.key, { taxRate: event.target.value })}
+                          className="h-11 text-right text-base tabular-nums md:text-sm"
+                        />
+                      </label>
+                    )}
                     <Button
                       type="button"
                       variant="ghost"

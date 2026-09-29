@@ -49,11 +49,15 @@ export function CreateInvoiceButton({ jobCardId, total }: { jobCardId: string; t
 export function DeliveryForm({
   jobCardId,
   customerName,
+  balanceDue = '0.00',
 }: {
   jobCardId: string;
   customerName: string;
+  /** What is still owed on the invoice; above nil, the handover is on credit. */
+  balanceDue?: string;
 }) {
   const [signed, setSigned] = useState(false);
+  const owed = Number(balanceDue) > 0;
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
     async (prev, formData) => {
       const result = await deliverVehicleAction(jobCardId, prev, formData);
@@ -64,6 +68,19 @@ export function DeliveryForm({
   );
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-6">
+      {owed ? (
+        <label className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm">
+          <input type="checkbox" name="onCredit" value="true" required className="mt-0.5 size-4" />
+          <span>
+            <span className="font-medium">
+              Deliver on credit — {formatMoney(balanceDue)} still owed
+            </span>
+            <span className="block text-muted-foreground">
+              The balance stays on the invoice; record the payment there when the customer pays.
+            </span>
+          </span>
+        </label>
+      ) : null}
       <TextareaField
         label="Final notes"
         name="notes"

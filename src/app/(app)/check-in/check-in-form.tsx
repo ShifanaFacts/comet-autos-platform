@@ -15,6 +15,7 @@ import type { CheckInResult } from '@/lib/workshop/check-in';
 import { formatDateTime, formatKm } from '@/lib/format';
 import { PLATE_EMIRATES } from '@/lib/vehicles/constants';
 import { checkInAction } from './actions';
+import { OtherVehicles } from './other-vehicles';
 
 export interface AppointmentContext {
   id: string;
@@ -66,6 +67,26 @@ export function CheckInForm({
             Photograph the vehicle now, quote the work, or invoice it when it&apos;s done.
           </p>
         </div>
+        {state.data.others?.length ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-medium">
+              {`And ${state.data.others.length} more for the same customer:`}
+            </p>
+            <ul className="flex flex-wrap justify-center gap-2">
+              {state.data.others.map((other) => (
+                <li key={other.jobCardId}>
+                  <Link
+                    href={`/job-cards/${other.jobCardId}`}
+                    className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted"
+                  >
+                    <span className="tabular-nums">{other.jobNumber}</span>
+                    <span className="text-muted-foreground">{other.plateNumber}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-center">
           <Button
             size="lg"
@@ -253,6 +274,18 @@ export function CheckInForm({
             lastMileage={vehicle.lastMileage}
             defaultComplaint={appointment?.notes ?? ''}
           />
+          <Step number={4} title="Other vehicles of this customer">
+            <OtherVehicles
+              key={vehicle.vehicleId}
+              customerId={vehicle.customer.id}
+              customerName={vehicle.customer.name}
+              firstVehicleId={vehicle.vehicleId}
+              error={
+                errors.alsoVehicles ??
+                Object.entries(errors).find(([key]) => key.startsWith('alsoVehicles.'))?.[1]
+              }
+            />
+          </Step>
           <FormError message={errors.vehicleId || errors.appointmentId ? undefined : state.error} />
           {errors.vehicleId || errors.appointmentId ? <FormError message={errors.vehicleId ?? errors.appointmentId} /> : null}
           <div className="border-t border-border pt-6">

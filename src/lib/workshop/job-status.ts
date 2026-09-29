@@ -40,6 +40,14 @@ export type { WorkflowStage, WorkflowStatus };
  *
  *   ARRIVED → ESTIMATE  (quote a job card without inspecting or diagnosing)
  *   any open stage → INVOICED  (bill a job card without passing through QC)
+ *   any open stage → READY  (the work is done — "Mark completed", see
+ *                            markJobCompleted; the quality check is the
+ *                            detailed way to get there)
+ *
+ * Handover does not wait for payment: an invoiced job can be delivered with
+ * a balance still owed (on credit), and is paid afterwards — the invoice
+ * keeps the balance; the job card is closed. A job is never delivered
+ * without an invoice.
  *
  * The short path skips stages; it never invents them. A job that jumps from
  * ARRIVED to INVOICED has no inspection, diagnosis or quality check, and its
@@ -51,17 +59,26 @@ export type { WorkflowStage, WorkflowStatus };
  * carrying one is treated as its workflow equivalent.
  */
 const ALLOWED_TRANSITIONS: Record<WorkflowStatus, WorkflowStatus[]> = {
-  ARRIVED: ['INSPECTION', 'ESTIMATE', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
-  INSPECTION: ['DIAGNOSIS', 'ESTIMATE', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
-  DIAGNOSIS: ['ESTIMATE', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
-  ESTIMATE: ['WAITING_APPROVAL', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
-  WAITING_APPROVAL: ['APPROVED', 'REJECTED', 'ESTIMATE', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
+  ARRIVED: ['INSPECTION', 'ESTIMATE', 'INVOICED', 'READY', 'ON_HOLD', 'CANCELLED'],
+  INSPECTION: ['DIAGNOSIS', 'ESTIMATE', 'INVOICED', 'READY', 'ON_HOLD', 'CANCELLED'],
+  DIAGNOSIS: ['ESTIMATE', 'INVOICED', 'READY', 'ON_HOLD', 'CANCELLED'],
+  ESTIMATE: ['WAITING_APPROVAL', 'INVOICED', 'READY', 'ON_HOLD', 'CANCELLED'],
+  WAITING_APPROVAL: [
+    'APPROVED',
+    'REJECTED',
+    'ESTIMATE',
+    'INVOICED',
+    'READY',
+    'ON_HOLD',
+    'CANCELLED',
+  ],
   REJECTED: ['ESTIMATE', 'ON_HOLD', 'CANCELLED'],
-  APPROVED: ['REPAIR', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
-  REPAIR: ['QUALITY_CHECK', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
+  APPROVED: ['REPAIR', 'INVOICED', 'READY', 'ON_HOLD', 'CANCELLED'],
+  REPAIR: ['QUALITY_CHECK', 'INVOICED', 'READY', 'ON_HOLD', 'CANCELLED'],
   QUALITY_CHECK: ['READY', 'REPAIR', 'INVOICED', 'ON_HOLD', 'CANCELLED'],
   READY: ['INVOICED', 'ON_HOLD'],
-  INVOICED: ['PAID'],
+  // Delivered on credit: the balance stays on the invoice.
+  INVOICED: ['PAID', 'DELIVERED'],
   PAID: ['DELIVERED'],
   DELIVERED: [],
   ON_HOLD: [
@@ -94,7 +111,7 @@ const WORKFLOW_OWNED: Partial<Record<WorkflowStatus, string>> = {
   REJECTED: "Record the customer's rejection to move this job forward.",
   REPAIR: 'Start the repair from the approved work.',
   QUALITY_CHECK: 'Record the quality check to move this job forward.',
-  READY: 'A job is only ready once it passes the quality check.',
+  READY: 'Mark the job completed to move it forward.',
   INVOICED: 'Create the invoice to move this job forward.',
   PAID: 'A job is paid once its invoice is fully settled.',
   DELIVERED: 'Record the delivery to hand the vehicle back.',
@@ -262,6 +279,49 @@ export async function transitionJobStatus(
     toStatus,
     actor: { userId: user.id },
     source: 'manual',
+  });
+}
+
+/** Statuses a job can be marked completed from: the work stages. */
+export function canMarkCompleted(status: JobCardStatus): boolean {
+  const from = normalizeStatus(status);
+  return from !== 'QUALITY_CHECK' && canTransition(from, 'READY');
+}
+
+/**
+ * The work is done: the job becomes Completed, waiting to be invoiced and
+ * collected. For a workshop that doesn't record a quality check — or a job
+ * finished without one — the history records who marked it and that it was
+ * marked, not passed.
+ */
+export async function markJobCompleted(
+  tx: Prisma.TransactionClient,
+  user: AuthenticatedUser,
+  jobCardId: string,
+): Promise<void> {
+  const jobCard = await tx.jobCard.findFirst({
+    where: { id: jobCardId, organizationId: user.organizationId },
+    select: { branchId: true, status: true },
+  });
+  if (!jobCard) throw new NotFoundError('job card');
+  requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
+  const from = normalizeStatus(jobCard.status);
+  if (from === 'READY') throw new DomainError('This job is already completed.');
+  if (from === 'QUALITY_CHECK') {
+    throw new DomainError('Record the quality check to complete this job.');
+  }
+  if (!canTransition(from, 'READY')) {
+    throw new InvalidJobStatusTransitionError(
+      `A job that is "${JOB_STATUS_LABEL[from]}" can't be marked completed.`,
+    );
+  }
+  await applyJobStatusChange(tx, {
+    organizationId: user.organizationId,
+    jobCardId,
+    toStatus: 'READY',
+    actor: { userId: user.id },
+    source: 'workflow',
+    metadata: { markedCompleted: true },
   });
 }
 

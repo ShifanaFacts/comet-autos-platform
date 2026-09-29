@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import {
   ArrowRight,
   CheckCircle2,
@@ -28,6 +29,8 @@ import { Grid, Panel, Section, Stack } from '@/components/layout/primitives';
 import { JobHero } from '@/components/workshop/job-hero';
 import { JobQuickActions } from '@/components/workshop/job-quick-actions';
 import { CancelJobButton } from '@/components/workshop/cancel-job-button';
+import { CompleteJobButton } from '@/components/workshop/complete-job-button';
+import { canMarkCompleted } from '@/lib/workshop/job-status';
 import { CreateEstimateButton } from '@/components/workshop/quotation-controls';
 import { EstimateStatusPill } from '@/components/workshop/status-pills';
 import { StatusPill } from '@/components/shared/status-pill';
@@ -79,11 +82,12 @@ export async function MinimalJobCard({
   const canDeliver = hasPermission(user, 'job_card.close', branch);
   const isFinished = status === 'DELIVERED' || status === 'CANCELLED';
 
-  const [invoice, documents, photos, moneyAccounts] = await Promise.all([
+  const [invoice, documents, photos, moneyAccounts, modes] = await Promise.all([
     canSeeInvoice ? getJobInvoice(user, jobCard.id) : Promise.resolve(null),
     getJobDocuments(user, jobCard.id),
     listJobPhotos(user, jobCard.id),
     canPay ? getAccountChoices(user).then((accounts) => accounts.money) : Promise.resolve([]),
+    canPay ? getPaymentModeOptions(user.organizationId, 'receipts') : Promise.resolve([]),
   ]);
   const hasDocuments = documents.quotations.length > 0 || documents.invoice !== null;
   const canCancel =
@@ -116,26 +120,64 @@ export async function MinimalJobCard({
       title: 'Done — vehicle handed back',
       description: `Delivered ${jobCard.deliveredAt ? formatDateTime(jobCard.deliveredAt) : ''}${
         jobCard.deliveredBy ? ` by ${jobCard.deliveredBy.fullName}` : ''
-      }.`,
-      body: jobCard.deliveryNotes ? (
-        <p className="text-sm whitespace-pre-wrap">{jobCard.deliveryNotes}</p>
-      ) : undefined,
+      }.${
+        invoice && invoice.paymentState !== 'PAID'
+          ? ` Delivered on credit: ${formatMoney(invoice.balanceDue)} still owed on ${invoice.invoiceNumber}.`
+          : ''
+      }`,
+      body:
+        jobCard.deliveryNotes || (invoice && invoice.paymentState !== 'PAID' && canPay) ? (
+          <div className="flex flex-col gap-6">
+            {jobCard.deliveryNotes ? (
+              <p className="text-sm whitespace-pre-wrap">{jobCard.deliveryNotes}</p>
+            ) : null}
+            {invoice && invoice.paymentState !== 'PAID' && canPay ? (
+              <InvoicePaymentForm
+                moneyAccounts={moneyAccounts}
+                key={invoice.balanceDue}
+                invoiceId={invoice.id}
+                balance={invoice.balanceDue}
+                now={toLocalDateTimeInput(new Date())}
+              />
+            ) : null}
+          </div>
+        ) : undefined,
     };
   } else if (invoice && invoice.paymentState !== 'PAID') {
     step = {
       tone: 'action',
       icon: Wallet,
-      title: 'Take the payment',
-      description: `${formatMoney(invoice.balanceDue)} to pay on ${invoice.invoiceNumber} (total ${formatMoney(invoice.totalAmount)}).`,
-      body: canPay ? (
-        <InvoicePaymentForm
-          moneyAccounts={moneyAccounts}
-          key={invoice.balanceDue}
-          invoiceId={invoice.id}
-          balance={invoice.balanceDue}
-          now={toLocalDateTimeInput(new Date())}
-        />
-      ) : undefined,
+      title: 'Take the payment — or hand over on credit',
+      description: `${formatMoney(invoice.balanceDue)} to pay on ${invoice.invoiceNumber} (total ${formatMoney(invoice.totalAmount)}). The vehicle can be delivered now and paid for later.`,
+      body: (
+        <div className="flex flex-col gap-6">
+          {canPay ? (
+            <InvoicePaymentForm
+              moneyAccounts={moneyAccounts}
+              modes={modes}
+              key={invoice.balanceDue}
+              invoiceId={invoice.id}
+              balance={invoice.balanceDue}
+              now={toLocalDateTimeInput(new Date())}
+            />
+          ) : null}
+          {canDeliver ? (
+            <details className="group rounded-lg border border-border bg-card px-4 py-3">
+              <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                <KeyRound className="size-4" />
+                Hand the vehicle over now, paid later
+              </summary>
+              <div className="pt-4">
+                <DeliveryForm
+                  jobCardId={jobCard.id}
+                  customerName={jobCard.customer.name}
+                  balanceDue={invoice.balanceDue}
+                />
+              </div>
+            </details>
+          ) : null}
+        </div>
+      ),
     };
   } else if (invoice) {
     step = {
@@ -170,14 +212,17 @@ export async function MinimalJobCard({
     };
   } else {
     const waiting = status === 'WAITING_APPROVAL';
+    const completed = status === 'READY';
     step = {
       tone: waiting ? 'waiting' : 'action',
       icon: waiting ? Clock : Receipt,
-      title: waiting
-        ? 'Waiting for the customer'
-        : approved
-          ? 'Quotation approved — do the work, then invoice'
-          : 'Do the work, then invoice',
+      title: completed
+        ? 'Work completed — create the invoice'
+        : waiting
+          ? 'Waiting for the customer'
+          : approved
+            ? 'Quotation approved — do the work, then invoice'
+            : 'Do the work, then invoice',
       description: waiting
         ? 'The quotation has been sent. If the customer agreed in person, go ahead and invoice.'
         : 'When the job is done, create the invoice with the labour and parts used. A quotation first is optional.',
@@ -198,6 +243,9 @@ export async function MinimalJobCard({
             <div className="sm:w-48">
               <CreateEstimateButton jobCardId={jobCard.id} compact />
             </div>
+          ) : null}
+          {canEdit && canMarkCompleted(jobCard.status) ? (
+            <CompleteJobButton jobCardId={jobCard.id} />
           ) : null}
         </div>
       ),

@@ -68,6 +68,7 @@ export default async function ExpensesPage({
     amount: expense.amount.toString(),
     // "5.00" → "5"; a whole number like "10" is left alone.
     taxRate: expense.taxRate ? trimDecimal(expense.taxRate.toString()) : '',
+    taxCodeId: expense.taxCodeId ?? '',
     expenseDate: expense.expenseDate.toISOString().slice(0, 10),
     vendorName: expense.vendorName ?? '',
     paymentMethod: expense.paymentMethod ?? '',
@@ -122,6 +123,8 @@ export default async function ExpensesPage({
             <ExpenseForm
               categories={formOptions.categories}
               defaultVatRate={formOptions.defaultVatRate}
+              taxCodes={formOptions.taxCodes}
+              modes={formOptions.modes}
               moneyAccounts={formOptions.moneyAccounts}
             />
           </InlineForm>
@@ -183,6 +186,8 @@ export default async function ExpensesPage({
                             expense={draft(expense)}
                             categories={formOptions.categories}
                             defaultVatRate={formOptions.defaultVatRate}
+                            taxCodes={formOptions.taxCodes}
+                            modes={formOptions.modes}
                             moneyAccounts={formOptions.moneyAccounts}
                           />
                         ) : null}
@@ -258,6 +263,8 @@ export default async function ExpensesPage({
                                     expense={draft(expense)}
                                     categories={formOptions.categories}
                                     defaultVatRate={formOptions.defaultVatRate}
+                                    taxCodes={formOptions.taxCodes}
+                                    modes={formOptions.modes}
                                     moneyAccounts={formOptions.moneyAccounts}
                                   />
                                 ) : null}

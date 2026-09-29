@@ -27,6 +27,7 @@ import { takePayment } from '@/lib/billing/invoice';
 import { syncPosting } from '@/lib/accounting/journal';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 import { CLOSED_JOB_STATUSES } from '@/lib/workshop/stages';
+import { resolveTaxCodes } from '@/lib/accounting/tax-codes';
 
 /*
  * Invoicing without the full repair workflow.
@@ -129,6 +130,7 @@ async function linesFromEstimate(
       // Quotations don't choose accounts: the default for each line's type.
       accountId: null,
       vatTreatment: item.vatTreatment,
+      taxCodeId: item.taxCodeId,
       amounts: storedLineAmounts(item),
     })),
     totals: storedTotals(estimate),
@@ -268,7 +270,14 @@ export async function createDirectInvoice(
       }
     }
 
-    const { lines, totals } = source ?? priceDocument(input.items ?? [], defaultVatRate, input);
+    const { lines, totals } =
+      source ??
+      priceDocument(
+        input.items ?? [],
+        defaultVatRate,
+        input,
+        await resolveTaxCodes(tx, user.organizationId, input.items ?? []),
+      );
     await assertIncomeAccounts(tx, user.organizationId, lines);
 
     const organization = await tx.organization.findUniqueOrThrow({
@@ -320,6 +329,7 @@ export async function createDirectInvoice(
           description: line.description,
           accountId: line.accountId ?? null,
           vatTreatment: line.vatTreatment,
+          taxCodeId: line.taxCodeId ?? null,
           ...lineData(line.amounts),
         },
       });

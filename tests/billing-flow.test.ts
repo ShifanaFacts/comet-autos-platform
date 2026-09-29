@@ -219,8 +219,9 @@ describe('invoice → payment → delivery', () => {
     assert.equal(invoice.balanceDue, '1244.25');
   });
 
-  test('10. an unpaid job cannot be delivered', async () => {
-    await expectDomainError(deliverVehicle(a.owner, job.jobCardId, {}), /balance due \(1244\.25\)/);
+  test('10. an unpaid job is only delivered on credit, when confirmed', async () => {
+    // Handing over with a balance owed has to be confirmed as on credit.
+    await expectDomainError(deliverVehicle(a.owner, job.jobCardId, {}), /1244\.25 is still owed/);
     await expectDomainError(prisma.$transaction((tx) => transitionJobStatus(tx, a.owner, job.jobCardId, 'PAID')), /fully settled/);
   });
 
@@ -240,7 +241,7 @@ describe('invoice → payment → delivery', () => {
     assert.equal(invoice.paidAmount, '500.00');
     assert.equal(invoice.balanceDue, '744.25');
     assert.equal(await jobStatus(job.jobCardId), 'INVOICED', 'a part-paid job is not PAID');
-    await expectDomainError(deliverVehicle(a.owner, job.jobCardId, {}), /balance due \(744\.25\)/);
+    await expectDomainError(deliverVehicle(a.owner, job.jobCardId, {}), /744\.25 is still owed/);
   });
 
   test('9. overpayment and invalid payments are rejected', async () => {
@@ -288,7 +289,7 @@ describe('invoice → payment → delivery', () => {
     assert.equal(delivered.deliveryNotes, 'Keys and old parts handed over');
     const audit = await prisma.auditLog.findFirstOrThrow({ where: { entityId: job.jobCardId, action: 'job_card.delivered' } });
     assert.equal(audit.actorUserId, a.owner.id);
-    await expectDomainError(deliverVehicle(a.owner, job.jobCardId, {}), /Only a fully paid job/);
+    await expectDomainError(deliverVehicle(a.owner, job.jobCardId, {}), /already been delivered/);
     const actions = (await prisma.auditLog.findMany({ where: { organizationId: a.organizationId, action: { in: ['invoice.issued', 'payment.recorded', 'job_card.delivered'] } } })).map((l) => l.action);
     assert.deepEqual(actions.sort(), ['invoice.issued', 'job_card.delivered', 'payment.recorded', 'payment.recorded']);
   });
@@ -317,7 +318,7 @@ describe('invoice → payment → delivery', () => {
   test('14b. invoicing and payment respect the job state', async () => {
     // otherJob (org A) is only APPROVED: no invoice, no payment, no delivery.
     await expectDomainError(recordPayment(a.owner, otherJob.jobCardId, { amount: '1', method: 'CASH', receivedAt: now() }), /Create the invoice/);
-    await expectDomainError(deliverVehicle(a.owner, otherJob.jobCardId, {}), /not been invoiced/);
+    await expectDomainError(deliverVehicle(a.owner, otherJob.jobCardId, {}), /Create the invoice before/);
     // A delivered job can't be invoiced again.
     await expectDomainError(createInvoice(a.owner, job.jobCardId), /ready/);
   });

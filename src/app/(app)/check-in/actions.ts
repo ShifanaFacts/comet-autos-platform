@@ -6,7 +6,11 @@ import { runAction } from '@/lib/action';
 import type { ActionResult } from '@/lib/errors';
 import { formDataToObject } from '@/lib/form-data';
 import { prisma } from '@/lib/prisma';
-import { checkInVehicle, type CheckInResult } from '@/lib/workshop/check-in';
+import {
+  checkInVehicle,
+  type AdditionalVehicle,
+  type CheckInResult,
+} from '@/lib/workshop/check-in';
 
 export async function checkInAction(
   _prev: ActionResult<CheckInResult>,
@@ -19,6 +23,22 @@ export async function checkInAction(
     mileage: input.mileage,
     appointmentId: input.appointmentId,
   };
+  // The customer's other vehicles arrive as one JSON field: [{ vehicleId, complaint, mileage }].
+  let alsoVehicles: AdditionalVehicle[] = [];
+  try {
+    const parsed: unknown = input.alsoVehicles ? JSON.parse(input.alsoVehicles) : [];
+    alsoVehicles = Array.isArray(parsed)
+      ? parsed
+          .filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null)
+          .map((row) => ({
+            vehicleId: String(row.vehicleId ?? ''),
+            complaint: typeof row.complaint === 'string' ? row.complaint : undefined,
+            mileage: typeof row.mileage === 'string' ? row.mileage : undefined,
+          }))
+      : [];
+  } catch {
+    return { ok: false, error: 'The other vehicles could not be read. Refresh and try again.' };
+  }
 
   const result = await runAction(() =>
     input.mode === 'new'
@@ -40,6 +60,7 @@ export async function checkInAction(
           mode: 'existing',
           vehicleId: input.vehicleId ?? '',
           visit,
+          alsoVehicles,
           requestKey: input.requestKey,
         }),
   );

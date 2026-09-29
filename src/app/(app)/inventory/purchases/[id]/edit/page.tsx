@@ -41,6 +41,7 @@ export default async function EditPurchasePage({ params }: { params: Promise<{ i
           parts={options.parts}
           suppliers={options.suppliers}
           defaultVat={options.defaultVat}
+          taxCodes={options.taxCodes}
           today={localDateString()}
           initial={{
             supplierId: purchase.supplierId,
@@ -54,6 +55,7 @@ export default async function EditPurchasePage({ params }: { params: Promise<{ i
               quantity: formatMilli(signedToMilli(item.quantityOrdered)),
               unitCost: item.unitCost.toFixed(2),
               taxRate: item.taxRate?.toString() ?? options.defaultVat,
+              taxCodeId: item.taxCodeId,
             })),
           }}
           isNew={false}

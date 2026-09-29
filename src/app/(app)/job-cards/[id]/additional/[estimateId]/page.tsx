@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { getTaxCodeOptions } from '@/lib/accounting/tax-codes';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import type { ApprovalMethod } from '@/generated/prisma/enums';
@@ -98,6 +99,7 @@ export default async function AdditionalWorkPage({
                 customerName={customer.name}
                 recommendation={null}
                 defaultVatRate={defaultVatRate}
+                taxCodes={await getTaxCodeOptions(user.organizationId, 'sales')}
                 initialValidUntil={
                   estimate.validUntil
                     ? estimate.validUntil.toISOString().slice(0, 10)

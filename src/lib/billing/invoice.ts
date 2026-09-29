@@ -62,6 +62,8 @@ export interface BillableLine {
   source: BillingSource;
   itemType: EstimateItemType;
   vatTreatment: VatTreatment;
+  /** The quotation line's tax code, carried onto the invoice line. */
+  taxCodeId: string | null;
   estimateKind: EstimateKind;
   estimateNumber: string;
   description: string;
@@ -189,6 +191,7 @@ export async function buildBilling(
           source: record.source,
           itemType: line.itemType,
           vatTreatment: line.vatTreatment,
+          taxCodeId: line.taxCodeId,
           estimateKind: line.estimate.kind,
           estimateNumber: line.estimate.estimateNumber,
           description:
@@ -468,6 +471,7 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
           itemType: line.source.labourId ? 'LABOUR' : 'PART',
           description: line.description,
           vatTreatment: line.vatTreatment,
+          taxCodeId: line.taxCodeId,
           ...lineData(line.amounts),
           labourId: line.source.labourId ?? null,
           partUsageId: line.source.partUsageId ?? null,
@@ -779,14 +783,18 @@ export async function recordPayment(user: AuthenticatedUser, jobCardId: string, 
 
 const deliverySchema = z.object({
   notes: z.string().trim().max(2000).optional(),
+  /** "true" to hand over with a balance still owed — delivery on credit. */
+  onCredit: z.string().optional(),
   /** Optional handover signature (PNG data URL from the signature pad) and who signed. */
   signature: z.string().max(2_000_000).optional(),
   signerName: z.string().trim().max(120).optional(),
 });
 
 /**
- * PAID → DELIVERED: hands the vehicle back. Only a fully paid job can be
- * delivered — V1 has no delivery-on-credit rule. Records who and when.
+ * INVOICED or PAID → DELIVERED: hands the vehicle back. A job must be
+ * invoiced first; it need not be paid — with a balance owed, the handover is
+ * on credit, which the staff member confirms, and the balance stays on the
+ * invoice to be paid later. Records who, when, and what was owed.
  */
 export async function deliverVehicle(
   user: AuthenticatedUser,
@@ -808,15 +816,22 @@ export async function deliverVehicle(
         payments: { select: { id: true, amount: true, status: true, reversalOfPaymentId: true } },
       },
     });
-    if (!invoice) throw new DomainError('The job has not been invoiced yet.');
-    const balance = toFils(invoice.totalAmount.toString()) - paidFils(invoice.payments);
-    if (balance > 0 || invoice.status !== 'PAID') {
+    if (!invoice) {
       throw new DomainError(
-        `The vehicle can't be delivered with a balance due (${filsToString(Math.max(balance, 0))}).`,
+        'Create the invoice before handing the vehicle over — it can stay unpaid.',
       );
     }
-    if (normalizeStatus(jobCard.status) !== 'PAID') {
-      throw new DomainError('Only a fully paid job can be delivered.');
+    const status = normalizeStatus(jobCard.status);
+    if (status === 'DELIVERED') throw new DomainError('The vehicle has already been delivered.');
+    if (status !== 'INVOICED' && status !== 'PAID') {
+      throw new DomainError('Only an invoiced job can be delivered.');
+    }
+    const balance = dueFils(invoice, paidFils(invoice.payments));
+    if (balance > 0 && input.onCredit !== 'true') {
+      throw new DomainError(
+        `${filsToString(balance)} is still owed on ${invoice.invoiceNumber}. Tick "deliver on credit" to hand the vehicle over before it is paid.`,
+        'onCredit',
+      );
     }
 
     const deliveredAt = new Date();
@@ -830,7 +845,7 @@ export async function deliverVehicle(
       toStatus: 'DELIVERED',
       actor: { userId: user.id },
       source: 'workflow',
-      metadata: { invoiceId: invoice.id },
+      metadata: { invoiceId: invoice.id, balanceDue: filsToString(balance), onCredit: balance > 0 },
     });
     if (signature) {
       await recordSignature(tx, {
@@ -859,6 +874,8 @@ export async function deliverVehicle(
         deliveredByUserId: user.id,
         notes: emptyToNull(input.notes),
         handoverSigned: Boolean(signature),
+        balanceDue: filsToString(balance),
+        onCredit: balance > 0,
       },
     });
   });
