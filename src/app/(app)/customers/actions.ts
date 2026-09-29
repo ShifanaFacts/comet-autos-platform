@@ -12,6 +12,7 @@ import {
   restoreVehicle,
 } from '@/lib/customers/archive';
 import type { ActionResult } from '@/lib/errors';
+import { mergeCustomers } from '@/lib/customers/merge';
 import { formDataToObject } from '@/lib/form-data';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import {
@@ -176,4 +177,18 @@ export async function restoreVehicleAction(vehicleId: string): Promise<ActionRes
   const result = await runAction(() => restoreVehicle(user, vehicleId));
   if (result.ok) refreshPeople(null, vehicleId);
   return toClientResult(result);
+}
+
+/** Merges this customer into the one kept, then opens the kept customer. */
+export async function mergeCustomerAction(
+  duplicateId: string,
+  input: { targetId: string; reason: string; requestKey: string },
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => mergeCustomers(user, duplicateId, input));
+  const targetId = result.data?.targetId ?? (result.duplicate ? result.duplicateOf : null);
+  if (!result.ok || !targetId) return toClientResult(result);
+  revalidatePath('/customers', 'layout');
+  revalidatePath('/finance', 'layout');
+  redirect(`/customers/${targetId}?merged=1`);
 }
