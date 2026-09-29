@@ -14,7 +14,13 @@ import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getCustomerDetail } from '@/lib/customers/service';
 import { OPEN_JOB_STATUSES } from '@/lib/workshop/check-in';
-import { formatCalendarDate, formatDate, formatDateTime, formatKm, formatMoney } from '@/lib/format';
+import {
+  formatCalendarDate,
+  formatDate,
+  formatDateTime,
+  formatKm,
+  formatMoney,
+} from '@/lib/format';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { EmptyState } from '@/components/shared/empty-state';
 import { JobStatusBadge } from '@/components/shared/job-status-badge';
@@ -33,10 +39,19 @@ import {
   DeleteCustomerButton,
   RestoreCustomerButton,
 } from '@/components/workshop/record-archive-controls';
+import { MergeCustomerButton } from '@/components/workshop/merge-customer';
+import { getMergePreview } from '@/lib/customers/merge';
 
-export default async function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function CustomerDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ merged?: string }>;
+}) {
   const user = await requireUser();
   const { id } = await params;
+  const { merged } = await searchParams;
   let detail;
   try {
     detail = await getCustomerDetail(user, id);
@@ -49,6 +64,8 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
   const canEdit = hasPermission(user, 'customer.edit');
   const canAddVehicle = hasPermission(user, 'vehicle.create');
   const canStatement = hasPermission(user, 'invoice.view');
+  const mergePreview =
+    canEdit && customer.isActive ? await getMergePreview(user, customer.id) : null;
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -90,6 +107,14 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
                   Edit details
                 </LinkButton>
               ) : null}
+              {mergePreview ? (
+                <MergeCustomerButton
+                  customerId={customer.id}
+                  name={customer.name}
+                  phone={customer.phone}
+                  preview={mergePreview}
+                />
+              ) : null}
               {canEdit ? (
                 <DeleteCustomerButton customerId={customer.id} name={customer.name} />
               ) : null}
@@ -103,6 +128,13 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
           )
         }
       />
+
+      {merged ? (
+        <Panel className="border-success/30 bg-success/5 text-sm">
+          Customers merged. The other record&apos;s vehicles, job cards, quotations, invoices and
+          receipts are now on {customer.name}, and the duplicate is archived.
+        </Panel>
+      ) : null}
 
       {!customer.isActive ? (
         <Panel className="border-destructive/30 bg-destructive/5 text-sm">

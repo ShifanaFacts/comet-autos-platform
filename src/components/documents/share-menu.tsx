@@ -19,19 +19,65 @@ import { cn } from '@/lib/utils';
 
 export const WHATSAPP = 'text-[#1fa855]';
 
-/** Prints a same-origin PDF through a hidden frame; falls back to opening it. */
+/**
+ * Whether this browser shows a PDF inside a page. Desktop Chrome, Edge,
+ * Firefox and Safari do; phones and tablets (and an installed app on them)
+ * mostly don't — they download a framed PDF instead of showing it, so there
+ * would be nothing to print.
+ */
+function showsPdfInPage() {
+  if (typeof navigator === 'undefined') return false;
+  // Older browsers don't say; guess from the device.
+  const nav: Navigator & { pdfViewerEnabled?: boolean } = navigator;
+  if (typeof nav.pdfViewerEnabled === 'boolean') return nav.pdfViewerEnabled;
+  return !/Android|iPhone|iPad|iPod|Mobile/i.test(nav.userAgent);
+}
+
+/**
+ * Prints a document PDF.
+ *
+ * On a computer it loads the PDF into a hidden frame on this page and opens
+ * the print dialog for it — the printer list is the computer's own. Where a
+ * PDF can't be shown in a page (a phone, a tablet), it opens the PDF straight
+ * away, within the tap, so no pop-up blocker stops it; print or share it from
+ * there. If the frame can't be printed for any other reason, the PDF opens
+ * in a new tab the same way.
+ */
 export function printPdf(url: string) {
+  if (!showsPdfInPage()) {
+    window.open(url, '_blank', 'noopener');
+    return;
+  }
+  // If the frame can't print, the PDF opens in a tab instead. That happens
+  // after the tap, so a strict pop-up blocker may still ask to allow it once.
+  let fallback: Window | null = null;
   const frame = document.createElement('iframe');
-  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+  frame.title = 'Document to print';
+  frame.style.cssText =
+    'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none;';
   frame.src = url;
   frame.onload = () => {
     try {
-      frame.contentWindow?.focus();
-      frame.contentWindow?.print();
+      const target = frame.contentWindow;
+      if (!target) throw new Error('No frame to print.');
+      // The browser's PDF viewer needs a moment after load before it can print.
+      setTimeout(() => {
+        try {
+          target.focus();
+          target.print();
+        } catch {
+          fallback = window.open(url, '_blank', 'noopener');
+        }
+      }, 250);
     } catch {
-      window.open(url, '_blank', 'noopener');
+      fallback = window.open(url, '_blank', 'noopener');
     }
+    // Long enough for the print dialog to finish with it.
     setTimeout(() => frame.remove(), 60_000);
+  };
+  frame.onerror = () => {
+    if (!fallback) fallback = window.open(url, '_blank', 'noopener');
+    frame.remove();
   };
   document.body.appendChild(frame);
 }
