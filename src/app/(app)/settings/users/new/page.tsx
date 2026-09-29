@@ -20,7 +20,7 @@ export default async function NewUserPage() {
         title="Add a user"
         description="Give someone a way to sign in, and decide what they can do."
       />
-      <Panel className="max-w-3xl sm:p-8">
+      <Panel className="sm:p-8">
         <UserForm
           mode="create"
           options={options}

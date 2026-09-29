@@ -21,7 +21,11 @@ export default async function CheckInPage({
   if (params.appointment && UUID.test(params.appointment)) {
     const found = await getOpenAppointment(user, params.appointment);
     if (found?.vehicleId) {
-      appointment = { id: found.id, scheduledAt: found.scheduledAt.toISOString(), notes: found.notes };
+      appointment = {
+        id: found.id,
+        scheduledAt: found.scheduledAt.toISOString(),
+        notes: found.notes,
+      };
       vehicleId = found.vehicleId;
     }
   }
@@ -47,7 +51,7 @@ export default async function CheckInPage({
           </LinkButton>
         }
       />
-      <Panel className="w-full max-w-3xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <CheckInForm initialVehicle={vehicle ?? null} initialAppointment={appointment} />
       </Panel>
     </Stack>

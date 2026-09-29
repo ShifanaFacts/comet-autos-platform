@@ -4,6 +4,7 @@ import type { WorkflowStatus } from '@/lib/workshop/stages';
 import type { JobWorkspace } from '@/lib/workshop/workspace';
 import type { BillableLine, BillingNote, JobInvoice } from '@/lib/billing/invoice';
 import type { DocumentTotals } from '@/lib/money';
+import type { AccountChoice } from '@/lib/accounting/reports';
 import { toFils } from '@/lib/money';
 import { billDiscountTotals } from '@/components/workshop/estimate-lines';
 import { StagePhotosPanel } from '@/components/media/stage-photos-panel';
@@ -172,6 +173,7 @@ export function BillingSections({
   canInvoice,
   canPay,
   canDeliver,
+  moneyAccounts = [],
 }: {
   workspace: JobWorkspace;
   status: WorkflowStatus;
@@ -184,10 +186,20 @@ export function BillingSections({
   canInvoice: boolean;
   canPay: boolean;
   canDeliver: boolean;
+  /** Cash, bank and card accounts a payment can go into. */
+  moneyAccounts?: AccountChoice[];
 }) {
   const { jobCard } = workspace;
   const customer = jobCard.customer;
   const state = invoice ? PAYMENT_STATE[invoice.paymentState] : null;
+  // A reversal cancels a payment without editing it. The row that cancels it
+  // is not a payment; the one it cancelled is shown struck through.
+  const reversalOf = new Map(
+    (invoice?.payments ?? [])
+      .filter((payment) => payment.reversalOfPaymentId)
+      .map((payment) => [payment.reversalOfPaymentId!, payment]),
+  );
+  const received = (invoice?.payments ?? []).filter((payment) => !payment.reversalOfPaymentId);
 
   return (
     <Stack gap="2xl">
@@ -312,9 +324,9 @@ export function BillingSections({
             }
           />
           <Panel padding="none" className="overflow-hidden">
-            {invoice.payments.length > 0 ? (
+            {received.length > 0 ? (
               <ul className="divide-y divide-border">
-                {invoice.payments.map((payment) => (
+                {received.map((payment) => (
                   <li
                     key={payment.id}
                     className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm sm:px-6"
@@ -335,9 +347,26 @@ export function BillingSections({
                         {payment.notes ? ` · ${payment.notes}` : ''}
                       </span>
                     </span>
-                    <span className="font-semibold tabular-nums">
+                    <span
+                      className={cn(
+                        'tabular-nums',
+                        reversalOf.has(payment.id)
+                          ? 'text-muted-foreground line-through'
+                          : 'font-semibold',
+                      )}
+                    >
                       {formatMoney(payment.amount)}
                     </span>
+                    {reversalOf.has(payment.id) ? (
+                      <span className="w-full text-xs text-muted-foreground">
+                        <StatusPill tone="danger">Reversed</StatusPill>{' '}
+                        {formatDateTime(reversalOf.get(payment.id)!.receivedAt)}
+                        {reversalOf.get(payment.id)!.notes
+                          ? ` — ${reversalOf.get(payment.id)!.notes}`
+                          : ''}{' '}
+                        · not counted
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -347,6 +376,7 @@ export function BillingSections({
             {invoice.paymentState !== 'PAID' && canPay ? (
               <div className="border-t border-border bg-muted/20 px-4 py-6 sm:px-6">
                 <InvoicePaymentForm
+                  moneyAccounts={moneyAccounts}
                   key={invoice.balanceDue}
                   invoiceId={invoice.id}
                   balance={invoice.balanceDue}

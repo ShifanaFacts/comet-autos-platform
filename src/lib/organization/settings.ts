@@ -57,6 +57,13 @@ const settingsSchema = z.object({
     .string({ error: 'Enter the VAT rate.' })
     .trim()
     .regex(/^\d{1,3}(\.\d{1,2})?$/, 'Enter a rate like 5 or 5.00.'),
+  /** The emirate its supplies are made in, for Box 1 of the VAT return. */
+  emirate: z
+    .enum(
+      ['ABU_DHABI', 'DUBAI', 'SHARJAH', 'AJMAN', 'UMM_AL_QUWAIN', 'RAS_AL_KHAIMAH', 'FUJAIRAH'],
+      { error: 'Choose the emirate.' },
+    )
+    .optional(),
   requestKey: z.string().optional(),
 });
 
@@ -75,6 +82,7 @@ export async function getOrganizationSettings(user: AuthenticatedUser) {
       taxNumber: true,
       isVatRegistered: true,
       vatRate: true,
+      emirate: true,
       baseCurrency: true,
       detailedJobCards: true,
       hiddenMenus: true,
@@ -191,6 +199,7 @@ export async function updateOrganizationSettings(user: AuthenticatedUser, rawInp
     isVatRegistered,
     // Kept to two decimals so it reads the same everywhere it is shown.
     vatRate: rate.toFixed(2),
+    ...(input.emirate ? { emirate: input.emirate } : {}),
   };
 
   const before = await prisma.organization.findUnique({
@@ -204,6 +213,7 @@ export async function updateOrganizationSettings(user: AuthenticatedUser, rawInp
       taxNumber: true,
       isVatRegistered: true,
       vatRate: true,
+      emirate: true,
     },
   });
   if (!before) throw new NotFoundError('workshop');

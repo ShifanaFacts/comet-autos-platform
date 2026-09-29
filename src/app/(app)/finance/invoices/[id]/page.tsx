@@ -1,10 +1,21 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowRight, Ban, Car, ClipboardList, Info, Pencil, User } from 'lucide-react';
+import {
+  ArrowRight,
+  Ban,
+  Car,
+  ClipboardList,
+  FileMinus,
+  Info,
+  Pencil,
+  User,
+} from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getInvoiceDetail } from '@/lib/billing/invoice';
 import { invoiceEditBlocker, invoiceVoidBlocker } from '@/lib/billing/invoice-changes';
+import { creditBlocker, listInvoiceCreditNotes } from '@/lib/billing/credit-notes';
+import { filsToString, toFils } from '@/lib/money';
 import {
   formatCalendarDate,
   formatDateTime,
@@ -16,6 +27,7 @@ import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/pri
 import { StatusPill } from '@/components/shared/status-pill';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { DocumentLinesView, billDiscountTotals } from '@/components/workshop/estimate-lines';
+import { getAccountChoices } from '@/lib/accounting/reports';
 import { StaffDocumentActions } from '@/components/documents/document-actions';
 import { InvoicePaymentForm } from '@/components/finance/invoice-payment-form';
 import { ReversePaymentButton, VoidInvoiceButton } from '@/components/finance/invoice-corrections';
@@ -58,6 +70,10 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const canEditInvoice = hasPermission(user, 'invoice.create', branch) && !editBlocker;
   const canVoid = hasPermission(user, 'invoice.cancel', branch) && !invoiceVoidBlocker(invoice);
   const canReverse = !isVoid && hasPermission(user, 'payment.reverse', branch);
+  const canCredit = hasPermission(user, 'invoice.cancel', branch) && !creditBlocker(invoice);
+  const creditNotes = await listInvoiceCreditNotes(user, invoice.id);
+  const credited = toFils(invoice.creditedAmount.toString());
+  const fullyCredited = credited > 0 && credited >= toFils(invoice.totalAmount.toString());
   // A reversed payment, and the payment it reversed, are not receipts.
   const reversals = new Map(
     invoice.payments
@@ -91,6 +107,8 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
             {invoice.invoiceNumber}
             {isVoid ? (
               <StatusPill tone="danger">Void</StatusPill>
+            ) : fullyCredited ? (
+              <StatusPill tone="neutral">Credited in full</StatusPill>
             ) : (
               <StatusPill tone={STATE_TONE[invoice.paymentState]}>
                 {STATE_LABEL[invoice.paymentState]}
@@ -120,6 +138,15 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
                 >
                   <Pencil className="size-4" />
                   Edit
+                </Link>
+              ) : null}
+              {canCredit ? (
+                <Link
+                  href={`/finance/invoices/${invoice.id}/credit-note`}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium hover:bg-muted"
+                >
+                  <FileMinus className="size-4" />
+                  Credit note
                 </Link>
               ) : null}
               {canVoid ? (
@@ -169,11 +196,58 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
                 { label: 'Total excl. VAT', amount: invoice.subtotal },
                 { label: 'VAT', amount: invoice.taxAmount },
                 { label: 'Total', amount: invoice.totalAmount, strong: true },
+                ...(credited > 0
+                  ? [{ label: 'Credit notes', amount: filsToString(-credited) }]
+                  : []),
                 { label: 'Paid', amount: invoice.paidAmount },
                 { label: 'Balance due', amount: invoice.balanceDue, strong: true },
               ]}
             />
           </Section>
+
+          {creditNotes.length > 0 ? (
+            <Section
+              title="Credit notes"
+              description="Tax credit notes issued against this invoice. The invoice stays as issued; each note reduces what is owed."
+            >
+              <Panel padding="none">
+                <ul className="divide-y divide-border">
+                  {creditNotes.map((note) => (
+                    <li key={note.id}>
+                      <Link
+                        href={`/finance/credit-notes/${note.id}`}
+                        className="flex flex-col gap-1 px-4 py-4 hover:bg-muted/40 sm:flex-row sm:items-center sm:justify-between sm:px-6"
+                      >
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <span
+                            className={
+                              note.status === 'VOID'
+                                ? 'text-sm font-medium text-muted-foreground line-through'
+                                : 'text-sm font-medium'
+                            }
+                          >
+                            {`${note.creditNoteNumber} · ${formatMoney(note.totalAmount.toString())}`}
+                          </span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {`${formatCalendarDate(note.issueDate)} · ${note.reason}`}
+                          </span>
+                        </span>
+                        {note.status === 'VOID' ? (
+                          <StatusPill tone="danger">Void</StatusPill>
+                        ) : toFils(note.refundAmount.toString()) > 0 ? (
+                          <StatusPill tone={note.refundedOn ? 'success' : 'warning'}>
+                            {note.refundedOn
+                              ? `Refunded ${formatMoney(note.refundAmount.toString())}`
+                              : `Refund ${formatMoney(note.refundAmount.toString())} due`}
+                          </StatusPill>
+                        ) : null}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </Panel>
+            </Section>
+          ) : null}
 
           <Section
             title="Payments"
@@ -237,9 +311,10 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
                   })}
                 </ul>
               ) : null}
-              {invoice.paymentState !== 'PAID' && canPay ? (
+              {invoice.paymentState !== 'PAID' && toFils(invoice.balanceDue) > 0 && canPay ? (
                 <div className="border-t border-border bg-muted/20 px-4 py-6 sm:px-6">
                   <InvoicePaymentForm
+                    moneyAccounts={(await getAccountChoices(user)).money}
                     key={invoice.balanceDue}
                     invoiceId={invoice.id}
                     balance={invoice.balanceDue}

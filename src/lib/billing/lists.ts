@@ -62,6 +62,7 @@ export async function listInvoices(
       subtotal: true,
       taxAmount: true,
       totalAmount: true,
+      creditedAmount: true,
       customerName: true,
       items: { select: { discountAmount: true } },
       payments: {
@@ -94,12 +95,40 @@ export async function listInvoices(
   };
 }
 
-export async function listPayments(user: AuthenticatedUser, filters: { q?: string }, limit = 200) {
+/**
+ * Which payments to list:
+ *   received  money that stands — neither reversed nor a reversal (default);
+ *   reversed  payments that were reversed, each with its reversal;
+ *   all       every row, reversals included — the full trail, for exports.
+ */
+export type PaymentView = 'received' | 'reversed' | 'all';
+
+/**
+ * What a payment row is. A reversal cancels a payment without editing it:
+ * the original stays on record as REVERSED, and the row that cancels it is
+ * a REVERSAL — same amount, the opposite way.
+ */
+export type PaymentStanding = 'RECEIVED' | 'REVERSED' | 'REVERSAL';
+
+export const PAYMENT_STANDING_LABEL: Record<PaymentStanding, string> = {
+  RECEIVED: 'Received',
+  REVERSED: 'Reversed',
+  REVERSAL: 'Reversal',
+};
+
+export async function listPayments(
+  user: AuthenticatedUser,
+  filters: { q?: string; view?: PaymentView },
+  limit = 200,
+) {
   requirePermission(user, 'invoice.view');
   const q = filters.q?.trim();
+  const view = filters.view ?? 'received';
   const payments = await prisma.payment.findMany({
     where: {
       organizationId: user.organizationId,
+      ...(view === 'received' ? { reversalOfPaymentId: null, reversals: { none: {} } } : {}),
+      ...(view === 'reversed' ? { reversals: { some: {} } } : {}),
       ...(q
         ? {
             OR: [
@@ -120,11 +149,19 @@ export async function listPayments(user: AuthenticatedUser, filters: { q?: strin
       method: true,
       status: true,
       referenceNumber: true,
+      notes: true,
       reversalOfPaymentId: true,
       receivedAt: true,
       receivedBy: { select: { fullName: true } },
-      // Whether it can still be reversed: not already, and not on a void invoice.
-      reversals: { select: { id: true } },
+      reversals: {
+        select: {
+          id: true,
+          receivedAt: true,
+          notes: true,
+          receivedBy: { select: { fullName: true } },
+        },
+      },
+      reversalOf: { select: { paymentNumber: true } },
       invoice: {
         select: {
           status: true,
@@ -135,8 +172,30 @@ export async function listPayments(user: AuthenticatedUser, filters: { q?: strin
       },
     },
   });
+  const rows = payments.map((payment) => {
+    const standing: PaymentStanding = payment.reversalOfPaymentId
+      ? 'REVERSAL'
+      : payment.reversals.length > 0
+        ? 'REVERSED'
+        : 'RECEIVED';
+    return {
+      ...payment,
+      standing,
+      methodLabel: PAYMENT_METHOD_LABEL[payment.method],
+      /** A reversal takes money back out: negative. */
+      signedAmount: filsToString(
+        (standing === 'REVERSAL' ? -1 : 1) * toFils(payment.amount.toString()),
+      ),
+      reversal: payment.reversals[0] ?? null,
+    };
+  });
   return {
-    payments: payments.map((p) => ({ ...p, methodLabel: PAYMENT_METHOD_LABEL[p.method] })),
+    payments: rows,
+    /** Money that stands among the rows shown. */
     totalShown: paidFils(payments.filter((p) => !p.reversalOfPaymentId)),
+    /** What the reversed payments shown had come to. */
+    totalReversed: rows
+      .filter((row) => row.standing === 'REVERSED')
+      .reduce((sum, row) => sum + toFils(row.amount.toString()), 0),
   };
 }

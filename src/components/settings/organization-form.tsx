@@ -16,6 +16,7 @@ import { useFormAction } from '@/components/forms/use-form-action';
 import type { ActionResult } from '@/lib/errors';
 import type { OrganizationSettings } from '@/lib/organization/settings';
 import { saveOrganizationSettingsAction } from '@/app/(app)/settings/actions';
+import { EMIRATES } from '@/lib/vat-treatment';
 
 const INPUT = '[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm';
 
@@ -129,15 +130,37 @@ export function OrganizationForm({ settings }: { settings: OrganizationSettings 
             className={`${INPUT} [&_input]:text-right [&_input]:tabular-nums`}
           />
         </div>
-        <TextField
-          label="TRN (tax registration number)"
-          name="taxNumber"
-          inputMode="numeric"
-          defaultValue={settings.taxNumber ?? ''}
-          error={errors.taxNumber}
-          hint="15 digits. Printed on every tax invoice."
-          className={`${INPUT} [&_input]:font-mono`}
-        />
+        <div className="grid gap-6 sm:grid-cols-2">
+          <TextField
+            label="TRN (tax registration number)"
+            name="taxNumber"
+            inputMode="numeric"
+            defaultValue={settings.taxNumber ?? ''}
+            error={errors.taxNumber}
+            hint="15 digits. Printed on every tax invoice."
+            className={`${INPUT} [&_input]:font-mono`}
+          />
+          <Field
+            label="Emirate"
+            htmlFor="emirate"
+            required
+            error={errors.emirate}
+            hint="Where the workshop makes its sales. The VAT return reports them on this emirate's line of Box 1."
+          >
+            <NativeSelect
+              id="emirate"
+              name="emirate"
+              defaultValue={settings.emirate}
+              className="h-11 text-base md:text-sm"
+            >
+              {EMIRATES.map((emirate) => (
+                <option key={emirate.value} value={emirate.value}>
+                  {emirate.label}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        </div>
 
         {registered && !settings.taxNumber ? (
           <p className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2.5 text-xs text-warning">

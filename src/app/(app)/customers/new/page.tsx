@@ -23,7 +23,7 @@ export default async function NewCustomerPage() {
         title="New customer"
         description="Step 1 of 2 — the customer's details. Next you'll add their vehicle."
       />
-      <Panel className="w-full max-w-2xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <CustomerForm
           action={createCustomerAction}
           submitLabel="Save & add vehicle"

@@ -56,6 +56,7 @@ export default async function ExpensesPage({
     expenseDate: expense.expenseDate.toISOString().slice(0, 10),
     vendorName: expense.vendorName ?? '',
     paymentMethod: expense.paymentMethod ?? '',
+    paidFromAccountId: expense.paidFromAccountId ?? '',
     categoryId: expense.chartOfAccount?.id ?? '',
   });
   const filtered = Boolean(filters.query || filters.categoryId || filters.from || filters.to);
@@ -106,6 +107,7 @@ export default async function ExpensesPage({
             <ExpenseForm
               categories={formOptions.categories}
               defaultVatRate={formOptions.defaultVatRate}
+              moneyAccounts={formOptions.moneyAccounts}
             />
           </InlineForm>
         </Panel>
@@ -165,6 +167,7 @@ export default async function ExpensesPage({
                             expense={draft(expense)}
                             categories={formOptions.categories}
                             defaultVatRate={formOptions.defaultVatRate}
+                            moneyAccounts={formOptions.moneyAccounts}
                           />
                         ) : null}
                         <VoidExpenseButton
@@ -237,6 +240,7 @@ export default async function ExpensesPage({
                                     expense={draft(expense)}
                                     categories={formOptions.categories}
                                     defaultVatRate={formOptions.defaultVatRate}
+                                    moneyAccounts={formOptions.moneyAccounts}
                                   />
                                 ) : null}
                                 <VoidExpenseButton

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Receipt, ReceiptText } from 'lucide-react';
+import { Banknote, Receipt, ReceiptText } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { listInvoices } from '@/lib/billing/lists';
@@ -86,10 +86,21 @@ export default async function InvoicesPage({
               ).toString()}
             />
             {canCreate ? (
-              <LinkButton href="/finance/invoices/new" size="lg" className="w-full sm:w-auto">
-                <ReceiptText />
-                New invoice
-              </LinkButton>
+              <>
+                <LinkButton
+                  href="/finance/invoices/new?pay=now"
+                  variant="outline"
+                  size="lg"
+                  className="w-full sm:w-auto"
+                >
+                  <Banknote />
+                  New sales receipt
+                </LinkButton>
+                <LinkButton href="/finance/invoices/new" size="lg" className="w-full sm:w-auto">
+                  <ReceiptText />
+                  New invoice
+                </LinkButton>
+              </>
             ) : null}
           </>
         }

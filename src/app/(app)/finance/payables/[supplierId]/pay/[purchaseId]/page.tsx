@@ -1,3 +1,4 @@
+import { getAccountChoices } from '@/lib/accounting/reports';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
@@ -52,13 +53,14 @@ export default async function RecordSupplierPaymentPage({
         description="Money paid to the supplier against one received purchase."
       />
 
-      <Panel className="max-w-2xl sm:p-8">
+      <Panel className="sm:p-8">
         {purchase.balanceFils === 0 ? (
           <p className="text-sm text-muted-foreground">
             {purchase.number} is already fully paid. Nothing is owed on it.
           </p>
         ) : (
           <SupplierPaymentForm
+            moneyAccounts={(await getAccountChoices(user)).money}
             purchase={{
               id: purchase.id,
               number: purchase.number,

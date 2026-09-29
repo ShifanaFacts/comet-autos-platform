@@ -169,6 +169,30 @@ export interface DocumentTotals {
 }
 
 /**
+ * Shares `fils` across weights (a bill discount across line totals) in
+ * proportion. Largest remainder: each exact share rounded down, the fils left
+ * over going to the weights that lost the most to rounding, so the shares add
+ * up to `fils` exactly. BigInt, because amount × weight can pass 2^53.
+ */
+export function shareFils(fils: number, weights: number[]): number[] {
+  const total = BigInt(weights.reduce((sum, weight) => sum + weight, 0) || 1);
+  const exact = weights.map((weight) => BigInt(fils) * BigInt(weight));
+  const shares = exact.map((value) => Number(value / total));
+  let leftover = fils - shares.reduce((sum, share) => sum + share, 0);
+  const byRemainder = exact
+    .map((value, index) => ({ index, remainder: value % total }))
+    .sort((a, b) =>
+      a.remainder === b.remainder ? a.index - b.index : a.remainder > b.remainder ? -1 : 1,
+    );
+  for (const { index } of byRemainder) {
+    if (leftover <= 0) break;
+    shares[index] += 1;
+    leftover -= 1;
+  }
+  return shares;
+}
+
+/**
  * Prices a whole quotation or invoice: its lines (each with any discount of
  * its own, from calculateLine) and a discount on the whole bill.
  *
@@ -183,24 +207,10 @@ export function calculateDocument(
 ): { lines: LineAmounts[]; totals: DocumentTotals } {
   const linesTotalFils = lines.reduce((sum, line) => sum + line.lineTotalFils, 0);
   const billFils = discount ? discountFils(linesTotalFils, discount, 'Bill discount') : 0;
-
-  // Largest-remainder shares: each line's exact share rounded down, the
-  // fils left over going to the lines that lost the most to rounding.
-  // BigInt, because discount × line total can pass 2^53 on a large bill.
-  const total = BigInt(linesTotalFils || 1);
-  const exact = lines.map((line) => BigInt(billFils) * BigInt(line.lineTotalFils));
-  const shares = exact.map((value) => Number(value / total));
-  let leftover = billFils - shares.reduce((sum, share) => sum + share, 0);
-  const byRemainder = exact
-    .map((value, index) => ({ index, remainder: value % total }))
-    .sort((a, b) =>
-      a.remainder === b.remainder ? a.index - b.index : a.remainder > b.remainder ? -1 : 1,
-    );
-  for (const { index } of byRemainder) {
-    if (leftover <= 0) break;
-    shares[index] += 1;
-    leftover -= 1;
-  }
+  const shares = shareFils(
+    billFils,
+    lines.map((line) => line.lineTotalFils),
+  );
 
   const priced = lines.map((line, index) => {
     if (!billFils) return line;

@@ -45,7 +45,7 @@ export default async function InspectionPage({ params }: { params: Promise<{ id:
             title="Start the inspection"
             description="Starting moves the job from Arrived into Inspection."
           >
-            <Panel className="max-w-2xl sm:p-8">
+            <Panel className="sm:p-8">
               <StartInspectionForm
                 jobCardId={jobCard.id}
                 defaultEmployeeId={primaryTechnician?.id ?? null}

@@ -42,7 +42,7 @@ export default async function NewAppointmentPage({
         title="Book an appointment"
         description="Only what the workshop needs: which vehicle, when, and what the customer wants done."
       />
-      <Panel className="w-full max-w-3xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <AppointmentForm
           initialVehicle={vehicle}
           defaultScheduledAt={suggestedSlot()}

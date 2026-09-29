@@ -29,7 +29,7 @@ export default async function NewSupplierPage() {
         }
         title="New supplier"
       />
-      <Panel className="w-full max-w-2xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <SupplierForm action={createSupplierAction} cancelHref="/inventory/suppliers" />
       </Panel>
     </Stack>

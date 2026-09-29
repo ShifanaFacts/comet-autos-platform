@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { requireUser, requirePermission } from '@/lib/auth/authorize';
+import { hasPermission, requireUser, requirePermission } from '@/lib/auth/authorize';
+import { getAccountChoices } from '@/lib/accounting/reports';
 import { NotFoundError } from '@/lib/errors';
 import { getInvoiceDetail } from '@/lib/billing/invoice';
 import { invoiceEditBlocker } from '@/lib/billing/invoice-changes';
@@ -37,7 +38,7 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
         title="Edit invoice"
         description={`For ${invoice.customer.name} · issued ${formatCalendarDate(invoice.issueDate)}. The number and date stay the same, your workshop and customer details are updated to what is in Settings now, and the change is recorded in the history.`}
       />
-      <Panel className="max-w-5xl">
+      <Panel>
         {blocker ? (
           <p className="text-sm text-muted-foreground">{blocker}</p>
         ) : (
@@ -49,6 +50,11 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
             dueDate={(invoice.dueDate ?? invoice.issueDate).toISOString().slice(0, 10)}
             customerReference={invoice.customerReference ?? ''}
             bill={editableBill(invoice)}
+            incomeAccounts={
+              hasPermission(user, 'accounting.view')
+                ? (await getAccountChoices(user)).income
+                : undefined
+            }
             lines={invoice.items.map((item, index) => editableLine(item, `existing-${index}`, '0'))}
           />
         )}

@@ -119,7 +119,7 @@ export default async function AccountPage() {
             out.
           </p>
         </div>
-        <Panel className="max-w-2xl">
+        <Panel>
           <PasswordForm />
         </Panel>
         <p className="flex items-center gap-2 text-xs text-muted-foreground">

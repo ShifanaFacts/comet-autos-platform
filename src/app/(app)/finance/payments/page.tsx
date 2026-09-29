@@ -9,6 +9,7 @@ import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { ListDataActions } from '@/components/shared/list-data-actions';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusPill } from '@/components/shared/status-pill';
+import { ActiveDeletedTabs } from '@/components/shared/active-deleted-tabs';
 import { SearchField } from '@/components/shared/search-field';
 import {
   RecordSelection,
@@ -32,7 +33,7 @@ export const metadata = { title: 'Payments' };
 export default async function PaymentsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; show?: string }>;
 }) {
   const user = await requireUser();
   if (
@@ -44,8 +45,15 @@ export default async function PaymentsPage({
   ) {
     return <AccessDenied what="payments" />;
   }
-  const query = ((await searchParams).q ?? '').trim();
-  const { payments, totalShown } = await listPayments(user, { q: query });
+  const params = await searchParams;
+  const query = (params.q ?? '').trim();
+  // Received: the money that stands. Reversed: payments taken back, each
+  // with its reversal — the original is never edited or deleted.
+  const reversedView = params.show === 'reversed';
+  const { payments, totalShown, totalReversed } = await listPayments(user, {
+    q: query,
+    view: reversedView ? 'reversed' : 'received',
+  });
   const canRemove = hasPermission(
     user,
     REMOVAL.payments.permission,
@@ -53,6 +61,7 @@ export default async function PaymentsPage({
   );
   // The same rule as reverseInvoicePayment; the server checks it again.
   const removable = (payment: (typeof payments)[number]) =>
+    !reversedView &&
     payment.status === 'COMPLETED' &&
     !payment.reversalOfPaymentId &&
     payment.reversals.length === 0 &&
@@ -69,7 +78,7 @@ export default async function PaymentsPage({
       <PageHeader
         eyebrow="Finance"
         title="Payments"
-        description="Money received from customers, newest first. Payments are taken against an invoice — from the invoice itself or its job card."
+        description="Money received from customers, newest first. Payments are taken against an invoice — from the invoice itself or its job card. A payment entered wrongly is reversed, not deleted: it moves to Reversed, and the correct one is entered again."
         actions={
           <ListDataActions
             entity="payments"
@@ -79,15 +88,34 @@ export default async function PaymentsPage({
         }
       />
       <Stack gap="base">
-        <SearchField initialQuery={query} placeholder="Receipt, reference, invoice or customer" />
+        <ActiveDeletedTabs
+          basePath="/finance/payments"
+          deleted={reversedView}
+          query={query}
+          labels={['Received', 'Reversed']}
+          show="reversed"
+        />
+        <SearchField
+          initialQuery={query}
+          placeholder="Receipt, reference, invoice or customer"
+          keep={reversedView ? { show: 'reversed' } : undefined}
+        />
         {payments.length === 0 ? (
           <EmptyState
             icon={Wallet}
-            title={query ? `No payment matches “${query}”` : 'No payments yet'}
+            title={
+              query
+                ? `No payment matches “${query}”`
+                : reversedView
+                  ? 'No reversed payments'
+                  : 'No payments yet'
+            }
             description={
               query
                 ? 'Try the receipt or invoice number.'
-                : 'Payments appear here once they are recorded against an invoice.'
+                : reversedView
+                  ? 'A payment that is reversed from its invoice is listed here, with when and why.'
+                  : 'Payments appear here once they are recorded against an invoice.'
             }
           />
         ) : (
@@ -95,9 +123,9 @@ export default async function PaymentsPage({
             <p className="text-sm text-muted-foreground">
               {payments.length} payment{payments.length === 1 ? '' : 's'} shown ·{' '}
               <span className="font-semibold text-foreground tabular-nums">
-                {formatMoney(filsToString(totalShown))}
+                {formatMoney(filsToString(reversedView ? totalReversed : totalShown))}
               </span>{' '}
-              received
+              {reversedView ? 'reversed — none of it counts as received' : 'received'}
             </p>
             <RecordSelection entity="payments" enabled={canRemove}>
               <Panel padding="none" className="overflow-hidden">
@@ -150,11 +178,22 @@ export default async function PaymentsPage({
                                 {payment.referenceNumber}
                               </span>
                             ) : null}
-                            {payment.status !== 'COMPLETED' ? (
-                              <StatusPill tone="neutral">{payment.status.toLowerCase()}</StatusPill>
+                            {payment.reversal ? (
+                              <span className="mt-1 block text-xs text-muted-foreground">
+                                <StatusPill tone="danger">Reversed</StatusPill>{' '}
+                                {formatDateTime(payment.reversal.receivedAt)} by{' '}
+                                {payment.reversal.receivedBy.fullName}
+                                {payment.reversal.notes ? ` — ${payment.reversal.notes}` : ''}
+                              </span>
                             ) : null}
                           </TableCell>
-                          <TableCell className="text-right font-semibold tabular-nums">
+                          <TableCell
+                            className={
+                              payment.reversal
+                                ? 'text-right text-muted-foreground tabular-nums line-through'
+                                : 'text-right font-semibold tabular-nums'
+                            }
+                          >
                             {formatMoney(payment.amount)}
                           </TableCell>
                           <TableCell className="text-right">
@@ -164,7 +203,9 @@ export default async function PaymentsPage({
                               aria-label={`Download receipt ${payment.paymentNumber ?? ''}`}
                             >
                               <Download className="size-4" />
-                              <span className="hidden sm:inline">Receipt</span>
+                              <span className="hidden sm:inline">
+                                {payment.reversal ? 'Reversed receipt' : 'Receipt'}
+                              </span>
                             </a>
                           </TableCell>
                           <RemoveCell

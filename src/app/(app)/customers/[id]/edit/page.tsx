@@ -35,7 +35,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
         title={`Edit ${customer.name}`}
         description="Contact details used for quotations and invoices."
       />
-      <Panel className="w-full max-w-2xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <CustomerForm
           action={updateCustomerAction.bind(null, customer.id)}
           customerId={customer.id}

@@ -32,7 +32,7 @@ export default async function EditUserPage({ params }: { params: Promise<{ id: s
         title={`Edit ${detail.fullName}`}
         description="Their details, which branch they belong to, and what they are allowed to do."
       />
-      <Panel className="max-w-3xl sm:p-8">
+      <Panel className="sm:p-8">
         <UserForm
           mode="edit"
           options={options}

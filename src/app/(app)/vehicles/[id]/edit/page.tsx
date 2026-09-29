@@ -38,7 +38,7 @@ export default async function EditVehiclePage({ params }: { params: Promise<{ id
         title={`Edit ${vehicle.make} ${vehicle.model}`}
         description={`Owner: ${vehicle.customer.name}. Mileage is updated automatically at each check-in.`}
       />
-      <Panel className="w-full max-w-2xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <VehicleForm
           action={updateVehicleAction.bind(null, vehicle.id)}
           initial={vehicle}

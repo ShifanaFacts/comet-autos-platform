@@ -12,6 +12,8 @@ import { allocateDocumentNumber } from '@/lib/numbering';
 import { filsToString, toFils } from '@/lib/money';
 import { parseLocalDateTime } from '@/lib/format';
 import { resolveDefaultVatRate } from '@/lib/tax';
+import { syncPosting } from '@/lib/accounting/journal';
+import { checkMoneyAccount } from '@/lib/accounting/chart';
 import {
   PURCHASE_BALANCE_SELECT,
   RECEIVED_PURCHASE_STATUSES,
@@ -64,6 +66,8 @@ const paymentSchema = z.object({
     .string({ error: 'Enter when the payment was made.' })
     .min(1, 'Enter when the payment was made.'),
   referenceNumber: z.string().trim().max(100).optional(),
+  /** The cash or bank account it was paid from; blank for the method's default. */
+  accountId: z.union([z.literal(''), z.uuid()]).optional(),
   requestKey: z.string().optional(),
 });
 
@@ -468,6 +472,7 @@ export async function recordSupplierPayment(
         supplierPaymentNumber,
         amount: filsToString(amount),
         method: input.method,
+        accountId: await checkMoneyAccount(tx, user.organizationId, input.accountId),
         status: 'COMPLETED',
         referenceNumber: emptyToNull(input.referenceNumber),
         paidAt,
@@ -475,6 +480,7 @@ export async function recordSupplierPayment(
       },
       select: { id: true, supplierPaymentNumber: true, amount: true },
     });
+    await syncPosting(tx, user.organizationId, 'SUPPLIER_PAYMENT', payment.id, user.id);
 
     const balanceAfter = money.balanceFils - amount;
     await writeAuditLog(tx, {
@@ -589,6 +595,7 @@ export async function reverseSupplierPayment(
       where: { id: payment.id },
       data: { status: 'REVERSED' },
     });
+    await syncPosting(tx, user.organizationId, 'SUPPLIER_PAYMENT', reversal.id, user.id);
 
     await writeAuditLog(tx, {
       organizationId: user.organizationId,

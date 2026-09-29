@@ -7,10 +7,10 @@ import { filsToString, formatMilli, signedToMilli, toFils } from '@/lib/money';
  * after this point. Amounts are exact decimal strings ("1250.00").
  *
  * Nothing in the model is an internal database id: documents only carry
- * business numbers (QT-, INV-, RCT-, JC-) the customer can read.
+ * business numbers (QT-, INV-, RCT-, CN-, JC-) the customer can read.
  */
 
-export type DocumentKind = 'QUOTATION' | 'INVOICE' | 'RECEIPT';
+export type DocumentKind = 'QUOTATION' | 'INVOICE' | 'RECEIPT' | 'CREDIT_NOTE';
 export type DocumentTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 
 /** The TYPE column, as the workshop's own sheet prints it. */

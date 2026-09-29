@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { formatMilli, milliToString, signedToMilli } from '@/lib/money';
+import { syncPosting } from '@/lib/accounting/journal';
 
 /*
  * Stock follows the schema's ledger rule (Part / InventoryTransaction):
@@ -117,7 +118,7 @@ export async function postMovement(tx: Prisma.TransactionClient, input: Movement
     }
   }
 
-  return tx.inventoryTransaction.create({
+  const movement = await tx.inventoryTransaction.create({
     data: {
       organizationId: input.organizationId,
       branchId: input.branchId,
@@ -132,6 +133,28 @@ export async function postMovement(tx: Prisma.TransactionClient, input: Movement
       note: input.note,
     },
   });
+  // Stock in or out of the workshop's value is booked now; a part fitted to
+  // or taken back from a job changes the cost on that job's invoice instead.
+  await syncPosting(tx, input.organizationId, 'STOCK_MOVEMENT', movement.id, input.performedByUserId);
+  if (input.partUsageId) {
+    const usage = await tx.partUsage.findUnique({
+      where: { id: input.partUsageId },
+      select: {
+        jobCard: {
+          select: {
+            invoices: {
+              where: { status: { notIn: ['DRAFT', 'VOID', 'CANCELLED'] } },
+              select: { id: true },
+            },
+          },
+        },
+      },
+    });
+    for (const invoice of usage?.jobCard.invoices ?? []) {
+      await syncPosting(tx, input.organizationId, 'INVOICE', invoice.id, input.performedByUserId);
+    }
+  }
+  return movement;
 }
 
 /**

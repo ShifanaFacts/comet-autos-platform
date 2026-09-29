@@ -94,6 +94,7 @@ export async function getFinanceSnapshot(organizationId: string) {
       where: { organizationId, status: { in: ['ISSUED', 'PARTIALLY_PAID'] } },
       select: {
         totalAmount: true,
+        creditedAmount: true,
         status: true,
         payments: {
           select: {

@@ -10,6 +10,7 @@ import { OrganizationForm } from '@/components/settings/organization-form';
 import { JobCardStyleForm } from '@/components/settings/job-card-style-form';
 import { MenusForm } from '@/components/settings/menus-form';
 import { BranchForm } from '@/components/settings/branch-form';
+import { EMIRATES } from '@/lib/vat-treatment';
 
 export default async function SettingsPage() {
   const user = await requireUser();
@@ -34,7 +35,7 @@ export default async function SettingsPage() {
         title="Workshop details"
         description={`Last changed ${formatDateTime(settings.updatedAt)}.`}
       >
-        <Panel className="max-w-3xl">
+        <Panel>
           {canEdit ? (
             <OrganizationForm settings={settings} />
           ) : (
@@ -47,7 +48,7 @@ export default async function SettingsPage() {
         title={branches.length === 1 ? 'Branch' : 'Branches'}
         description="Where the workshop works from. The name shows in the top bar and on stock and staff screens."
       >
-        <Stack gap="base" className="max-w-3xl">
+        <Stack gap="base">
           {branches.map((branch) => (
             <Panel key={branch.id}>
               {canEdit ? (
@@ -70,7 +71,7 @@ export default async function SettingsPage() {
         title="Job card"
         description="How much a job card asks for. Choose the minimal job card while one person does everything; switch to standard once there is a team to share the steps."
       >
-        <div className="max-w-3xl">
+        <div>
           <JobCardStyleForm detailed={settings.detailedJobCards} canEdit={canEdit} />
         </div>
       </Section>
@@ -79,7 +80,7 @@ export default async function SettingsPage() {
         title="Menus"
         description="Show only the menus the workshop uses. Hiding a menu doesn't remove anything or change what anyone is allowed to do."
       >
-        <div className="max-w-3xl">
+        <div>
           <MenusForm
             hiddenMenus={settings.hiddenMenus}
             detailedJobCards={settings.detailedJobCards}
@@ -92,7 +93,7 @@ export default async function SettingsPage() {
         <Section title="Access" description="Who can sign in, and what they are allowed to do.">
           <Link
             href="/settings/users"
-            className="flex max-w-3xl items-center gap-3 rounded-xl border border-border bg-card px-4 py-4 transition-colors hover:bg-muted/50 active:bg-muted sm:px-6"
+            className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-4 transition-colors hover:bg-muted/50 active:bg-muted sm:px-6"
           >
             <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
               <ShieldCheck className="size-5" />
@@ -109,7 +110,7 @@ export default async function SettingsPage() {
       ) : null}
 
       <Section title="Currency" description="What every amount in the system is recorded in.">
-        <Panel className="flex max-w-3xl items-start gap-3">
+        <Panel className="flex items-start gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <Building2 className="size-5" />
           </span>
@@ -140,6 +141,7 @@ function ReadOnlySettings({
     ['Email', settings.email ?? '—'],
     ['VAT', settings.isVatRegistered ? `Registered at ${settings.vatRate}%` : 'Not registered'],
     ['TRN', settings.taxNumber ?? '—'],
+    ['Emirate', EMIRATES.find((emirate) => emirate.value === settings.emirate)?.label ?? '—'],
   ];
   return (
     <div className="flex flex-col gap-6">

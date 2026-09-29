@@ -2,8 +2,17 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { FileText, Receipt } from 'lucide-react';
-import { FormError, TextField, TextareaField } from '@/components/forms/fields';
+import { Banknote, FileText, Receipt } from 'lucide-react';
+import {
+  Field,
+  FormError,
+  NativeSelect,
+  TextField,
+  TextareaField,
+} from '@/components/forms/fields';
+import { PAYMENT_METHODS } from '@/components/finance/invoice-payment-form';
+import { MoneyAccountField } from '@/components/accounting/money-account-field';
+import type { AccountChoice } from '@/lib/accounting/reports';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import { CustomerPicker, type PickedParty } from '@/components/workshop/customer-picker';
@@ -49,6 +58,10 @@ export function NewInvoiceForm({
   initialWorkOrder = null,
   quotation,
   defaultVatRate,
+  initialPayNow = false,
+  canTakePayment,
+  incomeAccounts,
+  moneyAccounts = [],
 }: {
   initialCustomer: CustomerOption | null;
   /** Set when arriving from a job card: it is billed, and moves to Invoiced. */
@@ -56,6 +69,14 @@ export function NewInvoiceForm({
   /** Set when arriving from an approved quotation: its lines are billed as quoted. */
   quotation: QuotationChoice | null;
   defaultVatRate: string;
+  /** Start as a sales receipt — the customer pays on the spot. */
+  initialPayNow?: boolean;
+  /** Whether this user may record payments at all. */
+  canTakePayment: boolean;
+  /** Income accounts a line can book to; omitted, every line uses the default. */
+  incomeAccounts?: AccountChoice[];
+  /** Cash, bank and card accounts a sales receipt's money can go into. */
+  moneyAccounts?: AccountChoice[];
 }) {
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(createDirectInvoiceAction, {
     ok: false,
@@ -74,6 +95,7 @@ export function NewInvoiceForm({
   );
   const [lines, setLines] = useState<EditableLine[]>([newEditableLine('PART', defaultVatRate)]);
   const [bill, setBill] = useState<BillDiscount>(NO_BILL_DISCOUNT);
+  const [payNow, setPayNow] = useState(initialPayNow && canTakePayment);
   const errors = state.fieldErrors ?? {};
   const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate, bill);
   const ready = Boolean(picked) && (quotation !== null || (count > 0 && !incomplete));
@@ -143,6 +165,7 @@ export function NewInvoiceForm({
             bill={bill}
             onBillChange={setBill}
             defaultVatRate={defaultVatRate}
+            incomeAccounts={incomeAccounts}
           />
         </section>
       )}
@@ -166,6 +189,63 @@ export function NewInvoiceForm({
           className="[&_input]:h-11"
         />
       </div>
+
+      {canTakePayment ? (
+        <section className="flex flex-col gap-4 rounded-xl border border-border p-4 sm:p-5">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              name="payNow"
+              value="1"
+              checked={payNow}
+              onChange={(event) => setPayNow(event.target.checked)}
+              className="mt-1 size-4 accent-primary"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="font-medium">The customer is paying now (sales receipt)</span>
+              <span className="text-sm text-muted-foreground">
+                The full total is recorded as received with the invoice, and a receipt is issued.
+                Leave unticked to bill now and take payment later.
+              </span>
+            </span>
+          </label>
+          {payNow ? (
+            <div className="grid gap-6 sm:grid-cols-2">
+              <Field label="Paid by" htmlFor="paymentMethod" required error={errors.paymentMethod}>
+                <NativeSelect
+                  id="paymentMethod"
+                  name="paymentMethod"
+                  defaultValue="CASH"
+                  className="h-11"
+                >
+                  {PAYMENT_METHODS.map((method) => (
+                    <option key={method.value} value={method.value}>
+                      {method.label}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <TextField
+                label="Payment reference"
+                name="paymentReference"
+                error={errors.paymentReference}
+                hint="Optional — card slip, transfer or cheque number."
+                className="[&_input]:h-11"
+              />
+              {moneyAccounts.length ? (
+                <MoneyAccountField
+                  id="paymentAccountId"
+                  name="paymentAccountId"
+                  label="Deposited into"
+                  accounts={moneyAccounts}
+                  error={errors.paymentAccountId}
+                  className="h-11"
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <TextareaField
         label="Notes on the invoice"
@@ -194,13 +274,18 @@ export function NewInvoiceForm({
           className="h-12 w-full sm:h-11 sm:w-auto"
           pendingLabel="Issuing…"
         >
-          <Receipt />
-          Issue invoice
-          {!quotation && count > 0 && !incomplete ? ` · ${formatMoney(totals.totalAmount)}` : ''}
+          {payNow ? <Banknote /> : <Receipt />}
+          {payNow ? 'Issue and record payment' : 'Issue invoice'}
+          {quotation
+            ? ` · ${formatMoney(quotation.totalAmount)}`
+            : count > 0 && !incomplete
+              ? ` · ${formatMoney(totals.totalAmount)}`
+              : ''}
         </SubmitButton>
         <p className="mt-3 text-sm text-muted-foreground">
-          The invoice is issued straight away with its own number. Record the payment on the next
-          screen.
+          {payNow
+            ? 'The invoice is issued with its own number and marked paid, with a receipt for the payment.'
+            : 'The invoice is issued straight away with its own number. Record the payment on the next screen.'}
         </p>
       </div>
     </form>

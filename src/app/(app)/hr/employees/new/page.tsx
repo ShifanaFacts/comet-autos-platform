@@ -17,7 +17,7 @@ export default async function NewEmployeePage() {
         title="Add employee"
         description="Who they are and where they work. A system login is optional."
       />
-      <Panel className="max-w-3xl">
+      <Panel>
         <EmployeeForm action={createEmployeeAction} options={options} cancelHref="/hr/employees" />
       </Panel>
     </Stack>

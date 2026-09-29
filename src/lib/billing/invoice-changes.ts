@@ -15,9 +15,11 @@ import {
   normalizeStatus,
   type WorkflowStatus,
 } from '@/lib/workshop/job-status';
-import { paidFils } from '@/lib/billing/invoice';
+import { dueFils, paidFils, settlementStatus } from '@/lib/billing/invoice';
 import { readDueDate } from '@/lib/billing/direct-invoice';
+import { syncPosting } from '@/lib/accounting/journal';
 import {
+  assertIncomeAccounts,
   discountFields,
   lineData,
   lineSchema,
@@ -118,13 +120,21 @@ const updateSchema = z.object({
   requestKey: z.string().optional(),
 });
 
+const CREDITED =
+  'A credit note has been issued against this invoice, so it stands as issued. Correct it with a credit note instead.';
+
+const isCredited = (invoice: { creditedAmount?: { toString(): string } }) =>
+  invoice.creditedAmount !== undefined && toFils(invoice.creditedAmount.toString()) > 0;
+
 /** Why an invoice can't be edited, or null when it can. Shared with the screens. */
 export function invoiceEditBlocker(invoice: {
   status: string;
   paidAmount?: string;
+  creditedAmount?: { toString(): string };
   items: { labourId: string | null; partUsageId: string | null }[];
 }): string | null {
   if (invoice.status === 'VOID' || invoice.status === 'CANCELLED') return 'This invoice is void.';
+  if (isCredited(invoice)) return CREDITED;
   if (
     invoice.status !== 'ISSUED' ||
     (invoice.paidAmount !== undefined && toFils(invoice.paidAmount) > 0)
@@ -154,11 +164,13 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
     const blocker = invoiceEditBlocker({
       status: invoice.status,
       paidAmount: filsToString(paidFils(invoice.payments)),
+      creditedAmount: invoice.creditedAmount,
       items: invoice.items,
     });
     if (blocker) throw new DomainError(blocker);
 
     const { lines, totals } = priceDocument(input.items, defaultVatRate, input);
+    await assertIncomeAccounts(tx, user.organizationId, lines);
     const dueDate = readDueDate(input.dueDate, invoice.issueDate);
 
     await tx.invoiceItem.deleteMany({
@@ -171,6 +183,8 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
           invoiceId: invoice.id,
           itemType: line.itemType,
           description: line.description,
+          accountId: line.accountId ?? null,
+          vatTreatment: line.vatTreatment,
           ...lineData(line.amounts),
         },
       });
@@ -207,6 +221,9 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
         ...parties,
       },
     });
+    // The corrected figures replace the old ones in the books: the old entry
+    // is reversed and the new one booked, on the invoice's own date.
+    await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
 
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
@@ -267,10 +284,12 @@ const voidSchema = z.object({ reason: REASON, requestKey: z.string().optional() 
 export function invoiceVoidBlocker(invoice: {
   status: string;
   paidAmount?: string;
+  creditedAmount?: { toString(): string };
   jobCard: { status: string } | null;
 }): string | null {
   if (invoice.status === 'VOID' || invoice.status === 'CANCELLED')
     return 'This invoice is already void.';
+  if (isCredited(invoice)) return CREDITED;
   if (
     invoice.status !== 'ISSUED' ||
     (invoice.paidAmount !== undefined && toFils(invoice.paidAmount) > 0)
@@ -297,6 +316,7 @@ export async function voidInvoice(user: AuthenticatedUser, invoiceId: string, ra
     const blocker = invoiceVoidBlocker({
       status: invoice.status,
       paidAmount: filsToString(paidFils(invoice.payments)),
+      creditedAmount: invoice.creditedAmount,
       jobCard: invoice.jobCard,
     });
     if (blocker) throw new DomainError(blocker);
@@ -306,6 +326,8 @@ export async function voidInvoice(user: AuthenticatedUser, invoiceId: string, ra
       where: { id: invoice.id },
       data: { status: 'VOID', voidedAt, voidReason: input.reason },
     });
+    // A void invoice was never a sale: its entry is reversed.
+    await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
 
     let reopenedTo: WorkflowStatus | null = null;
     if (invoice.jobCard && normalizeStatus(invoice.jobCard.status) === 'INVOICED') {
@@ -396,6 +418,23 @@ export async function reverseInvoicePayment(
     if (invoice.status === 'VOID' || invoice.status === 'CANCELLED') {
       throw new DomainError('This invoice is void.');
     }
+    // Money owed back under a credit note was worked out from what was paid.
+    const refunding = await tx.creditNote.findFirst({
+      where: {
+        organizationId: user.organizationId,
+        invoiceId: invoice.id,
+        status: 'ISSUED',
+        refundAmount: { gt: 0 },
+      },
+      select: { creditNoteNumber: true, refundedOn: true },
+    });
+    if (refunding) {
+      throw new DomainError(
+        refunding.refundedOn
+          ? `Money was refunded to the customer under credit note ${refunding.creditNoteNumber}, so the payments on this invoice stand.`
+          : `Credit note ${refunding.creditNoteNumber} owes the customer a refund out of this payment. Void the credit note first.`,
+      );
+    }
 
     const reversal = await tx.payment.create({
       data: {
@@ -413,6 +452,8 @@ export async function reverseInvoicePayment(
       },
       select: { id: true },
     });
+    // The reversal is booked as its own entry, the original's opposite.
+    await syncPosting(tx, user.organizationId, 'PAYMENT', reversal.id, user.id);
 
     const payments = [
       ...invoice.payments,
@@ -424,8 +465,7 @@ export async function reverseInvoicePayment(
       },
     ];
     const paid = paidFils(payments);
-    const total = toFils(invoice.totalAmount.toString());
-    const status = paid === 0 ? 'ISSUED' : paid >= total ? 'PAID' : 'PARTIALLY_PAID';
+    const status = settlementStatus(invoice, paid);
     await tx.invoice.update({ where: { id: invoice.id }, data: { status } });
 
     let jobReopened = false;
@@ -457,7 +497,7 @@ export async function reverseInvoicePayment(
       afterData: {
         reversalId: reversal.id,
         invoiceStatus: status,
-        balanceAfter: filsToString(Math.max(total - paid, 0)),
+        balanceAfter: filsToString(dueFils(invoice, paid)),
         reason: input.reason,
       },
       metadata: {

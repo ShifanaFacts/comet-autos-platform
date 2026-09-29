@@ -6,7 +6,7 @@ import { listVehicles } from '@/lib/vehicles/service';
 import { listParts, listMovements } from '@/lib/inventory/parts';
 import { listSuppliers } from '@/lib/inventory/suppliers';
 import { listPurchases } from '@/lib/inventory/purchases';
-import { listInvoices, listPayments } from '@/lib/billing/lists';
+import { listInvoices, listPayments, PAYMENT_STANDING_LABEL } from '@/lib/billing/lists';
 import { listQuotations } from '@/lib/workshop/quotations';
 import { listJobCards } from '@/lib/workshop/job-card-list';
 import { JOB_STATUS_LABEL } from '@/lib/workshop/stages';
@@ -205,18 +205,21 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   payments: definition({
     label: 'Payments',
     load: async (user, filters) =>
-      (await listPayments(user, { q: filters.q }, EXPORT_LIMIT)).payments,
+      (await listPayments(user, { q: filters.q, view: 'all' }, EXPORT_LIMIT)).payments,
     columns: [
       { header: 'Receipt', value: (row) => row.paymentNumber },
       { header: 'Received', value: (row) => dateTime(row.receivedAt) },
-      { header: 'Amount', value: (row) => money(row.amount) },
+      { header: 'Standing', value: (row) => PAYMENT_STANDING_LABEL[row.standing] },
+      // Reversals are negative, so the column adds up to the money that stands.
+      { header: 'Amount', value: (row) => money(row.signedAmount) },
       { header: 'Method', value: (row) => row.methodLabel },
       { header: 'Reference', value: (row) => row.referenceNumber },
       { header: 'Invoice', value: (row) => row.invoice.invoiceNumber },
       { header: 'Customer', value: (row) => row.invoice.customerName },
       { header: 'Job card', value: (row) => row.invoice.jobCard?.jobNumber ?? '' },
       { header: 'Received by', value: (row) => row.receivedBy.fullName },
-      { header: 'Reversal of', value: (row) => (row.reversalOfPaymentId ? 'Yes' : '') },
+      { header: 'Reversal of', value: (row) => row.reversalOf?.paymentNumber ?? '' },
+      { header: 'Reversal reason', value: (row) => (row.standing === 'REVERSAL' ? row.notes : '') },
     ],
   }),
 

@@ -4,19 +4,26 @@ import { cn } from '@/lib/utils';
 /**
  * Active / Deleted, for lists whose records are archived rather than
  * destroyed. The deleted view is where a record is found to restore it.
+ * Other lists with a second, rarer view (Received / Reversed payments) pass
+ * their own labels and `show` value.
  */
 export function ActiveDeletedTabs({
   basePath,
   deleted,
   query,
+  labels = ['Active', 'Deleted'],
+  show = 'deleted',
 }: {
   basePath: string;
   deleted: boolean;
   query: string;
+  labels?: [string, string];
+  /** The ?show= value of the second view. */
+  show?: string;
 }) {
   const href = (showDeleted: boolean) => {
     const params = new URLSearchParams();
-    if (showDeleted) params.set('show', 'deleted');
+    if (showDeleted) params.set('show', show);
     if (query) params.set('q', query);
     return `${basePath}${params.size ? `?${params}` : ''}`;
   };
@@ -35,10 +42,10 @@ export function ActiveDeletedTabs({
         aria-current={!deleted ? 'page' : undefined}
         className={tab(!deleted)}
       >
-        Active
+        {labels[0]}
       </Link>
       <Link href={href(true)} aria-current={deleted ? 'page' : undefined} className={tab(deleted)}>
-        Deleted
+        {labels[1]}
       </Link>
     </nav>
   );

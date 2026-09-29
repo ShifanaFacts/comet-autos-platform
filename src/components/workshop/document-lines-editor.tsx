@@ -17,6 +17,7 @@ import {
 } from '@/lib/money';
 import { formatMoney } from '@/lib/format';
 import type { BillDiscount, EditableLine, LineType } from '@/lib/billing/editable-lines';
+import { rateFor, VAT_TREATMENTS, type VatTreatment } from '@/lib/vat-treatment';
 import { cn } from '@/lib/utils';
 
 /*
@@ -47,8 +48,10 @@ export function newEditableLine(itemType: LineType, defaultVatRate: string): Edi
     quantity: '1',
     unitPrice: '',
     taxRate: trimRate(defaultVatRate),
+    vatTreatment: 'STANDARD',
     discountType: 'PERCENT',
     discount: '',
+    accountId: '',
   };
 }
 
@@ -56,15 +59,18 @@ export function newEditableLine(itemType: LineType, defaultVatRate: string): Edi
 export function linesPayload(lines: EditableLine[]) {
   return lines
     .filter((line) => !isBlankLine(line))
-    .map(({ itemType, description, quantity, unitPrice, taxRate, discountType, discount }) => ({
-      itemType,
-      description,
-      quantity,
-      unitPrice,
-      taxRate,
-      discountType,
-      discount,
-    }));
+    .map(
+      ({ itemType, description, quantity, unitPrice, vatTreatment, discountType, discount, accountId }) => ({
+        itemType,
+        description,
+        quantity,
+        unitPrice,
+        vatTreatment,
+        discountType,
+        discount,
+        accountId,
+      }),
+    );
 }
 
 /** The bill discount as the server expects it. */
@@ -77,7 +83,7 @@ function price(line: EditableLine, defaultVatRate: string): LineAmounts | null {
     return calculateLine({
       quantity: line.quantity,
       unitPrice: line.unitPrice,
-      taxRate: line.taxRate || defaultVatRate,
+      taxRate: rateFor(line.vatTreatment, defaultVatRate),
       discount: readDiscount(line.discountType, line.discount),
     });
   } catch {
@@ -108,7 +114,9 @@ export function useLineTotals(
       totals = calculateDocument(amounts).totals;
     }
     const rates = new Set(
-      used.map((entry) => formatMilli(signedToMilli(entry.line.taxRate || defaultVatRate))),
+      used.map((entry) =>
+        formatMilli(signedToMilli(rateFor(entry.line.vatTreatment, defaultVatRate))),
+      ),
     );
     return {
       priced,
@@ -130,6 +138,7 @@ export function DocumentLinesEditor({
   bill,
   onBillChange,
   defaultVatRate,
+  incomeAccounts,
 }: {
   lines: EditableLine[];
   onChange: (lines: EditableLine[]) => void;
@@ -137,6 +146,11 @@ export function DocumentLinesEditor({
   bill: BillDiscount;
   onBillChange: (bill: BillDiscount) => void;
   defaultVatRate: string;
+  /**
+   * Invoices: the income accounts a line can book to. Omitted (quotations),
+   * no account column is shown.
+   */
+  incomeAccounts?: { id: string; code: string; name: string }[];
 }) {
   const { priced, totals, vatLabel, billError } = useLineTotals(lines, defaultVatRate, bill);
   const billOff = toFils(totals.discountAmount) > 0;
@@ -243,14 +257,29 @@ export function DocumentLinesEditor({
                   placeholder="0.00"
                   numeric
                 />
-                <LabelledInput
-                  label="VAT %"
-                  aria={`Line ${n} VAT rate`}
-                  value={line.taxRate}
-                  onChange={(value) => update(line.key, { taxRate: value })}
-                  numeric
-                />
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">VAT</span>
+                  <VatSelect
+                    label={`Line ${n} VAT`}
+                    value={line.vatTreatment}
+                    onChange={(vatTreatment) => update(line.key, { vatTreatment })}
+                    large
+                  />
+                </label>
               </div>
+              {incomeAccounts ? (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">Account</span>
+                  <AccountSelect
+                    label={`Line ${n} account`}
+                    value={line.accountId}
+                    itemType={line.itemType}
+                    accounts={incomeAccounts}
+                    onChange={(accountId) => update(line.key, { accountId })}
+                    large
+                  />
+                </label>
+              ) : null}
               <div className="flex flex-col gap-1">
                 <span className="text-xs font-medium text-muted-foreground">Discount</span>
                 <DiscountInput
@@ -283,9 +312,10 @@ export function DocumentLinesEditor({
               <th className="w-12 px-3 py-2.5 text-right">S.No</th>
               <th className="w-40 px-2 py-2.5">Type</th>
               <th className="px-2 py-2.5">Description</th>
+              {incomeAccounts ? <th className="w-44 px-2 py-2.5">Account</th> : null}
               <th className="w-20 px-2 py-2.5 text-right">Qty</th>
               <th className="w-28 px-2 py-2.5 text-right">Price</th>
-              <th className="w-20 px-2 py-2.5 text-right">VAT %</th>
+              <th className="w-32 px-2 py-2.5">VAT</th>
               <th className="w-36 px-2 py-2.5 text-right">Discount</th>
               <th className="w-28 px-3 py-2.5 text-right">Amount</th>
               <th className="w-12 px-2 py-2.5">
@@ -319,6 +349,17 @@ export function DocumentLinesEditor({
                       }
                     />
                   </td>
+                  {incomeAccounts ? (
+                    <td className="px-2 py-2">
+                      <AccountSelect
+                        label={`Line ${n} account`}
+                        value={line.accountId}
+                        itemType={line.itemType}
+                        accounts={incomeAccounts}
+                        onChange={(accountId) => update(line.key, { accountId })}
+                      />
+                    </td>
+                  ) : null}
                   <td className="px-2 py-2">
                     <Input
                       aria-label={`Line ${n} quantity`}
@@ -339,12 +380,10 @@ export function DocumentLinesEditor({
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <Input
-                      aria-label={`Line ${n} VAT rate`}
-                      inputMode="decimal"
-                      value={line.taxRate}
-                      onChange={(event) => update(line.key, { taxRate: event.target.value })}
-                      className="text-right tabular-nums"
+                    <VatSelect
+                      label={`Line ${n} VAT`}
+                      value={line.vatTreatment}
+                      onChange={(vatTreatment) => update(line.key, { vatTreatment })}
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -499,6 +538,76 @@ function LineAmount({ line, amounts }: { line: EditableLine; amounts: LineAmount
   }
   if (line.unitPrice.trim() === '') return <span className="text-muted-foreground">—</span>;
   return <span className="text-xs font-medium text-destructive">Check the numbers</span>;
+}
+
+/**
+ * How a line is treated for VAT. The rate follows from it (the workshop's
+ * rate for standard-rated, nothing otherwise), so it can never be mistyped.
+ */
+function VatSelect({
+  label,
+  value,
+  onChange,
+  large = false,
+}: {
+  label: string;
+  value: VatTreatment;
+  onChange: (value: VatTreatment) => void;
+  large?: boolean;
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={value}
+      onChange={(event) => onChange(event.target.value as VatTreatment)}
+      className={cn(
+        'w-full min-w-0 rounded-lg border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50',
+        large ? 'h-12 text-base' : 'h-9',
+      )}
+    >
+      {VAT_TREATMENTS.map((treatment) => (
+        <option key={treatment.value} value={treatment.value}>
+          {treatment.short}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Which income account a line books to; blank is the default for its type. */
+function AccountSelect({
+  label,
+  value,
+  itemType,
+  accounts,
+  onChange,
+  large = false,
+}: {
+  label: string;
+  value: string;
+  itemType: LineType;
+  accounts: { id: string; code: string; name: string }[];
+  onChange: (accountId: string) => void;
+  large?: boolean;
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className={cn(
+        'w-full min-w-0 rounded-lg border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50',
+        large ? 'h-12 text-base' : 'h-9',
+      )}
+    >
+      <option value="">Default — {itemType === 'LABOUR' ? 'labour' : 'parts'} sales</option>
+      {accounts.map((account) => (
+        <option key={account.id} value={account.id}>
+          {account.code} · {account.name}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 /**

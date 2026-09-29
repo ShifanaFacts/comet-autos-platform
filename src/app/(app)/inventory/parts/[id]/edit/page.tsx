@@ -45,7 +45,7 @@ export default async function EditPartPage({ params }: { params: Promise<{ id: s
         title="Edit part"
         description={<span className="font-mono">{part.sku}</span>}
       />
-      <Panel className="w-full max-w-3xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <PartForm
           action={updatePartAction.bind(null, part.id)}
           initial={{

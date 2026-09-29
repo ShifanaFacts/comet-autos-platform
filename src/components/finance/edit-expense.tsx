@@ -12,16 +12,19 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { ExpenseForm, type ExpenseDraft } from '@/components/finance/expense-form';
+import type { AccountChoice } from '@/lib/accounting/reports';
 
 /** Corrects a recorded expense in a dialog; the change is kept in the audit log. */
 export function EditExpenseButton({
   expense,
   categories,
   defaultVatRate,
+  moneyAccounts,
 }: {
   expense: ExpenseDraft;
   categories: { id: string; accountCode: string; accountName: string }[];
   defaultVatRate: string;
+  moneyAccounts?: AccountChoice[];
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -44,6 +47,7 @@ export function EditExpenseButton({
         <ExpenseForm
           categories={categories}
           defaultVatRate={defaultVatRate}
+          moneyAccounts={moneyAccounts}
           expense={expense}
           onDone={() => setOpen(false)}
         />

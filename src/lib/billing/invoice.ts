@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import type { Prisma } from '@/generated/prisma/client';
-import type { EstimateItemType, EstimateKind, InvoiceStatus } from '@/generated/prisma/enums';
+import type {
+  EstimateItemType,
+  EstimateKind,
+  InvoiceStatus,
+  JobCardStatus,
+  VatTreatment,
+} from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
@@ -22,6 +28,8 @@ import {
   type LineAmounts,
 } from '@/lib/money';
 import { lineData, totalsData, withBillDiscount } from '@/lib/billing/document-lines';
+import { checkMoneyAccount } from '@/lib/accounting/chart';
+import { syncPosting } from '@/lib/accounting/journal';
 import { withNetQuantities } from '@/lib/inventory/stock';
 import { prepareSignature, recordSignature } from '@/lib/media/signatures';
 import { resolveDefaultVatRate } from '@/lib/tax';
@@ -53,6 +61,7 @@ export type BillingSource =
 export interface BillableLine {
   source: BillingSource;
   itemType: EstimateItemType;
+  vatTreatment: VatTreatment;
   estimateKind: EstimateKind;
   estimateNumber: string;
   description: string;
@@ -179,6 +188,7 @@ export async function buildBilling(
         billable.push({
           source: record.source,
           itemType: line.itemType,
+          vatTreatment: line.vatTreatment,
           estimateKind: line.estimate.kind,
           estimateNumber: line.estimate.estimateNumber,
           description:
@@ -292,20 +302,54 @@ type PaymentLike = {
   receivedAt: Date;
 };
 
-/** Paid, balance and state of an invoice — the one rule the staff screens, customer pages and documents share. */
+/**
+ * Paid, credited, balance and state of an invoice — the one rule the staff
+ * screens, customer pages and documents share:
+ *
+ *   due = total − credited (tax credit notes) − paid
+ *
+ * never below zero; anything paid beyond it is refunded under the credit
+ * note that caused it.
+ */
 export function invoiceBalance(invoice: {
   totalAmount: { toString(): string };
+  creditedAmount: { toString(): string };
   status: InvoiceStatus;
   payments: PaymentLike[];
 }) {
   const paid = paidFils(invoice.payments);
   const total = toFils(invoice.totalAmount.toString());
+  const credited = toFils(invoice.creditedAmount.toString());
   return {
     total: filsToString(total),
+    credited: filsToString(credited),
     paid: filsToString(paid),
-    balance: filsToString(Math.max(total - paid, 0)),
+    balance: filsToString(Math.max(total - credited - paid, 0)),
     state: paymentState(invoice.status),
   };
+}
+
+/**
+ * An issued invoice's status from what has been paid and credited: settled
+ * (PAID) once nothing is due, PARTIALLY_PAID once anything is paid.
+ */
+export function settlementStatus(
+  invoice: { totalAmount: { toString(): string }; creditedAmount: { toString(): string } },
+  paid: number,
+): InvoiceStatus {
+  if (dueFils(invoice, paid) === 0) return 'PAID';
+  return paid > 0 ? 'PARTIALLY_PAID' : 'ISSUED';
+}
+
+/** What is still due on an invoice, in fils: total − credited − paid, never below zero. */
+export function dueFils(
+  invoice: { totalAmount: { toString(): string }; creditedAmount: { toString(): string } },
+  paid: number,
+) {
+  return Math.max(
+    toFils(invoice.totalAmount.toString()) - toFils(invoice.creditedAmount.toString()) - paid,
+    0,
+  );
 }
 
 /**
@@ -314,7 +358,11 @@ export function invoiceBalance(invoice: {
  * order, are deducted first.
  */
 export function receiptBalances(
-  invoice: { totalAmount: { toString(): string }; payments: PaymentLike[] },
+  invoice: {
+    totalAmount: { toString(): string };
+    creditedAmount: { toString(): string };
+    payments: PaymentLike[];
+  },
   paymentId: string,
 ) {
   const ordered = [...invoice.payments].sort(
@@ -322,7 +370,9 @@ export function receiptBalances(
   );
   const index = ordered.findIndex((p) => p.id === paymentId);
   if (index < 0) throw new NotFoundError('payment');
-  const total = toFils(invoice.totalAmount.toString());
+  // Credit notes come off the invoice before any payment is counted.
+  const total =
+    toFils(invoice.totalAmount.toString()) - toFils(invoice.creditedAmount.toString());
   const paidBefore = paidFils(ordered.slice(0, index));
   const paidThrough = paidFils(ordered.slice(0, index + 1));
   return {
@@ -417,12 +467,14 @@ export async function createInvoice(user: AuthenticatedUser, jobCardId: string) 
           invoiceId: invoice.id,
           itemType: line.source.labourId ? 'LABOUR' : 'PART',
           description: line.description,
+          vatTreatment: line.vatTreatment,
           ...lineData(line.amounts),
           labourId: line.source.labourId ?? null,
           partUsageId: line.source.partUsageId ?? null,
         },
       });
     }
+    await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
 
     await applyJobStatusChange(tx, {
       organizationId: user.organizationId,
@@ -548,6 +600,8 @@ const paymentSchema = z.object({
     .min(1, 'Enter when the payment was received.'),
   referenceNumber: z.string().trim().max(100).optional(),
   notes: z.string().trim().max(1000).optional(),
+  /** The cash, bank or card account it went into; blank for the method's default. */
+  accountId: z.union([z.literal(''), z.uuid()]).optional(),
 });
 
 /**
@@ -590,91 +644,113 @@ export async function recordInvoicePayment(
       : null;
 
     await tx.$executeRaw`SELECT id FROM invoices WHERE id = ${target.id}::uuid FOR UPDATE`;
-    const invoice = await tx.invoice.findFirstOrThrow({
-      where: { id: target.id, organizationId: user.organizationId },
-    });
-    requirePermission(user, 'payment.create', { branchId: invoice.branchId });
-    if (invoice.invoiceType !== 'TAX_INVOICE')
-      throw new DomainError('Payments can only be recorded against a tax invoice.');
-    if (invoice.status === 'PAID') throw new DomainError('This invoice is already fully paid.');
-    if (invoice.status !== 'ISSUED' && invoice.status !== 'PARTIALLY_PAID') {
-      throw new DomainError('This invoice cannot take payments.');
-    }
-    // The form's time is minute-precision, so compare against the minute of issue.
-    if (receivedAt.getTime() < Math.floor(invoice.issuedAt!.getTime() / 60000) * 60000)
-      throw new DomainError(
-        "A payment can't be dated before the invoice was issued.",
-        'receivedAt',
-      );
-
-    const payments = await tx.payment.findMany({
-      where: { organizationId: user.organizationId, invoiceId: invoice.id },
-      select: { id: true, amount: true, status: true, reversalOfPaymentId: true },
-    });
-    const total = toFils(invoice.totalAmount.toString());
-    const balance = total - paidFils(payments);
-    const amount = toFils(input.amount);
-    if (amount > balance) {
-      throw new DomainError(
-        `That is more than the balance due (${filsToString(balance)}).`,
-        'amount',
-      );
-    }
-
-    const paymentNumber = await allocateDocumentNumber(
-      tx,
-      user.organizationId,
-      invoice.branchId,
-      'PAYMENT_RECEIPT',
-    );
-    const payment = await tx.payment.create({
-      data: {
-        organizationId: user.organizationId,
-        invoiceId: invoice.id,
-        paymentNumber,
-        amount: filsToString(amount),
-        method: input.method,
-        status: 'COMPLETED',
-        referenceNumber: emptyToNull(input.referenceNumber),
-        notes: emptyToNull(input.notes),
-        receivedAt,
-        receivedByUserId: user.id,
-      },
-    });
-    const newBalance = balance - amount;
-    const newStatus: InvoiceStatus = newBalance === 0 ? 'PAID' : 'PARTIALLY_PAID';
-    await tx.invoice.update({ where: { id: invoice.id }, data: { status: newStatus } });
-
-    if (newStatus === 'PAID' && jobCard && normalizeStatus(jobCard.status) === 'INVOICED') {
-      await applyJobStatusChange(tx, {
-        organizationId: user.organizationId,
-        jobCardId: jobCard.id,
-        toStatus: 'PAID',
-        actor: { userId: user.id },
-        source: 'workflow',
-        metadata: { invoiceId: invoice.id, paymentId: payment.id },
-      });
-    }
-    await writeAuditLog(tx, {
-      organizationId: user.organizationId,
-      branchId: invoice.branchId,
-      actorUserId: user.id,
-      action: 'payment.recorded',
-      entityType: 'Payment',
-      entityId: payment.id,
-      afterData: {
-        invoiceId: invoice.id,
-        invoiceNumber: invoice.invoiceNumber,
-        paymentNumber,
-        amount: filsToString(amount),
-        method: input.method,
-        balanceAfter: filsToString(newBalance),
-        invoiceStatus: newStatus,
-      },
-      metadata: { jobCardId: invoice.jobCardId },
-    });
-    return payment;
+    return takePayment(tx, user, target.id, jobCard, input, receivedAt);
   });
+}
+
+export type PaymentInput = Pick<
+  z.infer<typeof paymentSchema>,
+  'amount' | 'method' | 'referenceNumber' | 'notes' | 'accountId'
+>;
+
+/**
+ * The payment rules themselves, inside a transaction that already holds the
+ * invoice (and its job card, locked first). Shared by a payment taken on its
+ * own and a sale paid on the spot, so both follow exactly the same rules:
+ * a tax invoice, no more than the balance, a receipt number, the invoice and
+ * job card moved on, an audit entry.
+ */
+export async function takePayment(
+  tx: Prisma.TransactionClient,
+  user: AuthenticatedUser,
+  invoiceId: string,
+  jobCard: { id: string; status: JobCardStatus } | null,
+  input: PaymentInput,
+  receivedAt: Date,
+) {
+  const invoice = await tx.invoice.findFirstOrThrow({
+    where: { id: invoiceId, organizationId: user.organizationId },
+  });
+  requirePermission(user, 'payment.create', { branchId: invoice.branchId });
+  const accountId = await checkMoneyAccount(tx, user.organizationId, input.accountId);
+  if (invoice.invoiceType !== 'TAX_INVOICE')
+    throw new DomainError('Payments can only be recorded against a tax invoice.');
+  if (invoice.status === 'PAID') throw new DomainError('This invoice is already fully paid.');
+  if (invoice.status !== 'ISSUED' && invoice.status !== 'PARTIALLY_PAID') {
+    throw new DomainError('This invoice cannot take payments.');
+  }
+  // The form's time is minute-precision, so compare against the minute of issue.
+  if (receivedAt.getTime() < Math.floor(invoice.issuedAt!.getTime() / 60000) * 60000)
+    throw new DomainError("A payment can't be dated before the invoice was issued.", 'receivedAt');
+
+  const payments = await tx.payment.findMany({
+    where: { organizationId: user.organizationId, invoiceId: invoice.id },
+    select: { id: true, amount: true, status: true, reversalOfPaymentId: true },
+  });
+  const balance = dueFils(invoice, paidFils(payments));
+  const amount = toFils(input.amount);
+  if (amount > balance) {
+    throw new DomainError(
+      `That is more than the balance due (${filsToString(balance)}).`,
+      'amount',
+    );
+  }
+
+  const paymentNumber = await allocateDocumentNumber(
+    tx,
+    user.organizationId,
+    invoice.branchId,
+    'PAYMENT_RECEIPT',
+  );
+  const payment = await tx.payment.create({
+    data: {
+      organizationId: user.organizationId,
+      invoiceId: invoice.id,
+      paymentNumber,
+      amount: filsToString(amount),
+      method: input.method,
+      accountId,
+      status: 'COMPLETED',
+      referenceNumber: emptyToNull(input.referenceNumber),
+      notes: emptyToNull(input.notes),
+      receivedAt,
+      receivedByUserId: user.id,
+    },
+  });
+  const newBalance = balance - amount;
+  const newStatus = settlementStatus(invoice, paidFils(payments) + amount);
+  await tx.invoice.update({ where: { id: invoice.id }, data: { status: newStatus } });
+  await syncPosting(tx, user.organizationId, 'PAYMENT', payment.id, user.id);
+
+  if (newStatus === 'PAID' && jobCard && normalizeStatus(jobCard.status) === 'INVOICED') {
+    await applyJobStatusChange(tx, {
+      organizationId: user.organizationId,
+      jobCardId: jobCard.id,
+      toStatus: 'PAID',
+      actor: { userId: user.id },
+      source: 'workflow',
+      metadata: { invoiceId: invoice.id, paymentId: payment.id },
+    });
+  }
+  await writeAuditLog(tx, {
+    organizationId: user.organizationId,
+    branchId: invoice.branchId,
+    actorUserId: user.id,
+    action: 'payment.recorded',
+    entityType: 'Payment',
+    entityId: payment.id,
+    afterData: {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      paymentNumber,
+      amount: filsToString(amount),
+      method: input.method,
+      balanceAfter: filsToString(newBalance),
+      invoiceStatus: newStatus,
+    },
+    metadata: { jobCardId: invoice.jobCardId },
+  });
+  return payment;
 }
 
 /**

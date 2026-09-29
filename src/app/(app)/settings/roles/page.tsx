@@ -74,7 +74,7 @@ export default async function RolesPage() {
       )}
 
       {canManage ? (
-        <Panel className="max-w-2xl">
+        <Panel>
           <NewRoleForm />
         </Panel>
       ) : null}

@@ -1,0 +1,389 @@
+/**
+ * Integration tests for the general ledger (lib/accounting):
+ *
+ *  - every invoice, payment, reversal, correction, void and expense books
+ *    itself, balanced, to the accounts the rules name — or the account
+ *    chosen on the line or the payment;
+ *  - a correction is a reversal plus a new entry; nothing booked is ever
+ *    changed or deleted (the database refuses);
+ *  - the trial balance and balance sheet balance, and the profit and loss
+ *    agrees with them;
+ *  - closing the books refuses anything dated in the closed period;
+ *  - entries made by hand must balance, and are corrected by reversal;
+ *  - booking existing records is safe to run twice;
+ *  - a VAT return, once filed, moves the period's VAT to what is due to the
+ *    FTA, closes the period, and its refund clears it against the bank.
+ *
+ * Needs the 20260928090000_general_ledger migration applied.
+ *
+ *   npm run test:integration
+ */
+import 'dotenv/config';
+import { after, before, describe, test } from 'node:test';
+import assert from 'node:assert/strict';
+import type { AccountRole } from '@/generated/prisma/enums';
+import { prisma } from '@/lib/prisma';
+import { createDirectInvoice } from '@/lib/billing/direct-invoice';
+import { recordInvoicePayment } from '@/lib/billing/invoice';
+import { reverseInvoicePayment, updateInvoice, voidInvoice } from '@/lib/billing/invoice-changes';
+import { recordExpense, voidExpense } from '@/lib/finance/expenses';
+import { ensureChart } from '@/lib/accounting/chart';
+import {
+  bookExistingRecords,
+  countUnbooked,
+  createManualEntry,
+  reverseManualEntry,
+} from '@/lib/accounting/entries';
+import { closeBooks, reopenAllBooks } from '@/lib/accounting/periods';
+import { getBalanceSheet, getLedgerProfitAndLoss, getTrialBalance } from '@/lib/accounting/reports';
+import { fileVatReturn, listVatFilings, settleVatReturn } from '@/lib/accounting/vat-filing';
+import { toFils } from '@/lib/money';
+import { localDateString, toLocalDateTimeInput } from '@/lib/format';
+import { createTestOrg, expectDomainError, RUN, type TestOrg } from './support';
+
+let a: TestOrg;
+/** Account ids by role, for reading the books. */
+let roles: Record<AccountRole, string>;
+
+before(async () => {
+  a = await createTestOrg('Ledger');
+  roles = await prisma.$transaction((tx) => ensureChart(tx, a.organizationId));
+});
+
+after(async () => {
+  await prisma.$disconnect();
+});
+
+const today = () => localDateString();
+const daysAgo = (days: number) => localDateString(new Date(Date.now() - days * 86400000));
+const now = () => toLocalDateTimeInput(new Date());
+
+async function customer(suffix: string) {
+  return prisma.customer.create({
+    data: {
+      organizationId: a.organizationId,
+      name: `Ledger Customer ${suffix} ${RUN}`,
+      phone: `050 ${suffix.padStart(3, '0')} 6644`,
+    },
+  });
+}
+
+/** The lines of the entries booking a record, as { account: net debit } in fils. */
+async function bookedFor(sourceId: string) {
+  const lines = await prisma.journalEntryLine.findMany({
+    where: { organizationId: a.organizationId, journalEntry: { sourceId } },
+    select: { chartOfAccountId: true, debitAmount: true, creditAmount: true },
+  });
+  const net = new Map<string, number>();
+  for (const line of lines) {
+    const value = toFils(line.debitAmount.toString()) - toFils(line.creditAmount.toString());
+    net.set(line.chartOfAccountId, (net.get(line.chartOfAccountId) ?? 0) + value);
+  }
+  return net;
+}
+
+/** Every entry balances: the database guarantees it; this checks it too. */
+async function assertAllBalanced() {
+  const entries = await prisma.journalEntry.findMany({
+    where: { organizationId: a.organizationId },
+    include: { lines: true },
+  });
+  for (const entry of entries) {
+    const debit = entry.lines.reduce((s, l) => s + toFils(l.debitAmount.toString()), 0);
+    const credit = entry.lines.reduce((s, l) => s + toFils(l.creditAmount.toString()), 0);
+    assert.equal(debit, credit, `${entry.entryNumber} balances`);
+  }
+}
+
+describe('invoices and payments book themselves', () => {
+  test('a sales receipt: sales, discount and VAT, then the cash against receivables', async () => {
+    const { id: customerId } = await customer('10');
+    // Service 400 less 10% = 360; oil filter 2 × 50 = 100; bill discount AED 10.
+    // Lines 460, discount 10, taxable 450, VAT 22.50, total 472.50.
+    const { invoiceId, paymentId } = await createDirectInvoice(a.owner, {
+      customerId,
+      items: [
+        {
+          itemType: 'LABOUR',
+          description: 'Service',
+          quantity: '1',
+          unitPrice: '400',
+          discountType: 'PERCENT',
+          discount: '10',
+        },
+        { itemType: 'PART', description: 'Oil filter', quantity: '2', unitPrice: '50' },
+      ],
+      discountType: 'AMOUNT',
+      discount: '10',
+      payNow: '1',
+      paymentMethod: 'CASH',
+    });
+
+    const invoiceBooked = await bookedFor(invoiceId);
+    assert.equal(invoiceBooked.get(roles.ACCOUNTS_RECEIVABLE), toFils('472.50'));
+    assert.equal(invoiceBooked.get(roles.SALES_LABOUR), -toFils('360.00'));
+    assert.equal(invoiceBooked.get(roles.SALES_PARTS), -toFils('100.00'));
+    assert.equal(invoiceBooked.get(roles.SALES_DISCOUNTS), toFils('10.00'));
+    assert.equal(invoiceBooked.get(roles.VAT_OUTPUT), -toFils('22.50'));
+
+    const paymentBooked = await bookedFor(paymentId!);
+    assert.equal(paymentBooked.get(roles.CASH), toFils('472.50'));
+    assert.equal(paymentBooked.get(roles.ACCOUNTS_RECEIVABLE), -toFils('472.50'));
+
+    const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
+    assert.ok(invoice.journalEntryId, 'the invoice points at its entry');
+  });
+
+  test('a line booked to the account chosen for it', async () => {
+    const { id: customerId } = await customer('11');
+    const otherIncome = await prisma.chartOfAccount.findFirstOrThrow({
+      where: { organizationId: a.organizationId, accountCode: '4100' },
+    });
+    const { invoiceId } = await createDirectInvoice(a.owner, {
+      customerId,
+      items: [
+        {
+          itemType: 'PART',
+          description: 'Scrap battery',
+          quantity: '1',
+          unitPrice: '20',
+          accountId: otherIncome.id,
+        },
+      ],
+    });
+    const booked = await bookedFor(invoiceId);
+    assert.equal(booked.get(otherIncome.id), -toFils('20.00'));
+    assert.equal(booked.get(roles.SALES_PARTS), undefined);
+
+    // An expense account can't take a sale.
+    const rent = await prisma.chartOfAccount.findFirstOrThrow({
+      where: { organizationId: a.organizationId, accountCode: '5100' },
+    });
+    await expectDomainError(
+      createDirectInvoice(a.owner, {
+        customerId,
+        items: [
+          { itemType: 'PART', description: 'x', quantity: '1', unitPrice: '1', accountId: rent.id },
+        ],
+      }),
+      /income account/,
+    );
+  });
+
+  test('a payment into a chosen account, reversed, leaves nothing behind', async () => {
+    const { id: customerId } = await customer('12');
+    const { invoiceId } = await createDirectInvoice(a.owner, {
+      customerId,
+      items: [{ itemType: 'LABOUR', description: 'Diagnosis', quantity: '1', unitPrice: '100' }],
+    });
+    const payment = await recordInvoicePayment(a.owner, invoiceId, {
+      amount: '105',
+      method: 'CARD',
+      receivedAt: now(),
+      accountId: roles.BANK,
+    });
+    const booked = await bookedFor(payment.id);
+    assert.equal(
+      booked.get(roles.BANK),
+      toFils('105.00'),
+      'into the account chosen, not card clearing',
+    );
+
+    await reverseInvoicePayment(a.owner, payment.id, { reason: 'Wrong invoice' });
+    const reversal = await prisma.payment.findFirstOrThrow({
+      where: { reversalOfPaymentId: payment.id },
+    });
+    const back = await bookedFor(reversal.id);
+    assert.equal(back.get(roles.BANK), -toFils('105.00'));
+    assert.equal(back.get(roles.ACCOUNTS_RECEIVABLE), toFils('105.00'));
+  });
+
+  test('a correction reverses the old entry and books the new; a void reverses it', async () => {
+    const { id: customerId } = await customer('13');
+    const { invoiceId } = await createDirectInvoice(a.owner, {
+      customerId,
+      items: [{ itemType: 'LABOUR', description: 'Wash', quantity: '1', unitPrice: '50' }],
+    });
+    await updateInvoice(a.owner, invoiceId, {
+      items: [
+        { itemType: 'LABOUR', description: 'Wash and polish', quantity: '1', unitPrice: '80' },
+      ],
+    });
+    const entries = await prisma.journalEntry.findMany({
+      where: { organizationId: a.organizationId, sourceId: invoiceId },
+      orderBy: { createdAt: 'asc' },
+    });
+    assert.equal(entries.length, 3, 'original, its reversal, the corrected one');
+    assert.equal(entries[1].reversalOfJournalEntryId, entries[0].id);
+    const net = await bookedFor(invoiceId);
+    assert.equal(
+      net.get(roles.ACCOUNTS_RECEIVABLE),
+      toFils('84.00'),
+      'only the corrected figure stands',
+    );
+
+    await voidInvoice(a.owner, invoiceId, { reason: 'Customer cancelled' });
+    const afterVoid = await bookedFor(invoiceId);
+    assert.ok(
+      [...afterVoid.values()].every((value) => value === 0),
+      'a void invoice leaves nothing',
+    );
+
+    // Booked entries are permanent.
+    await assert.rejects(
+      prisma.journalEntryLine.updateMany({
+        where: { journalEntryId: entries[0].id },
+        data: { debitAmount: '1.00' },
+      }),
+      /permanent/,
+    );
+  });
+});
+
+describe('expenses', () => {
+  test('recorded and paid: category, recoverable VAT, the account paid from; voided: reversed', async () => {
+    const expense = await recordExpense(a.owner, {
+      description: `Workshop rent ${RUN}`,
+      amount: '1000',
+      taxRate: '5',
+      expenseDate: today(),
+      paymentMethod: 'BANK_TRANSFER',
+    });
+    const booked = await bookedFor(expense.id);
+    assert.equal(booked.get(roles.OTHER_EXPENSES), toFils('1000.00'));
+    assert.equal(booked.get(roles.VAT_INPUT), toFils('50.00'));
+    assert.equal(booked.get(roles.BANK), -toFils('1050.00'));
+
+    await voidExpense(a.owner, expense.id, { reason: 'Duplicate' });
+    const afterVoid = await bookedFor(expense.id);
+    assert.ok([...afterVoid.values()].every((value) => value === 0));
+  });
+});
+
+describe('the statements', () => {
+  test('the trial balance and balance sheet balance, and agree with the profit and loss', async () => {
+    await assertAllBalanced();
+    const trial = await getTrialBalance(a.owner);
+    assert.equal(trial.balanced, true);
+    assert.equal(trial.totalDebit, trial.totalCredit);
+
+    const sheet = await getBalanceSheet(a.owner);
+    assert.equal(sheet.balanced, true);
+
+    const profit = await getLedgerProfitAndLoss(a.owner, { period: 'year' });
+    // Everything so far is dated this year, so this year's profit is all the profit to date.
+    assert.equal(profit.netProfit, sheet.equity.earnings);
+  });
+});
+
+describe('entries made by hand', () => {
+  test('must balance, and are corrected by reversal', async () => {
+    await expectDomainError(
+      createManualEntry(a.owner, {
+        date: today(),
+        description: "Owner's capital",
+        lines: [
+          { accountId: roles.BANK, debit: '5000' },
+          { accountId: roles.OPENING_BALANCE, credit: '4999' },
+        ],
+      }),
+      /does not balance/,
+    );
+    const entry = await createManualEntry(a.owner, {
+      date: today(),
+      description: "Owner's capital paid into the bank",
+      lines: [
+        { accountId: roles.BANK, debit: '5000' },
+        { accountId: roles.OPENING_BALANCE, credit: '5000', memo: 'Opening' },
+      ],
+    });
+    assert.match(entry.entryNumber ?? '', /^JV-/);
+    const reversal = await reverseManualEntry(a.owner, entry.id, {
+      date: today(),
+      reason: 'Wrong account',
+    });
+    assert.equal(reversal.reversalOfJournalEntryId, entry.id);
+    await expectDomainError(
+      reverseManualEntry(a.owner, entry.id, { date: today(), reason: 'Again' }),
+      /Already reversed/,
+    );
+  });
+});
+
+describe('closing the books', () => {
+  test('refuses anything dated in the closed period, until reopened', async () => {
+    await closeBooks(a.owner, { through: daysAgo(1) });
+    await expectDomainError(
+      recordExpense(a.owner, {
+        description: `Late receipt ${RUN}`,
+        amount: '10',
+        expenseDate: daysAgo(2),
+        paymentMethod: 'CASH',
+      }),
+      /books are closed/,
+    );
+    // Today is still open.
+    await recordExpense(a.owner, {
+      description: `Today's receipt ${RUN}`,
+      amount: '10',
+      expenseDate: today(),
+      paymentMethod: 'CASH',
+    });
+    await reopenAllBooks(a.owner, { reason: 'Test finished' });
+  });
+});
+
+describe('booking existing records', () => {
+  test('books nothing twice', async () => {
+    const first = await bookExistingRecords(a.owner);
+    assert.deepEqual(first.failed, []);
+    assert.equal(await countUnbooked(a.owner), 0);
+    const second = await bookExistingRecords(a.owner);
+    assert.equal(second.booked, 0);
+  });
+});
+
+describe('VAT returns', () => {
+  test('filed: VAT moved to what is due to the FTA, the period closed; refunded: cleared', async () => {
+    // A past period with only a purchase's VAT in it: a refund is due.
+    const from = daysAgo(40);
+    const to = daysAgo(31);
+    await recordExpense(a.owner, {
+      description: `Diagnostic tool ${RUN}`,
+      amount: '2000',
+      taxRate: '5',
+      expenseDate: daysAgo(35),
+      paymentMethod: 'BANK_TRANSFER',
+    });
+    const filing = await fileVatReturn(a.owner, {
+      from,
+      to,
+      filedOn: daysAgo(10),
+      ftaReference: `VAT-${RUN}`,
+    });
+    assert.equal(filing.inputVat.toString(), '100');
+    assert.equal(filing.netVat.toString(), '-100');
+    const booked = await bookedFor(filing.id);
+    assert.equal(booked.get(roles.VAT_INPUT), -toFils('100.00'));
+    assert.equal(booked.get(roles.VAT_SETTLEMENT), toFils('100.00'), 'the FTA owes the refund');
+
+    const organization = await prisma.organization.findUniqueOrThrow({
+      where: { id: a.organizationId },
+    });
+    assert.equal(organization.booksClosedThrough?.toISOString().slice(0, 10), to);
+    await expectDomainError(
+      fileVatReturn(a.owner, { from, to, filedOn: daysAgo(9) }),
+      /already filed/,
+    );
+
+    await settleVatReturn(a.owner, filing.id, { settledOn: daysAgo(5) });
+    const settled = await bookedFor(filing.id);
+    assert.equal(settled.get(roles.VAT_SETTLEMENT), 0);
+    assert.equal(settled.get(roles.BANK), toFils('100.00'));
+    const [listed] = await listVatFilings(a.owner);
+    assert.equal(listed.state, 'REFUNDED');
+
+    await reopenAllBooks(a.owner, { reason: 'Test finished' });
+    await assertAllBalanced();
+  });
+});

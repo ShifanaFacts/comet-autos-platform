@@ -35,7 +35,7 @@ export default async function EditPurchasePage({ params }: { params: Promise<{ i
         }
         title="Edit draft purchase"
       />
-      <Panel className="w-full max-w-5xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <PurchaseForm
           action={updatePurchaseAction.bind(null, purchase.id)}
           parts={options.parts}

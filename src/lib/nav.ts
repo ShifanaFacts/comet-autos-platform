@@ -27,6 +27,10 @@ import {
   Settings,
   ShieldCheck,
   ScrollText,
+  FileMinus,
+  FileSpreadsheet,
+  Landmark,
+  Building2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -71,6 +75,12 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Quotations', href: '/quotations', icon: FileText, permission: 'job_card.view' },
       { label: 'Invoices', href: '/finance/invoices', icon: Receipt, permission: 'invoice.view' },
       { label: 'Payments', href: '/finance/payments', icon: Wallet, permission: 'invoice.view' },
+      {
+        label: 'Credit notes',
+        href: '/finance/credit-notes',
+        icon: FileMinus,
+        permission: 'invoice.view',
+      },
     ],
   },
   {
@@ -146,9 +156,27 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'accounting.view',
       },
       {
+        label: 'Statements',
+        href: '/finance/statements',
+        icon: FileSpreadsheet,
+        permission: 'invoice.view',
+      },
+      {
         label: 'Accounting',
         href: '/finance/accounting',
         icon: Calculator,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Bank reconciliation',
+        href: '/finance/bank-reconciliation',
+        icon: Landmark,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Fixed assets',
+        href: '/finance/fixed-assets',
+        icon: Building2,
         permission: 'accounting.view',
       },
       {
