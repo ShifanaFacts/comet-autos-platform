@@ -16,6 +16,10 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  *
  * The rules (all amounts exact, in fils):
  *
+ * OPENING BALANCE INVOICE (what a customer owed when the books began)
+ *   Dr Trade receivables              the balance
+ *   Cr Opening balance equity         — no sale, no VAT
+ *
  * INVOICE (a tax invoice, once issued; nothing while draft or void)
  *   Dr Accounts receivable            total
  *   Cr each line's income account     its amount after its own discount
@@ -193,9 +197,24 @@ const postInvoice: Poster = async (tx, organizationId, invoiceId, accounts) => {
       customer: { select: { name: true } },
     },
   });
-  if (!invoice || invoice.invoiceType !== 'TAX_INVOICE') return null;
+  if (!invoice || invoice.invoiceType === 'PROFORMA') return null;
   if (invoice.status === 'DRAFT' || invoice.status === 'VOID' || invoice.status === 'CANCELLED') {
     return null;
+  }
+
+  // A customer's balance from before the books began: owed, but neither a
+  // sale nor VAT — its other side is opening balance equity.
+  if (invoice.invoiceType === 'OPENING_BALANCE') {
+    const total = fils(invoice.totalAmount);
+    return {
+      date: invoice.issueDate,
+      branchId: invoice.branchId,
+      description: `Opening balance ${invoice.invoiceNumber} — ${invoice.customerName ?? invoice.customer.name}`,
+      lines: new Lines()
+        .debit(accounts.ACCOUNTS_RECEIVABLE, total)
+        .credit(accounts.OPENING_BALANCE, total)
+        .build(),
+    };
   }
 
   const lines = new Lines()
@@ -550,7 +569,8 @@ const postCreditNote: Poster = async (tx, organizationId, creditNoteId, accounts
     .credit(accounts.SALES_DISCOUNTS, fils(note.discountAmount))
     .debit(accounts.VAT_OUTPUT, fils(note.taxAmount));
   for (const item of note.items) {
-    const account = item.accountId ?? accounts[SALES_ROLE[item.itemType ?? 'OTHER'] ?? 'SALES_OTHER'];
+    const account =
+      item.accountId ?? accounts[SALES_ROLE[item.itemType ?? 'OTHER'] ?? 'SALES_OTHER'];
     lines.debit(account, fils(item.lineTotal));
   }
   return {
@@ -599,6 +619,7 @@ const postFixedAsset: Poster = async (tx, organizationId, assetId, accounts) => 
       funding: true,
       paidFromAccountId: true,
       openingDepreciation: true,
+      openingThrough: true,
       assetAccountId: true,
       accumulatedAccountId: true,
     },
@@ -618,7 +639,9 @@ const postFixedAsset: Poster = async (tx, organizationId, assetId, accounts) => 
     lines.debit(accounts.OPENING_BALANCE, opening).credit(asset.accumulatedAccountId, opening);
   }
   return {
-    date: asset.acquiredOn,
+    // Owned before the books began: it comes in on the day its depreciation was charged to.
+    date:
+      asset.funding === 'OPENING' && asset.openingThrough ? asset.openingThrough : asset.acquiredOn,
     branchId: null,
     description: `Fixed asset ${asset.assetNumber} — ${asset.name}${asset.funding === 'OPENING' ? ' (opening balance)' : ''}`,
     lines: lines.build(),
@@ -632,7 +655,12 @@ const postDepreciation: Poster = async (tx, organizationId, depreciationId) => {
       periodEnd: true,
       amount: true,
       fixedAsset: {
-        select: { assetNumber: true, name: true, expenseAccountId: true, accumulatedAccountId: true },
+        select: {
+          assetNumber: true,
+          name: true,
+          expenseAccountId: true,
+          accumulatedAccountId: true,
+        },
       },
     },
   });
@@ -688,7 +716,10 @@ const postAssetDisposal: Poster = async (tx, organizationId, assetId, accounts) 
 };
 
 /** The posting rule for each kind of record. MANUAL entries are made by hand. */
-export const POSTING_RULES: Record<Exclude<JournalSource, 'MANUAL'>, Poster> = {
+export const POSTING_RULES: Record<
+  Exclude<JournalSource, 'MANUAL' | 'OPENING_BALANCE' | 'YEAR_END_CLOSE'>,
+  Poster
+> = {
   INVOICE: postInvoice,
   PAYMENT: postPayment,
   EXPENSE: postExpense,

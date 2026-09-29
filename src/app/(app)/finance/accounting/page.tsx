@@ -12,12 +12,9 @@ import {
   WalletCards,
 } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
-import {
-  getCashSummary,
-  listAccounts,
-  type AccountGroups,
-  type CashSummary,
-} from '@/lib/finance/accounting';
+import { listAccounts, type AccountGroups } from '@/lib/finance/accounting';
+import { getCashFlowStatement } from '@/lib/accounting/cash-flow';
+import { CashFlowView } from '@/components/accounting/cash-flow-view';
 import {
   getAccountChoices,
   getAccountLedger,
@@ -29,7 +26,7 @@ import {
 import { countUnbooked } from '@/lib/accounting/entries';
 import { booksClosedThrough } from '@/lib/accounting/periods';
 import { prisma } from '@/lib/prisma';
-import { formatCalendarDate, formatDate, formatMoney, localDateString } from '@/lib/format';
+import { formatCalendarDate, formatDate, localDateString } from '@/lib/format';
 import { LinkButton } from '@/components/shared/link-button';
 import {
   AccountLedgerView,
@@ -57,13 +54,13 @@ export const dynamic = 'force-dynamic';
 type View = 'profit' | 'balance' | 'trial' | 'ledger' | 'journal' | 'cash' | 'accounts';
 
 const TABS: { key: View; label: string; icon: typeof Scale }[] = [
+  { key: 'accounts', label: 'Chart of accounts', icon: BookOpen },
+  { key: 'journal', label: 'Journal entries', icon: NotebookPen },
+  { key: 'ledger', label: 'General ledger', icon: BookText },
+  { key: 'trial', label: 'Trial balance', icon: Sheet },
   { key: 'profit', label: 'Profit & loss', icon: TrendingUp },
   { key: 'balance', label: 'Balance sheet', icon: Scale },
-  { key: 'trial', label: 'Trial balance', icon: Sheet },
-  { key: 'ledger', label: 'Ledger', icon: BookText },
-  { key: 'journal', label: 'Journal', icon: NotebookPen },
-  { key: 'cash', label: 'Cash in & out', icon: WalletCards },
-  { key: 'accounts', label: 'Chart of accounts', icon: BookOpen },
+  { key: 'cash', label: 'Cash flow', icon: WalletCards },
 ];
 
 const VIEWS = TABS.map((tab) => tab.key);
@@ -124,115 +121,6 @@ function Tabs({ active, search }: { active: View; search: string }) {
         );
       })}
     </nav>
-  );
-}
-
-/** One line of a statement: label, optional detail, amount. */
-function Line({
-  label,
-  detail,
-  amount,
-  tone = 'default',
-  indent,
-}: {
-  label: string;
-  detail?: string;
-  amount: string;
-  tone?: 'default' | 'subtotal' | 'total' | 'negative';
-  indent?: boolean;
-}) {
-  const negative = tone === 'negative';
-  return (
-    <li
-      className={cn(
-        'flex items-baseline justify-between gap-4 px-4 py-3 sm:px-6',
-        tone === 'subtotal' && 'bg-muted/40 font-medium',
-        tone === 'total' && 'bg-muted/60 text-base font-semibold',
-      )}
-    >
-      <span className={cn('flex min-w-0 flex-col gap-0.5', indent && 'pl-4')}>
-        <span className={cn('text-sm', tone === 'total' && 'text-base')}>{label}</span>
-        {detail ? <span className="text-xs text-muted-foreground">{detail}</span> : null}
-      </span>
-      <span
-        className={cn(
-          'shrink-0 tabular-nums',
-          negative && 'text-muted-foreground',
-          tone === 'total' && amount.startsWith('-') && 'text-danger',
-        )}
-      >
-        {negative ? `(${formatMoney(amount)})` : formatMoney(amount)}
-      </span>
-    </li>
-  );
-}
-
-function CashView({ data }: { data: CashSummary }) {
-  return (
-    <Stack gap="xl">
-      <Panel className="grid gap-6 sm:grid-cols-3">
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted-foreground">Money in</span>
-          <span className="text-2xl leading-none font-semibold tabular-nums">
-            {formatMoney(data.in.total)}
-          </span>
-        </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted-foreground">Money out</span>
-          <span className="text-2xl leading-none font-semibold tabular-nums">
-            {formatMoney(data.out.total)}
-          </span>
-        </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted-foreground">Net movement</span>
-          <span
-            className={cn(
-              'text-2xl leading-none font-semibold tabular-nums',
-              data.netFils < 0 ? 'text-danger' : 'text-success',
-            )}
-          >
-            {formatMoney(data.net)}
-          </span>
-        </div>
-      </Panel>
-
-      <div className="grid gap-8 lg:grid-cols-2">
-        <Section
-          title="In"
-          description="Customer payments received. Reversed payments never count."
-        >
-          <Panel padding="none" className="overflow-hidden">
-            <ul className="divide-y divide-border">
-              {data.in.rows.length === 0 ? (
-                <li className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                  Nothing received in this period.
-                </li>
-              ) : (
-                data.in.rows.map((row) => (
-                  <Line key={row.label} label={row.label} amount={row.amount} />
-                ))
-              )}
-              <Line label="Total in" amount={data.in.total} tone="subtotal" />
-            </ul>
-          </Panel>
-        </Section>
-        <Section title="Out" description="Paid to suppliers, for expenses, and in salaries.">
-          <Panel padding="none" className="overflow-hidden">
-            <ul className="divide-y divide-border">
-              {data.out.rows.map((row) => (
-                <Line key={row.label} label={row.label} detail={row.detail} amount={row.amount} />
-              ))}
-              <Line label="Total out" amount={data.out.total} tone="subtotal" />
-            </ul>
-          </Panel>
-        </Section>
-      </div>
-      <p className="flex items-start gap-2 text-xs text-muted-foreground">
-        <Info className="mt-0.5 size-3.5 shrink-0" />
-        Expenses not yet settled are left out until they are marked as paid. Expenses count on the
-        date recorded against them.
-      </p>
-    </Stack>
   );
 }
 
@@ -352,7 +240,7 @@ export default async function AccountingPage({
   const ledger = accountId ? await getAccountLedger(user, accountId, periodInput) : null;
   const journal =
     view === 'journal' ? await listJournal(user, { ...periodInput, source: params.source }) : null;
-  const cash = view === 'cash' ? await getCashSummary(user, periodInput) : null;
+  const cash = view === 'cash' ? await getCashFlowStatement(user, periodInput) : null;
   const accounts = view === 'accounts' ? await listAccounts(user) : null;
   const period = profit?.period ?? ledger?.period ?? journal?.period ?? cash?.period ?? null;
   const asOf = balance?.asOf ?? trial?.asOf ?? null;
@@ -443,7 +331,7 @@ export default async function AccountingPage({
           </Section>
         </Stack>
       ) : null}
-      {cash ? <CashView data={cash} /> : null}
+      {cash ? <CashFlowView data={cash} /> : null}
       {accounts ? <AccountsView groups={accounts} canEdit={canEdit} /> : null}
     </Stack>
   );

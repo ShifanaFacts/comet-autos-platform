@@ -17,7 +17,6 @@ import {
   HandCoins,
   ChartPie,
   ReceiptText,
-  Calculator,
   Percent,
   IdCard,
   CalendarCheck,
@@ -31,6 +30,15 @@ import {
   FileSpreadsheet,
   Landmark,
   Building2,
+  BookOpen,
+  BookText,
+  CalendarCheck2,
+  FolderOpen,
+  NotebookPen,
+  Scale,
+  Sheet,
+  TrendingUp,
+  WalletCards,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -73,8 +81,13 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'job_card.view',
       },
       { label: 'Quotations', href: '/quotations', icon: FileText, permission: 'job_card.view' },
-      { label: 'Invoices', href: '/finance/invoices', icon: Receipt, permission: 'invoice.view' },
-      { label: 'Payments', href: '/finance/payments', icon: Wallet, permission: 'invoice.view' },
+      {
+        label: 'Sales invoices',
+        href: '/finance/invoices',
+        icon: Receipt,
+        permission: 'invoice.view',
+      },
+      { label: 'Receipts', href: '/finance/payments', icon: Wallet, permission: 'invoice.view' },
       {
         label: 'Credit notes',
         href: '/finance/credit-notes',
@@ -134,11 +147,10 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Finance',
+    label: 'Receivables & payables',
     items: [
-      { label: 'Overview', href: '/finance', icon: ChartPie, permission: 'invoice.view' },
       {
-        label: 'Outstanding',
+        label: 'Receivables',
         href: '/finance/outstanding',
         icon: HandCoins,
         permission: 'invoice.view',
@@ -150,21 +162,45 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'inventory.view',
       },
       {
-        label: 'Expenses',
+        label: 'Expenses & bills',
         href: '/finance/expenses',
         icon: ReceiptText,
         permission: 'accounting.view',
       },
       {
-        label: 'Statements',
+        label: 'Statements of account',
         href: '/finance/statements',
         icon: FileSpreadsheet,
         permission: 'invoice.view',
       },
+    ],
+  },
+  {
+    label: 'Accounting',
+    items: [
+      { label: 'Financial overview', href: '/finance', icon: ChartPie, permission: 'invoice.view' },
       {
-        label: 'Accounting',
-        href: '/finance/accounting',
-        icon: Calculator,
+        label: 'Chart of accounts',
+        href: '/finance/accounting?view=accounts',
+        icon: BookOpen,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Journal entries',
+        href: '/finance/accounting?view=journal',
+        icon: NotebookPen,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'General ledger',
+        href: '/finance/accounting?view=ledger',
+        icon: BookText,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Opening balances',
+        href: '/finance/accounting/opening-balances',
+        icon: FolderOpen,
         permission: 'accounting.view',
       },
       {
@@ -180,9 +216,44 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'accounting.view',
       },
       {
-        label: 'VAT',
+        label: 'VAT returns',
         href: '/finance/vat',
         icon: Percent,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Year-end closing',
+        href: '/finance/accounting/year-end',
+        icon: CalendarCheck2,
+        permission: 'accounting.view',
+      },
+    ],
+  },
+  {
+    label: 'Financial statements',
+    items: [
+      {
+        label: 'Trial balance',
+        href: '/finance/accounting?view=trial',
+        icon: Sheet,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Profit & loss',
+        href: '/finance/accounting?view=profit',
+        icon: TrendingUp,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Balance sheet',
+        href: '/finance/accounting?view=balance',
+        icon: Scale,
+        permission: 'accounting.view',
+      },
+      {
+        label: 'Cash flow',
+        href: '/finance/accounting?view=cash',
+        icon: WalletCards,
         permission: 'accounting.view',
       },
     ],
@@ -258,4 +329,40 @@ export function hideableMenuHrefs(): string[] {
   return NAV_GROUPS.flatMap((group) => group.items)
     .map((item) => item.href)
     .filter((href) => !ALWAYS_SHOWN_MENUS.includes(href));
+}
+
+/**
+ * The menu item for the page being shown: the most specific match. A link
+ * with a query (a tab of the accounting page) matches only on that tab; a
+ * plain link matches its path and everything under it, and the longest
+ * wins — so "Opening balances" is current on its page, not "Financial
+ * overview" at /finance.
+ */
+export function activeNavHref(
+  pathname: string,
+  searchParams: { get(name: string): string | null },
+  hrefs: string[],
+): string | null {
+  let best: string | null = null;
+  let bestScore = -1;
+  for (const href of hrefs) {
+    const [path, query] = href.split('?');
+    let score = -1;
+    if (query) {
+      const wanted = new URLSearchParams(query);
+      const matches =
+        pathname === path &&
+        [...wanted.entries()].every(([key, value]) => searchParams.get(key) === value);
+      if (matches) score = path.length + 1000;
+    } else if (
+      path === '/' ? pathname === '/' : pathname === path || pathname.startsWith(`${path}/`)
+    ) {
+      score = path.length;
+    }
+    if (score > bestScore) {
+      best = href;
+      bestScore = score;
+    }
+  }
+  return best;
 }

@@ -673,8 +673,8 @@ export async function takePayment(
   });
   requirePermission(user, 'payment.create', { branchId: invoice.branchId });
   const accountId = await checkMoneyAccount(tx, user.organizationId, input.accountId);
-  if (invoice.invoiceType !== 'TAX_INVOICE')
-    throw new DomainError('Payments can only be recorded against a tax invoice.');
+  if (invoice.invoiceType === 'PROFORMA')
+    throw new DomainError('Payments can only be recorded against a tax invoice or an opening balance.');
   if (invoice.status === 'PAID') throw new DomainError('This invoice is already fully paid.');
   if (invoice.status !== 'ISSUED' && invoice.status !== 'PARTIALLY_PAID') {
     throw new DomainError('This invoice cannot take payments.');

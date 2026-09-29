@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { NAV_GROUPS } from '@/lib/nav';
+import { activeNavHref, NAV_GROUPS } from '@/lib/nav';
 
 export function NavList({
   allowedHrefs,
@@ -16,7 +16,10 @@ export function NavList({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const allowed = new Set(allowedHrefs);
+  // One item is current: the most specific one matching the page.
+  const active = activeNavHref(pathname, searchParams, allowedHrefs);
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
     items: group.items.filter((item) => allowed.has(item.href)),
@@ -40,7 +43,7 @@ export function NavList({
             <span className="mx-auto mb-2 h-px w-6 bg-sidebar-border" aria-hidden />
           ) : null}
           {group.items.map((item) => {
-            const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+            const isActive = item.href === active;
             const Icon = item.icon;
             return (
               <Link

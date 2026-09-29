@@ -264,7 +264,7 @@ async function unbooked(organizationId: string) {
     prisma.invoice.findMany({
       where: {
         organizationId,
-        invoiceType: 'TAX_INVOICE',
+        invoiceType: { in: ['TAX_INVOICE', 'OPENING_BALANCE'] },
         status: { notIn: ['DRAFT', 'VOID', 'CANCELLED'] },
         journalEntryId: null,
       },

@@ -170,6 +170,7 @@ CREATE TABLE "fixed_assets" (
     "funding" "AssetFunding" NOT NULL,
     "paid_from_account_id" UUID,
     "opening_depreciation" DECIMAL(14,2) NOT NULL DEFAULT 0,
+    "opening_through" DATE,
     "status" "FixedAssetStatus" NOT NULL DEFAULT 'ACTIVE',
     "disposed_on" DATE,
     "disposal_proceeds" DECIMAL(14,2),
@@ -332,6 +333,8 @@ ALTER TABLE "credit_notes" ADD CONSTRAINT "credit_notes_amounts_valid" CHECK (
 ALTER TABLE "fixed_assets" ADD CONSTRAINT "fixed_assets_amounts_valid" CHECK (
   cost > 0 AND residual_value >= 0 AND residual_value < cost
   AND useful_life_months > 0 AND opening_depreciation >= 0
+  AND opening_depreciation <= cost - residual_value
+  AND (funding <> 'OPENING' OR opening_through IS NOT NULL)
 );
 ALTER TABLE "asset_depreciations" ADD CONSTRAINT "asset_depreciations_amount_positive" CHECK (amount > 0);
 ALTER TABLE "credit_note_items" ADD CONSTRAINT "credit_note_items_amounts_valid" CHECK (

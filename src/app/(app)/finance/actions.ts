@@ -6,6 +6,7 @@ import { runAction, toClientResult } from '@/lib/action';
 import type { ActionResult } from '@/lib/errors';
 import { formDataToObject } from '@/lib/form-data';
 import { recordExpense, updateExpense, voidExpense } from '@/lib/finance/expenses';
+import { removeExpenseBill } from '@/lib/finance/expense-bills';
 
 function refreshFinance() {
   revalidatePath('/finance', 'layout');
@@ -39,6 +40,13 @@ export async function updateExpenseAction(
 ): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() => updateExpense(user, expenseId, formDataToObject(formData)));
+  if (result.ok) refreshFinance();
+  return toClientResult(result);
+}
+
+export async function removeExpenseBillAction(documentId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => removeExpenseBill(user, documentId));
   if (result.ok) refreshFinance();
   return toClientResult(result);
 }
