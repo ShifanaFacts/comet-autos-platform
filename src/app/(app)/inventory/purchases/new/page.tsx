@@ -30,7 +30,7 @@ export default async function NewPurchasePage({
         title="New purchase"
         description="Enter the supplier invoice. Receive it now if the parts arrived with it, or save a draft and receive later."
       />
-      <Panel className="w-full max-w-5xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <PurchaseForm
           action={createPurchaseAction}
           parts={options.parts}

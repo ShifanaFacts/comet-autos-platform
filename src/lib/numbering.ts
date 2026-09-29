@@ -10,16 +10,20 @@ const DEFAULT_PREFIX: Record<DocumentType, string> = {
   PAYMENT_RECEIPT: 'RCT-',
   EXPENSE_VOUCHER: 'EXP-',
   SUPPLIER_PAYMENT: 'SP-',
+  JOURNAL_ENTRY: 'JV-',
+  CREDIT_NOTE: 'CN-',
+  FIXED_ASSET: 'FA-',
 };
 
 /**
- * The branch's sequence for a document type, created on first use, and
- * locked (`SELECT ... FOR UPDATE`) until the transaction ends.
+ * The branch's sequence for a document type — or, with no branch, the
+ * workshop-wide one (journal entries) — created on first use, and locked
+ * (`SELECT ... FOR UPDATE`) until the transaction ends.
  */
 async function lockSequence(
   tx: Prisma.TransactionClient,
   organizationId: string,
-  branchId: string,
+  branchId: string | null,
   documentType: DocumentType,
 ) {
   let sequence = await tx.documentNumberSequence.findFirst({
@@ -54,7 +58,7 @@ async function lockSequence(
 export async function allocateDocumentNumber(
   tx: Prisma.TransactionClient,
   organizationId: string,
-  branchId: string,
+  branchId: string | null,
   documentType: DocumentType,
 ): Promise<string> {
   const [number] = await allocateDocumentNumbers(tx, organizationId, branchId, documentType, 1);
@@ -68,7 +72,7 @@ export async function allocateDocumentNumber(
 export async function allocateDocumentNumbers(
   tx: Prisma.TransactionClient,
   organizationId: string,
-  branchId: string,
+  branchId: string | null,
   documentType: DocumentType,
   count: number,
 ): Promise<string[]> {
@@ -94,7 +98,7 @@ export async function allocateDocumentNumbers(
 export async function reserveImportedNumbers(
   tx: Prisma.TransactionClient,
   organizationId: string,
-  branchId: string,
+  branchId: string | null,
   documentType: DocumentType,
   numbers: string[],
 ): Promise<void> {

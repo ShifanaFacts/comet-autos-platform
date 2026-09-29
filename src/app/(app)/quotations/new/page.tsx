@@ -30,7 +30,7 @@ export default async function NewQuotationPage({
         title="New quotation"
         description="Who is this quotation for? A job card is not needed — link one only if you want to."
       />
-      <Panel className="w-full max-w-3xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <NewQuotationForm initialCustomer={initialCustomer} />
       </Panel>
     </Stack>

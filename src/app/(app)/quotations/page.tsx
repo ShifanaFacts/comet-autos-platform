@@ -23,13 +23,11 @@ import { SearchField } from '@/components/shared/search-field';
 import { cn } from '@/lib/utils';
 import {
   RecordSelection,
-  RemoveCell,
-  RemoveHead,
   RowCheckbox,
-  RowRemoveButton,
   SelectCell,
   SelectHead,
 } from '@/components/shared/record-selection';
+import { QuotationRowMenu, type QuotationAction } from '@/components/workshop/quotation-menu';
 import { REMOVAL } from '@/lib/records/removal';
 
 /*
@@ -61,6 +59,16 @@ export default async function QuotationsPage({
   // Only a first draft that never left the workshop can be deleted — the
   // same rule as draftDeleteBlocker; the server checks it again.
   const removable = (q: QuotationListItem) => q.status === 'DRAFT' && !q.jobCard && q.version === 1;
+  // What the ⋯ menu offers on a row. Every one is checked again on the server.
+  const actionsFor = (q: QuotationListItem): QuotationAction[] => {
+    const actions: QuotationAction[] = [];
+    if (q.status === 'DRAFT' && canCreate) actions.push('edit');
+    if ((q.status === 'SENT' || q.status === 'REJECTED') && canCreate) actions.push('revise');
+    if (canCreate) actions.push('duplicate');
+    if (q.status !== 'DRAFT') actions.push('pdf');
+    if (canRemove && removable(q)) actions.push('delete');
+    return actions;
+  };
   const removableRows = quotations
     .filter(removable)
     .map((q) => ({ id: q.id, label: q.estimateNumber }));
@@ -153,9 +161,11 @@ export default async function QuotationsPage({
                     ) : null
                   }
                   action={
-                    removable(quotation) ? (
-                      <RowRemoveButton id={quotation.id} label={quotation.estimateNumber} />
-                    ) : null
+                    <QuotationRowMenu
+                      estimateId={quotation.id}
+                      number={quotation.estimateNumber}
+                      actions={actionsFor(quotation)}
+                    />
                   }
                   title={
                     <Link
@@ -200,7 +210,7 @@ export default async function QuotationsPage({
                     <TableHead>Status</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead className="text-right">Total</TableHead>
-                    <RemoveHead />
+                    <TableHead className="w-12" aria-label="Actions" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -255,11 +265,13 @@ export default async function QuotationsPage({
                       <TableCell className="text-right font-medium tabular-nums">
                         {formatMoney(quotation.totalAmount)}
                       </TableCell>
-                      <RemoveCell
-                        id={quotation.id}
-                        label={quotation.estimateNumber}
-                        removable={removable(quotation)}
-                      />
+                      <TableCell className="w-12 py-1 pr-2 text-right">
+                        <QuotationRowMenu
+                          estimateId={quotation.id}
+                          number={quotation.estimateNumber}
+                          actions={actionsFor(quotation)}
+                        />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

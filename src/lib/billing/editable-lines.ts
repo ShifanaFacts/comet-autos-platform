@@ -1,4 +1,5 @@
 import { formatMilli, signedToMilli, type DiscountType } from '@/lib/money';
+import { treatmentFromRate, type VatTreatment } from '@/lib/vat-treatment';
 
 /*
  * A quotation or invoice line as the line editor holds it while it is being
@@ -17,11 +18,15 @@ export interface EditableLine {
   description: string;
   quantity: string;
   unitPrice: string;
-  /** Percent; defaults to the organization's rate. */
+  /** Percent; follows from the VAT treatment. */
   taxRate: string;
+  /** How the line is treated for VAT. */
+  vatTreatment: VatTreatment;
   /** The line's discount: a percentage or an AED amount; blank for none. */
   discountType: DiscountType;
   discount: string;
+  /** Invoices: the income account it books to; blank for the default of its type. */
+  accountId: string;
 }
 
 /** A discount on the whole bill, as typed. Blank for none. */
@@ -47,6 +52,8 @@ export function editableLine(
     taxRate: Stored | null;
     discountType: DiscountType | null;
     discountValue: Stored | null;
+    accountId?: string | null;
+    vatTreatment?: VatTreatment | null;
   },
   key: string,
   defaultVatRate: string,
@@ -60,6 +67,8 @@ export function editableLine(
     taxRate: typed(item.taxRate ?? defaultVatRate),
     discountType: item.discountType ?? 'PERCENT',
     discount: item.discountValue ? typed(item.discountValue) : '',
+    accountId: item.accountId ?? '',
+    vatTreatment: item.vatTreatment ?? treatmentFromRate(item.taxRate ?? defaultVatRate),
   };
 }
 

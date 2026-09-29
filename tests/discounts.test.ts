@@ -148,7 +148,7 @@ describe('an invoice typed on screen', () => {
 
     const document = await getInvoiceDocument(a.owner, invoiceId);
     assert.deepEqual(
-      document.totals.slice(0, 3).map((total) => [total.label, total.amount]),
+      document.totals.slice(0, 3).map((total) => [total.label, money(total.amount)]),
       [
         ['Subtotal', '440.00'],
         ['Discount (5%)', '-22.00'],
@@ -156,7 +156,7 @@ describe('an invoice typed on screen', () => {
       ],
     );
     assert.deepEqual(
-      document.sections[0].lines.map((line) => line.discount),
+      document.sections[0].lines.map((line) => money(line.discount)),
       ['40.00', '20.00'],
     );
     assert.ok(document.meta.some((field) => field.label === 'Due date'));

@@ -431,6 +431,9 @@ function invoiceModel(invoice: InvoiceRecord, seller: DocumentSeller): CustomerD
       { label: 'Total excl. VAT', amount: invoice.subtotal.toString() },
       { label: vatLabel(sections.flatMap((s) => s.lines)), amount: invoice.taxAmount.toString() },
       { label: 'Total', amount: balance.total, emphasis: 'total' },
+      ...(toFils(balance.credited) > 0
+        ? [{ label: 'Credit notes', amount: filsToString(-toFils(balance.credited)) }]
+        : []),
       { label: 'Amount paid', amount: balance.paid },
       { label: 'Balance due', amount: balance.balance, emphasis: 'balance' },
     ],
@@ -457,7 +460,10 @@ function receiptModel(
   seller: DocumentSeller,
 ): CustomerDocumentModel {
   const payment = invoice.payments.find((p) => p.id === paymentId);
-  if (!payment) throw new NotFoundError('payment');
+  // The row that cancels a payment is not money received: it has no receipt.
+  if (!payment || payment.reversalOfPaymentId) throw new NotFoundError('payment');
+  const reversal = invoice.payments.find((p) => p.reversalOfPaymentId === payment.id);
+  if (reversal) return reversedReceiptModel(invoice, payment, reversal, seller);
   const { previousBalance, remainingBalance } = receiptBalances(invoice, payment.id);
   const number = payment.paymentNumber ?? invoice.invoiceNumber;
   const settled = signedToMilli(remainingBalance) === 0;
@@ -502,6 +508,161 @@ function receiptModel(
     notes: ['Thank you for your payment. Please keep this receipt for your records.'],
     fileName: fileName(seller, 'Receipt', number),
   };
+}
+
+/**
+ * The receipt of a payment that was later reversed: kept for the record, but
+ * saying plainly — in its status, amount label and notes — that it no longer
+ * counts, when and why it was reversed, and what the invoice's balance is now.
+ */
+function reversedReceiptModel(
+  invoice: InvoiceRecord,
+  payment: InvoiceRecord['payments'][number],
+  reversal: InvoiceRecord['payments'][number],
+  seller: DocumentSeller,
+): CustomerDocumentModel {
+  const number = payment.paymentNumber ?? invoice.invoiceNumber;
+  const balance = invoiceBalance(invoice);
+  return {
+    kind: 'RECEIPT',
+    title: 'Payment receipt — reversed',
+    number,
+    status: { label: 'Reversed', tone: 'danger' },
+    seller,
+    meta: [
+      { label: 'Payment date', value: formatDate(payment.receivedAt) },
+      { label: 'Reversed on', value: formatDate(reversal.receivedAt) },
+      { label: 'Invoice', value: invoice.invoiceNumber },
+      ...(invoice.jobCard ? [{ label: 'Job card', value: invoice.jobCard.jobNumber }] : []),
+    ],
+    ...invoiceParties(invoice),
+    narrative: [],
+    sections: [],
+    totals: [],
+    highlight: {
+      label: 'Amount reversed',
+      amount: payment.amount.toString(),
+      caption: PAYMENT_METHOD_LABEL[payment.method],
+    },
+    detailsTitle: 'Payment details',
+    details: [
+      { label: 'Receipt number', value: number },
+      { label: 'Received on', value: formatDateTime(payment.receivedAt) },
+      { label: 'Reversed on', value: formatDateTime(reversal.receivedAt) },
+      ...(reversal.notes ? [{ label: 'Reason', value: reversal.notes }] : []),
+      { label: 'Payment method', value: PAYMENT_METHOD_LABEL[payment.method] },
+      ...(payment.referenceNumber ? [{ label: 'Reference', value: payment.referenceNumber }] : []),
+      {
+        label: 'Invoice',
+        value: `${invoice.invoiceNumber} · total ${formatAed(invoice.totalAmount.toString())}`,
+      },
+      { label: 'Invoice balance now', value: formatAed(balance.balance) },
+    ],
+    notes: [
+      'This payment was reversed and no longer counts towards the invoice. It is kept on record only.',
+    ],
+    fileName: fileName(seller, 'Receipt reversed', number),
+  };
+}
+
+/**
+ * A tax credit note: the invoice lines it takes back, at the invoice's own
+ * prices and VAT, and why. Carries the original invoice's number and date, as
+ * a tax credit note must.
+ */
+async function creditNoteModel(
+  organizationId: string,
+  creditNoteId: string,
+): Promise<{ branchId: string; model: CustomerDocumentModel }> {
+  const note = await prisma.creditNote.findFirst({
+    where: { id: creditNoteId, organizationId },
+    include: {
+      items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+    },
+  });
+  if (!note) throw new NotFoundError('credit note');
+  const invoice = await fetchInvoice(organizationId, { id: note.invoiceId });
+  if (!invoice) throw new NotFoundError('credit note');
+  const seller = await invoiceSeller(invoice);
+  const lines: DocumentLine[] = note.items.map((item) => ({
+    type: lineType(item.itemType),
+    description: item.description,
+    quantity: item.quantity.toString(),
+    unitPrice: item.unitPrice.toString(),
+    taxRate: item.taxRate.toString(),
+    discount: null,
+    lineTotal: item.lineTotal.toString(),
+  }));
+  const share = toFils(note.discountAmount.toString());
+  const isVoid = note.status === 'VOID';
+  const refund = toFils(note.refundAmount.toString());
+  const title = 'Tax credit note';
+  return {
+    branchId: note.branchId,
+    model: {
+      kind: 'CREDIT_NOTE',
+      title,
+      number: note.creditNoteNumber,
+      status: isVoid ? { label: 'Void', tone: 'danger' } : null,
+      seller,
+      meta: [
+        { label: 'Credit note date', value: formatCalendarDate(note.issueDate) },
+        { label: 'Original invoice', value: invoice.invoiceNumber },
+        { label: 'Invoice date', value: formatCalendarDate(invoice.issueDate) },
+        ...(invoice.jobCard ? [{ label: 'Job card', value: invoice.jobCard.jobNumber }] : []),
+      ],
+      ...invoiceParties(invoice),
+      narrative: [{ label: 'Reason for credit', value: note.reason }],
+      sections: [{ title: '', lines }],
+      totals: [
+        ...(share > 0
+          ? [
+              {
+                label: 'Subtotal',
+                amount: filsToString(toFils(note.subtotal.toString()) + share),
+              },
+              { label: 'Invoice discount', amount: filsToString(-share) },
+            ]
+          : []),
+        { label: 'Total excl. VAT', amount: note.subtotal.toString() },
+        { label: vatLabel(lines), amount: note.taxAmount.toString() },
+        { label: 'Total credited', amount: note.totalAmount.toString(), emphasis: 'total' },
+      ],
+      highlight: null,
+      detailsTitle: refund > 0 ? 'Refund' : null,
+      details:
+        refund > 0
+          ? [
+              { label: 'Refunded to you', value: formatAed(note.refundAmount.toString()) },
+              ...(note.refundedOn
+                ? [
+                    { label: 'Refunded on', value: formatCalendarDate(note.refundedOn) },
+                    ...(note.refundMethod
+                      ? [{ label: 'Method', value: PAYMENT_METHOD_LABEL[note.refundMethod] }]
+                      : []),
+                    ...(note.refundReference
+                      ? [{ label: 'Reference', value: note.refundReference }]
+                      : []),
+                  ]
+                : [{ label: 'Status', value: 'To be refunded' }]),
+            ]
+          : [],
+      notes: [
+        ...(isVoid
+          ? ['This credit note was withdrawn and does not count. It is kept on record only.']
+          : []),
+        `This credit note reduces invoice ${invoice.invoiceNumber} by ${formatAed(note.totalAmount.toString())}, VAT included.`,
+        'Amounts are in UAE dirhams (AED).',
+      ],
+      fileName: fileName(seller, title, note.creditNoteNumber),
+    },
+  };
+}
+
+export async function getCreditNoteDocument(user: AuthenticatedUser, creditNoteId: string) {
+  const { branchId, model } = await creditNoteModel(user.organizationId, creditNoteId);
+  requirePermission(user, 'invoice.view', { branchId });
+  return model;
 }
 
 export async function getInvoiceDocument(user: AuthenticatedUser, invoiceId: string) {

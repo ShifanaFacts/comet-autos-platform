@@ -17,6 +17,7 @@ import {
 import { formatMoney } from '@/lib/format';
 import type { ActionResult } from '@/lib/errors';
 import { updateInvoiceAction } from '../../actions';
+import type { AccountChoice } from '@/lib/accounting/reports';
 
 export function EditInvoiceForm({
   invoiceId,
@@ -27,8 +28,11 @@ export function EditInvoiceForm({
   customerReference,
   notes,
   defaultVatRate,
+  incomeAccounts,
 }: {
   invoiceId: string;
+  /** Income accounts a line can book to; omitted, every line uses the default. */
+  incomeAccounts?: AccountChoice[];
   lines: EditableLine[];
   bill: BillDiscount;
   /** YYYY-MM-DD; the due date can't be before it. */
@@ -62,6 +66,7 @@ export function EditInvoiceForm({
           bill={bill}
           onBillChange={setBill}
           defaultVatRate={defaultVatRate}
+          incomeAccounts={incomeAccounts}
         />
       </section>
 

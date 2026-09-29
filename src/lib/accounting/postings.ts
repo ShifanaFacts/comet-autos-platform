@@ -1,0 +1,706 @@
+import type { Prisma } from '@/generated/prisma/client';
+import type { AccountRole, JournalSource } from '@/generated/prisma/enums';
+import { localDateString, parseCalendarDate } from '@/lib/format';
+import { milliToString, multiplyQuantity, signedToMilli, toFils } from '@/lib/money';
+import { withNetQuantities } from '@/lib/inventory/stock';
+import { purchaseLineAmounts } from '@/lib/inventory/purchases';
+import { resolveDefaultVatRate } from '@/lib/tax';
+import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
+
+/*
+ * What each record should have in the books — the posting rules, in one
+ * place. Each function reads one record as it stands now and returns the
+ * journal entry it calls for, or null when it calls for none (a void
+ * invoice, a voided expense). lib/accounting/journal.ts compares that with
+ * what is already booked and books the difference.
+ *
+ * The rules (all amounts exact, in fils):
+ *
+ * INVOICE (a tax invoice, once issued; nothing while draft or void)
+ *   Dr Accounts receivable            total
+ *   Cr each line's income account     its amount after its own discount
+ *                                     (the account chosen on the line, else
+ *                                     parts / labour / other sales)
+ *   Dr Discounts given                the bill discount
+ *   Cr VAT payable                    the VAT
+ *   Dr Cost of parts sold             parts fitted on its job, at cost,
+ *   Cr Parts inventory                after any taken back
+ *
+ * PAYMENT from a customer             Dr the cash, bank or card account
+ *                                     Cr Accounts receivable
+ *   its reversal                      the same, the other way round
+ *
+ * EXPENSE (recorded; nothing once void)
+ *   Dr its category                   the amount excluding VAT
+ *   Dr VAT recoverable                the VAT (a business not registered
+ *                                     for VAT can't recover it: it stays in
+ *                                     the category)
+ *   Cr the account it was paid from, or Accounts payable while unpaid
+ *
+ * STOCK MOVEMENT
+ *   delivery from a supplier          Dr Parts inventory, Dr VAT recoverable
+ *   (and returns to one, negative)    Cr Accounts payable
+ *   opening stock                     Dr Parts inventory
+ *                                     Cr Opening balance equity
+ *   adjustment (count, damage…)       Dr/Cr Parts inventory
+ *                                     Cr/Dr Stock adjustments
+ *   parts fitted to or taken back from a job: nothing here — they are costed
+ *   on the job's invoice (above), matched to the sale.
+ *
+ * SUPPLIER PAYMENT                    Dr Accounts payable
+ *                                     Cr the cash or bank account
+ *   its reversal                      the same, the other way round
+ *
+ * PAYROLL (approved or paid; nothing if cancelled before payment)
+ *   when approved, at the period end  Dr Salaries & wages     net pay
+ *                                     Cr Salaries payable
+ *   when paid, on the day paid        Dr Salaries payable
+ *                                     Cr Bank
+ *   Salaries count at net pay — the same rule as the payroll screens.
+ *
+ * VAT RETURN (filed with the FTA)
+ *   when filed, at the period end     Dr Output VAT payable   the output VAT
+ *                                     Cr Input VAT recoverable the input VAT
+ *                                     Cr VAT due to FTA        the difference
+ *                                     (Dr, when the FTA owes a refund)
+ *   when paid or refunded             Dr VAT due to FTA / Cr Bank, or the
+ *                                     other way round for a refund
+ *
+ * CREDIT NOTE (issued; nothing once void) — the invoice's entry, undone in part
+ *   Dr each line's income account     its amount
+ *   Cr Sales discounts                any bill discount taken back with it
+ *   Dr Output VAT payable             the VAT
+ *   Cr Trade receivables              the total
+ *   its refund, on the day paid       Dr Trade receivables / Cr the account paid from
+ *
+ * FIXED ASSET
+ *   bought                            Dr the asset account    its cost
+ *                                     Cr the account paid from, Trade payables
+ *                                     (bought on credit) or Opening balance
+ *                                     equity (owned before the books began,
+ *                                     with any depreciation charged before then)
+ *   each month's depreciation         Dr Depreciation expense
+ *                                     Cr Accumulated depreciation
+ *   sold or scrapped                  Dr Accumulated depreciation, Dr the
+ *                                     proceeds, Cr the asset's cost; the
+ *                                     difference to Gain / (loss) on disposal
+ */
+
+export interface PostingLine {
+  accountId: string;
+  /** Fils. One of debit and credit is zero. */
+  debit: number;
+  credit: number;
+  /** A note on the line — manual entries only. */
+  memo?: string | null;
+}
+
+export interface Posting {
+  /** The accounting date: the record's own date. */
+  date: Date;
+  branchId: string | null;
+  description: string;
+  lines: PostingLine[];
+}
+
+/** The workshop's calendar day a moment falls on. */
+export function accountingDay(moment: Date): Date {
+  return parseCalendarDate(localDateString(moment))!;
+}
+
+/**
+ * Builds balanced lines from signed amounts (positive = debit, negative =
+ * credit), netted per account, zero amounts left out.
+ */
+class Lines {
+  private readonly net = new Map<string, number>();
+
+  add(accountId: string, fils: number) {
+    if (fils !== 0) this.net.set(accountId, (this.net.get(accountId) ?? 0) + fils);
+    return this;
+  }
+
+  debit(accountId: string, fils: number) {
+    return this.add(accountId, fils);
+  }
+
+  credit(accountId: string, fils: number) {
+    return this.add(accountId, -fils);
+  }
+
+  build(): PostingLine[] {
+    const lines = [...this.net.entries()]
+      .filter(([, fils]) => fils !== 0)
+      .map(([accountId, fils]) => ({
+        accountId,
+        debit: Math.max(fils, 0),
+        credit: Math.max(-fils, 0),
+      }));
+    const debits = lines.reduce((sum, line) => sum + line.debit, 0);
+    const credits = lines.reduce((sum, line) => sum + line.credit, 0);
+    if (debits !== credits) {
+      // A rule above is wrong; never book it.
+      throw new Error(`Posting does not balance: debits ${debits}, credits ${credits}.`);
+    }
+    return lines;
+  }
+}
+
+const fils = (value: { toString(): string } | null | undefined) =>
+  value
+    ? toFils(value.toString().replace(/^-/, '')) * (value.toString().startsWith('-') ? -1 : 1)
+    : 0;
+
+const SALES_ROLE: Record<string, AccountRole> = {
+  PART: 'SALES_PARTS',
+  LABOUR: 'SALES_LABOUR',
+  OTHER: 'SALES_OTHER',
+};
+
+type Tx = Prisma.TransactionClient;
+type Poster = (
+  tx: Tx,
+  organizationId: string,
+  sourceId: string,
+  accounts: RoleAccounts,
+) => Promise<Posting | null>;
+
+async function isVatRegistered(tx: Tx, organizationId: string) {
+  const organization = await tx.organization.findUniqueOrThrow({
+    where: { id: organizationId },
+    select: { isVatRegistered: true },
+  });
+  return organization.isVatRegistered;
+}
+
+// ─── Invoices ───────────────────────────────────────────────────────────────
+
+const postInvoice: Poster = async (tx, organizationId, invoiceId, accounts) => {
+  const invoice = await tx.invoice.findFirst({
+    where: { id: invoiceId, organizationId },
+    select: {
+      invoiceType: true,
+      status: true,
+      invoiceNumber: true,
+      customerName: true,
+      issueDate: true,
+      branchId: true,
+      jobCardId: true,
+      discountAmount: true,
+      taxAmount: true,
+      totalAmount: true,
+      items: { select: { itemType: true, accountId: true, lineTotal: true } },
+      customer: { select: { name: true } },
+    },
+  });
+  if (!invoice || invoice.invoiceType !== 'TAX_INVOICE') return null;
+  if (invoice.status === 'DRAFT' || invoice.status === 'VOID' || invoice.status === 'CANCELLED') {
+    return null;
+  }
+
+  const lines = new Lines()
+    .debit(accounts.ACCOUNTS_RECEIVABLE, fils(invoice.totalAmount))
+    .debit(accounts.SALES_DISCOUNTS, fils(invoice.discountAmount))
+    .credit(accounts.VAT_OUTPUT, fils(invoice.taxAmount));
+  for (const item of invoice.items) {
+    const account =
+      item.accountId ?? accounts[SALES_ROLE[item.itemType ?? 'OTHER'] ?? 'SALES_OTHER'];
+    lines.credit(account, fils(item.lineTotal));
+  }
+
+  // The parts fitted on its job, at what they cost, after any taken back.
+  if (invoice.jobCardId) {
+    const usages = await tx.partUsage.findMany({
+      where: { organizationId, jobCardId: invoice.jobCardId },
+      select: { id: true, quantity: true, unitCost: true },
+    });
+    const net = await withNetQuantities(tx, organizationId, usages);
+    const cost = net.reduce(
+      (sum, usage) =>
+        sum +
+        (usage.netMilli > 0
+          ? multiplyQuantity(milliToString(usage.netMilli), usage.unitCost.toString())
+          : 0),
+      0,
+    );
+    lines.debit(accounts.COST_OF_PARTS, cost).credit(accounts.INVENTORY, cost);
+  }
+
+  return {
+    date: invoice.issueDate,
+    branchId: invoice.branchId,
+    description: `Invoice ${invoice.invoiceNumber} — ${invoice.customerName ?? invoice.customer.name}`,
+    lines: lines.build(),
+  };
+};
+
+// ─── Customer payments ──────────────────────────────────────────────────────
+
+const postPayment: Poster = async (tx, organizationId, paymentId, accounts) => {
+  const payment = await tx.payment.findFirst({
+    where: { id: paymentId, organizationId },
+    select: {
+      amount: true,
+      method: true,
+      accountId: true,
+      paymentNumber: true,
+      receivedAt: true,
+      reversalOf: { select: { paymentNumber: true, method: true, accountId: true } },
+      invoice: { select: { invoiceNumber: true, branchId: true, customerName: true } },
+    },
+  });
+  if (!payment) return null;
+
+  // A reversal takes the money back out of the account the original went into.
+  const original = payment.reversalOf ?? payment;
+  const moneyAccount = original.accountId ?? accounts[METHOD_ACCOUNT_ROLE[original.method]];
+  const amount = fils(payment.amount);
+  const lines = payment.reversalOf
+    ? new Lines().debit(accounts.ACCOUNTS_RECEIVABLE, amount).credit(moneyAccount, amount)
+    : new Lines().debit(moneyAccount, amount).credit(accounts.ACCOUNTS_RECEIVABLE, amount);
+
+  const on = `${payment.invoice.invoiceNumber}${payment.invoice.customerName ? ` — ${payment.invoice.customerName}` : ''}`;
+  return {
+    date: accountingDay(payment.receivedAt),
+    branchId: payment.invoice.branchId,
+    description: payment.reversalOf
+      ? `Payment ${payment.reversalOf.paymentNumber ?? ''} reversed, on ${on}`
+      : `Payment ${payment.paymentNumber ?? ''} received on ${on}`,
+    lines: lines.build(),
+  };
+};
+
+// ─── Expenses ───────────────────────────────────────────────────────────────
+
+const postExpense: Poster = async (tx, organizationId, expenseId, accounts) => {
+  const expense = await tx.expense.findFirst({
+    where: { id: expenseId, organizationId },
+    select: {
+      status: true,
+      expenseNumber: true,
+      description: true,
+      vendorName: true,
+      amount: true,
+      taxAmount: true,
+      expenseDate: true,
+      branchId: true,
+      chartOfAccountId: true,
+      paymentMethod: true,
+      paidFromAccountId: true,
+    },
+  });
+  if (!expense || expense.status !== 'RECORDED') return null;
+
+  const net = fils(expense.amount);
+  const vat = fils(expense.taxAmount);
+  const recoverable = await isVatRegistered(tx, organizationId);
+  const category = expense.chartOfAccountId ?? accounts.OTHER_EXPENSES;
+  const paidFrom = expense.paymentMethod
+    ? (expense.paidFromAccountId ?? accounts[METHOD_ACCOUNT_ROLE[expense.paymentMethod]])
+    : accounts.ACCOUNTS_PAYABLE;
+  const lines = new Lines()
+    .debit(category, recoverable ? net : net + vat)
+    .debit(accounts.VAT_INPUT, recoverable ? vat : 0)
+    .credit(paidFrom, net + vat);
+
+  return {
+    date: expense.expenseDate,
+    branchId: expense.branchId,
+    description: `Expense ${expense.expenseNumber ?? ''} — ${expense.description}${expense.vendorName ? ` (${expense.vendorName})` : ''}`,
+    lines: lines.build(),
+  };
+};
+
+// ─── Stock movements ────────────────────────────────────────────────────────
+
+const postStockMovement: Poster = async (tx, organizationId, movementId, accounts) => {
+  const movement = await tx.inventoryTransaction.findFirst({
+    where: { id: movementId, organizationId },
+    select: {
+      transactionType: true,
+      quantity: true,
+      unitCost: true,
+      note: true,
+      createdAt: true,
+      branchId: true,
+      part: { select: { sku: true, name: true } },
+      purchaseItem: {
+        select: {
+          taxRate: true,
+          purchase: { select: { purchaseNumber: true, supplier: { select: { name: true } } } },
+        },
+      },
+    },
+  });
+  if (!movement || !movement.unitCost) return null;
+
+  const milli = signedToMilli(movement.quantity);
+  const sign = milli < 0 ? -1 : 1;
+  const quantity = milliToString(Math.abs(milli));
+  const value = sign * multiplyQuantity(quantity, movement.unitCost.toString());
+  const what = `${movement.part.name} (${movement.part.sku})`;
+  const base = { date: accountingDay(movement.createdAt), branchId: movement.branchId };
+  const openingStock =
+    movement.transactionType === 'OPENING_STOCK' ||
+    (movement.transactionType === 'ADJUSTMENT' && /^opening stock/i.test(movement.note ?? ''));
+
+  if (
+    movement.transactionType === 'PURCHASE_RECEIPT' ||
+    movement.transactionType === 'RETURN_TO_SUPPLIER'
+  ) {
+    // Priced exactly as the supplier balance prices it, so what is owed in
+    // the books is what the payables screen shows.
+    const rate =
+      movement.purchaseItem?.taxRate?.toString() ??
+      (await resolveDefaultVatRate(organizationId, tx));
+    const amounts = purchaseLineAmounts(quantity, movement.unitCost.toString(), rate);
+    const recoverable = await isVatRegistered(tx, organizationId);
+    const net = sign * amounts.lineTotalFils;
+    const vat = sign * amounts.taxFils;
+    const purchase = movement.purchaseItem?.purchase;
+    return {
+      ...base,
+      description: `${sign > 0 ? 'Stock received' : 'Stock returned'}: ${what}${purchase ? ` — ${purchase.purchaseNumber}, ${purchase.supplier.name}` : ''}`,
+      lines: new Lines()
+        .debit(accounts.INVENTORY, recoverable ? net : net + vat)
+        .debit(accounts.VAT_INPUT, recoverable ? vat : 0)
+        .credit(accounts.ACCOUNTS_PAYABLE, net + vat)
+        .build(),
+    };
+  }
+  if (openingStock) {
+    return {
+      ...base,
+      description: `Opening stock: ${what}`,
+      lines: new Lines()
+        .debit(accounts.INVENTORY, value)
+        .credit(accounts.OPENING_BALANCE, value)
+        .build(),
+    };
+  }
+  if (movement.transactionType === 'ADJUSTMENT') {
+    return {
+      ...base,
+      description: `Stock adjustment: ${what}${movement.note ? ` — ${movement.note}` : ''}`,
+      lines: new Lines()
+        .debit(accounts.INVENTORY, value)
+        .credit(accounts.STOCK_ADJUSTMENTS, value)
+        .build(),
+    };
+  }
+  // Fitted to or taken back from a job, moved between branches: costed on
+  // the job's invoice, or no change in value at all.
+  return null;
+};
+
+// ─── Supplier payments ──────────────────────────────────────────────────────
+
+const postSupplierPayment: Poster = async (tx, organizationId, paymentId, accounts) => {
+  const payment = await tx.supplierPayment.findFirst({
+    where: { id: paymentId, organizationId },
+    select: {
+      amount: true,
+      method: true,
+      accountId: true,
+      supplierPaymentNumber: true,
+      paidAt: true,
+      reversalOf: { select: { supplierPaymentNumber: true, method: true, accountId: true } },
+      purchase: {
+        select: { purchaseNumber: true, branchId: true, supplier: { select: { name: true } } },
+      },
+    },
+  });
+  if (!payment) return null;
+
+  const original = payment.reversalOf ?? payment;
+  const moneyAccount = original.accountId ?? accounts[METHOD_ACCOUNT_ROLE[original.method]];
+  const amount = fils(payment.amount);
+  const lines = payment.reversalOf
+    ? new Lines().debit(moneyAccount, amount).credit(accounts.ACCOUNTS_PAYABLE, amount)
+    : new Lines().debit(accounts.ACCOUNTS_PAYABLE, amount).credit(moneyAccount, amount);
+  const to = `${payment.purchase.supplier.name}, ${payment.purchase.purchaseNumber}`;
+  return {
+    date: accountingDay(payment.paidAt),
+    branchId: payment.purchase.branchId,
+    description: payment.reversalOf
+      ? `Supplier payment ${payment.reversalOf.supplierPaymentNumber ?? ''} reversed — ${to}`
+      : `Supplier payment ${payment.supplierPaymentNumber ?? ''} — ${to}`,
+    lines: lines.build(),
+  };
+};
+
+// ─── Payroll ────────────────────────────────────────────────────────────────
+
+async function payrollRun(tx: Tx, organizationId: string, payrollId: string) {
+  return tx.payroll.findFirst({
+    where: { id: payrollId, organizationId },
+    select: {
+      status: true,
+      periodStart: true,
+      periodEnd: true,
+      approvedAt: true,
+      paidAt: true,
+      items: { select: { netPay: true } },
+    },
+  });
+}
+
+const payrollMonth = (run: { periodStart: Date }) => run.periodStart.toISOString().slice(0, 7);
+
+const postPayroll: Poster = async (tx, organizationId, payrollId, accounts) => {
+  const run = await payrollRun(tx, organizationId, payrollId);
+  if (!run || (run.status !== 'APPROVED' && run.status !== 'PAID')) return null;
+  const net = run.items.reduce((sum, item) => sum + fils(item.netPay), 0);
+  return {
+    date: run.periodEnd,
+    branchId: null,
+    description: `Payroll ${payrollMonth(run)} — salaries owed`,
+    lines: new Lines()
+      .debit(accounts.SALARIES_EXPENSE, net)
+      .credit(accounts.SALARIES_PAYABLE, net)
+      .build(),
+  };
+};
+
+const postPayrollPayment: Poster = async (tx, organizationId, payrollId, accounts) => {
+  const run = await payrollRun(tx, organizationId, payrollId);
+  if (!run || run.status !== 'PAID' || !run.paidAt) return null;
+  const net = run.items.reduce((sum, item) => sum + fils(item.netPay), 0);
+  return {
+    date: accountingDay(run.paidAt),
+    branchId: null,
+    description: `Payroll ${payrollMonth(run)} — salaries paid`,
+    lines: new Lines().debit(accounts.SALARIES_PAYABLE, net).credit(accounts.BANK, net).build(),
+  };
+};
+
+// ─── VAT returns ────────────────────────────────────────────────────────────
+
+async function vatFiling(tx: Tx, organizationId: string, filingId: string) {
+  return tx.vatFiling.findFirst({
+    where: { id: filingId, organizationId },
+    select: {
+      periodFrom: true,
+      periodTo: true,
+      outputVat: true,
+      inputVat: true,
+      netVat: true,
+      ftaReference: true,
+      settledOn: true,
+      settledAccountId: true,
+    },
+  });
+}
+
+const vatPeriod = (filing: { periodFrom: Date; periodTo: Date }) =>
+  `${filing.periodFrom.toISOString().slice(0, 10)} to ${filing.periodTo.toISOString().slice(0, 10)}`;
+
+const postVatFiling: Poster = async (tx, organizationId, filingId, accounts) => {
+  const filing = await vatFiling(tx, organizationId, filingId);
+  if (!filing) return null;
+  return {
+    date: filing.periodTo,
+    branchId: null,
+    description: `VAT return ${vatPeriod(filing)} filed${filing.ftaReference ? ` (FTA ref. ${filing.ftaReference})` : ''}`,
+    lines: new Lines()
+      .debit(accounts.VAT_OUTPUT, fils(filing.outputVat))
+      .credit(accounts.VAT_INPUT, fils(filing.inputVat))
+      .credit(accounts.VAT_SETTLEMENT, fils(filing.netVat))
+      .build(),
+  };
+};
+
+const postVatPayment: Poster = async (tx, organizationId, filingId, accounts) => {
+  const filing = await vatFiling(tx, organizationId, filingId);
+  if (!filing?.settledOn) return null;
+  const net = fils(filing.netVat);
+  const account = filing.settledAccountId ?? accounts.BANK;
+  return {
+    date: filing.settledOn,
+    branchId: null,
+    description:
+      net >= 0
+        ? `VAT paid to the FTA for ${vatPeriod(filing)}`
+        : `VAT refund received from the FTA for ${vatPeriod(filing)}`,
+    // A positive net is paid out of the account; a negative one comes in.
+    lines: new Lines().debit(accounts.VAT_SETTLEMENT, net).credit(account, net).build(),
+  };
+};
+
+// ─── Credit notes ───────────────────────────────────────────────────────────
+
+const postCreditNote: Poster = async (tx, organizationId, creditNoteId, accounts) => {
+  const note = await tx.creditNote.findFirst({
+    where: { id: creditNoteId, organizationId },
+    select: {
+      status: true,
+      creditNoteNumber: true,
+      issueDate: true,
+      branchId: true,
+      discountAmount: true,
+      taxAmount: true,
+      totalAmount: true,
+      items: { select: { itemType: true, accountId: true, lineTotal: true } },
+      invoice: { select: { invoiceNumber: true, customerName: true } },
+    },
+  });
+  if (!note || note.status !== 'ISSUED') return null;
+  const lines = new Lines()
+    .credit(accounts.ACCOUNTS_RECEIVABLE, fils(note.totalAmount))
+    .credit(accounts.SALES_DISCOUNTS, fils(note.discountAmount))
+    .debit(accounts.VAT_OUTPUT, fils(note.taxAmount));
+  for (const item of note.items) {
+    const account = item.accountId ?? accounts[SALES_ROLE[item.itemType ?? 'OTHER'] ?? 'SALES_OTHER'];
+    lines.debit(account, fils(item.lineTotal));
+  }
+  return {
+    date: note.issueDate,
+    branchId: note.branchId,
+    description: `Credit note ${note.creditNoteNumber} against ${note.invoice.invoiceNumber}${note.invoice.customerName ? ` — ${note.invoice.customerName}` : ''}`,
+    lines: lines.build(),
+  };
+};
+
+const postCreditNoteRefund: Poster = async (tx, organizationId, creditNoteId, accounts) => {
+  const note = await tx.creditNote.findFirst({
+    where: { id: creditNoteId, organizationId },
+    select: {
+      status: true,
+      creditNoteNumber: true,
+      branchId: true,
+      refundAmount: true,
+      refundedOn: true,
+      refundMethod: true,
+      refundAccountId: true,
+    },
+  });
+  if (!note || note.status !== 'ISSUED' || !note.refundedOn) return null;
+  const amount = fils(note.refundAmount);
+  const account =
+    note.refundAccountId ?? accounts[METHOD_ACCOUNT_ROLE[note.refundMethod ?? 'CASH']];
+  return {
+    date: note.refundedOn,
+    branchId: note.branchId,
+    description: `Refund to the customer under credit note ${note.creditNoteNumber}`,
+    lines: new Lines().debit(accounts.ACCOUNTS_RECEIVABLE, amount).credit(account, amount).build(),
+  };
+};
+
+// ─── Fixed assets ───────────────────────────────────────────────────────────
+
+const postFixedAsset: Poster = async (tx, organizationId, assetId, accounts) => {
+  const asset = await tx.fixedAsset.findFirst({
+    where: { id: assetId, organizationId },
+    select: {
+      assetNumber: true,
+      name: true,
+      acquiredOn: true,
+      cost: true,
+      funding: true,
+      paidFromAccountId: true,
+      openingDepreciation: true,
+      assetAccountId: true,
+      accumulatedAccountId: true,
+    },
+  });
+  if (!asset) return null;
+  const cost = fils(asset.cost);
+  const against =
+    asset.funding === 'PAID'
+      ? (asset.paidFromAccountId ?? accounts.BANK)
+      : asset.funding === 'ON_CREDIT'
+        ? accounts.ACCOUNTS_PAYABLE
+        : accounts.OPENING_BALANCE;
+  const lines = new Lines().debit(asset.assetAccountId, cost).credit(against, cost);
+  if (asset.funding === 'OPENING') {
+    // Depreciation already charged before the books began.
+    const opening = fils(asset.openingDepreciation);
+    lines.debit(accounts.OPENING_BALANCE, opening).credit(asset.accumulatedAccountId, opening);
+  }
+  return {
+    date: asset.acquiredOn,
+    branchId: null,
+    description: `Fixed asset ${asset.assetNumber} — ${asset.name}${asset.funding === 'OPENING' ? ' (opening balance)' : ''}`,
+    lines: lines.build(),
+  };
+};
+
+const postDepreciation: Poster = async (tx, organizationId, depreciationId) => {
+  const row = await tx.assetDepreciation.findFirst({
+    where: { id: depreciationId, organizationId },
+    select: {
+      periodEnd: true,
+      amount: true,
+      fixedAsset: {
+        select: { assetNumber: true, name: true, expenseAccountId: true, accumulatedAccountId: true },
+      },
+    },
+  });
+  if (!row) return null;
+  const amount = fils(row.amount);
+  return {
+    date: row.periodEnd,
+    branchId: null,
+    description: `Depreciation ${row.periodEnd.toISOString().slice(0, 7)} — ${row.fixedAsset.assetNumber} ${row.fixedAsset.name}`,
+    lines: new Lines()
+      .debit(row.fixedAsset.expenseAccountId, amount)
+      .credit(row.fixedAsset.accumulatedAccountId, amount)
+      .build(),
+  };
+};
+
+const postAssetDisposal: Poster = async (tx, organizationId, assetId, accounts) => {
+  const asset = await tx.fixedAsset.findFirst({
+    where: { id: assetId, organizationId },
+    select: {
+      status: true,
+      assetNumber: true,
+      name: true,
+      cost: true,
+      openingDepreciation: true,
+      disposedOn: true,
+      disposalProceeds: true,
+      proceedsAccountId: true,
+      assetAccountId: true,
+      accumulatedAccountId: true,
+      depreciations: { select: { amount: true } },
+    },
+  });
+  if (!asset || asset.status !== 'DISPOSED' || !asset.disposedOn) return null;
+  const accumulated =
+    fils(asset.openingDepreciation) +
+    asset.depreciations.reduce((sum, row) => sum + fils(row.amount), 0);
+  const proceeds = fils(asset.disposalProceeds);
+  const cost = fils(asset.cost);
+  // Book value is cost less depreciation; proceeds above it are a gain.
+  const gain = proceeds - (cost - accumulated);
+  return {
+    date: asset.disposedOn,
+    branchId: null,
+    description: `Disposal of ${asset.assetNumber} — ${asset.name}`,
+    lines: new Lines()
+      .debit(asset.accumulatedAccountId, accumulated)
+      .debit(asset.proceedsAccountId ?? accounts.BANK, proceeds)
+      .credit(asset.assetAccountId, cost)
+      .credit(accounts.ASSET_DISPOSALS, gain)
+      .build(),
+  };
+};
+
+/** The posting rule for each kind of record. MANUAL entries are made by hand. */
+export const POSTING_RULES: Record<Exclude<JournalSource, 'MANUAL'>, Poster> = {
+  INVOICE: postInvoice,
+  PAYMENT: postPayment,
+  EXPENSE: postExpense,
+  STOCK_MOVEMENT: postStockMovement,
+  SUPPLIER_PAYMENT: postSupplierPayment,
+  PAYROLL: postPayroll,
+  PAYROLL_PAYMENT: postPayrollPayment,
+  VAT_FILING: postVatFiling,
+  VAT_PAYMENT: postVatPayment,
+  CREDIT_NOTE: postCreditNote,
+  CREDIT_NOTE_REFUND: postCreditNoteRefund,
+  FIXED_ASSET: postFixedAsset,
+  DEPRECIATION: postDepreciation,
+  ASSET_DISPOSAL: postAssetDisposal,
+};

@@ -5,11 +5,19 @@ import { useRouter } from 'next/navigation';
 import { Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
-import { Field, FormError, NativeSelect, TextField, TextareaField } from '@/components/forms/fields';
+import {
+  Field,
+  FormError,
+  NativeSelect,
+  TextField,
+  TextareaField,
+} from '@/components/forms/fields';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import type { ActionResult } from '@/lib/errors';
 import { formatMoney } from '@/lib/format';
+import { MoneyAccountField } from '@/components/accounting/money-account-field';
+import type { AccountChoice } from '@/lib/accounting/reports';
 import { recordInvoicePaymentAction } from '@/app/(app)/finance/invoices/actions';
 
 /*
@@ -19,7 +27,8 @@ import { recordInvoicePaymentAction } from '@/app/(app)/finance/invoices/actions
  * happens to be standing.
  */
 
-const METHODS = [
+/** How a customer can pay — shared by every form that takes a payment. */
+export const PAYMENT_METHODS = [
   { value: 'CASH', label: 'Cash' },
   { value: 'CARD', label: 'Card' },
   { value: 'BANK_TRANSFER', label: 'Bank transfer' },
@@ -31,8 +40,11 @@ export function InvoicePaymentForm({
   invoiceId,
   balance,
   now,
+  moneyAccounts = [],
 }: {
   invoiceId: string;
+  /** Cash, bank and card accounts the money can go into. */
+  moneyAccounts?: AccountChoice[];
   /** Outstanding balance, pre-filled as the most likely amount. */
   balance: string;
   /** "now" as a datetime-local value, computed on the server in workshop time. */
@@ -77,7 +89,7 @@ export function InvoicePaymentForm({
             defaultValue="CASH"
             className="h-12 text-base md:h-11 md:text-sm"
           >
-            {METHODS.map((method) => (
+            {PAYMENT_METHODS.map((method) => (
               <option key={method.value} value={method.value}>
                 {method.label}
               </option>
@@ -102,6 +114,15 @@ export function InvoicePaymentForm({
           hint="Card slip, transfer or cheque number."
           className="[&_input]:h-12 [&_input]:text-base md:[&_input]:h-11 md:[&_input]:text-sm"
         />
+        {moneyAccounts.length ? (
+          <MoneyAccountField
+            id={`accountId-${invoiceId}`}
+            name="accountId"
+            label="Deposited into"
+            accounts={moneyAccounts}
+            error={errors.accountId}
+          />
+        ) : null}
       </div>
       <TextareaField
         label="Notes"

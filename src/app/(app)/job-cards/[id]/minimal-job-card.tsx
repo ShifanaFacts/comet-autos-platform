@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { AuthenticatedUser } from '@/lib/auth/session';
+import { getAccountChoices } from '@/lib/accounting/reports';
 import { hasPermission } from '@/lib/auth/authorize';
 import { formatDateTime, formatKm, formatMoney, toLocalDateTimeInput } from '@/lib/format';
 import type { JobWorkspace } from '@/lib/workshop/workspace';
@@ -78,10 +79,11 @@ export async function MinimalJobCard({
   const canDeliver = hasPermission(user, 'job_card.close', branch);
   const isFinished = status === 'DELIVERED' || status === 'CANCELLED';
 
-  const [invoice, documents, photos] = await Promise.all([
+  const [invoice, documents, photos, moneyAccounts] = await Promise.all([
     canSeeInvoice ? getJobInvoice(user, jobCard.id) : Promise.resolve(null),
     getJobDocuments(user, jobCard.id),
     listJobPhotos(user, jobCard.id),
+    canPay ? getAccountChoices(user).then((accounts) => accounts.money) : Promise.resolve([]),
   ]);
   const hasDocuments = documents.quotations.length > 0 || documents.invoice !== null;
   const canCancel =
@@ -127,6 +129,7 @@ export async function MinimalJobCard({
       description: `${formatMoney(invoice.balanceDue)} to pay on ${invoice.invoiceNumber} (total ${formatMoney(invoice.totalAmount)}).`,
       body: canPay ? (
         <InvoicePaymentForm
+          moneyAccounts={moneyAccounts}
           key={invoice.balanceDue}
           invoiceId={invoice.id}
           balance={invoice.balanceDue}

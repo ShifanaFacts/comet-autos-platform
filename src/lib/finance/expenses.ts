@@ -11,6 +11,9 @@ import { emptyToNull } from '@/lib/normalize';
 import { calculateLine, filsToString, toFils } from '@/lib/money';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { resolveInventoryBranch } from '@/lib/inventory/stock';
+import { syncPosting } from '@/lib/accounting/journal';
+import { checkMoneyAccount } from '@/lib/accounting/chart';
+import { getAccountChoices } from '@/lib/accounting/reports';
 
 /*
  * What the workshop spends to keep running — rent, utilities, workshop
@@ -49,6 +52,8 @@ const expenseSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the date.'),
   vendorName: z.string().trim().max(160).optional(),
   paymentMethod: z.union([z.literal(''), z.enum(PAYMENT_METHODS)]).optional(),
+  /** The cash or bank account it was paid from; blank for the method's default. */
+  paidFromAccountId: z.union([z.literal(''), z.uuid()]).optional(),
   categoryId: z.string().trim().optional(),
   requestKey: z.string().optional(),
 });
@@ -103,6 +108,10 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
         expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
         vendorName: emptyToNull(input.vendorName),
         paymentMethod: emptyToNull(input.paymentMethod) as (typeof PAYMENT_METHODS)[number] | null,
+        // Only a paid expense came out of an account.
+        paidFromAccountId: input.paymentMethod
+          ? await checkMoneyAccount(tx, user.organizationId, input.paidFromAccountId)
+          : null,
         recordedByUserId: user.id,
       },
     });
@@ -123,6 +132,7 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
         paymentMethod: expense.paymentMethod,
       },
     });
+    await syncPosting(tx, user.organizationId, 'EXPENSE', expense.id, user.id);
     await settleRequestKey(tx, user, rawInput, expense.id);
     return expense;
   });
@@ -159,6 +169,9 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
       expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
       vendorName: emptyToNull(input.vendorName),
       paymentMethod: emptyToNull(input.paymentMethod) as (typeof PAYMENT_METHODS)[number] | null,
+      paidFromAccountId: input.paymentMethod
+        ? await checkMoneyAccount(tx, user.organizationId, input.paidFromAccountId)
+        : null,
     };
     const expense = await tx.expense.update({ where: { id: before.id }, data });
     await writeAuditLog(tx, {
@@ -180,6 +193,7 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
       },
       afterData: { ...data, expenseDate: input.expenseDate, total: money.total },
     });
+    await syncPosting(tx, user.organizationId, 'EXPENSE', expense.id, user.id);
     return expense;
   });
 }
@@ -221,6 +235,7 @@ export async function voidExpense(user: AuthenticatedUser, expenseId: string, ra
       afterData: { status: 'VOID' },
       metadata: { reason: input.reason },
     });
+    await syncPosting(tx, user.organizationId, 'EXPENSE', voided.id, user.id);
     return voided;
   });
 }
@@ -320,6 +335,13 @@ export async function listExpenseCategories(user: AuthenticatedUser) {
 export async function getExpenseFormOptions(user: AuthenticatedUser) {
   // Recording and correcting an expense use the same form.
   if (!hasPermission(user, 'accounting.create')) requirePermission(user, 'accounting.edit');
-  const categories = await listExpenseCategories(user);
-  return { categories, defaultVatRate: await resolveDefaultVatRate(user.organizationId) };
+  const [categories, accounts] = await Promise.all([
+    listExpenseCategories(user),
+    getAccountChoices(user),
+  ]);
+  return {
+    categories,
+    defaultVatRate: await resolveDefaultVatRate(user.organizationId),
+    moneyAccounts: accounts.money,
+  };
 }

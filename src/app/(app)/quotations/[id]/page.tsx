@@ -14,11 +14,13 @@ import { EstimateStatusPill } from '@/components/workshop/status-pills';
 import { EstimateLines } from '@/components/workshop/estimate-lines';
 import { editableBill, editableLine } from '@/lib/billing/editable-lines';
 import { QuotationBuilder } from '@/components/workshop/quotation-builder';
+import { NewLinkButton, RecordDecisionForm } from '@/components/workshop/quotation-controls';
 import {
-  NewLinkButton,
-  RecordDecisionForm,
-  ReviseQuotationButton,
-} from '@/components/workshop/quotation-controls';
+  ChangeQuotationPartyButton,
+  QuotationHeaderActions,
+} from '@/components/workshop/quotation-menu';
+import { partyChangeBlocker } from '@/lib/workshop/quotation-copy';
+import { getCustomerOptions } from '@/lib/customers/picker';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { LinkButton } from '@/components/shared/link-button';
 import { StaffDocumentActions } from '@/components/documents/document-actions';
@@ -63,6 +65,25 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
   // A first draft has nothing in the side column, so the builder takes the full width.
   const fullWidth = editable && versions.length <= 1 && !decision;
   const recommendation = jobCard?.diagnoses[0]?.recommendedAction ?? null;
+  const history = {
+    status: quotation.status,
+    jobCardId: quotation.jobCardId,
+    previousVersionId: quotation.previousVersionId,
+    nextVersions: isLatest ? 0 : 1,
+  };
+  // Sent or rejected: editing makes the next version. Approved stays as agreed.
+  const canRevise =
+    canEdit &&
+    isLatest &&
+    quotation.kind !== 'ADDITIONAL' &&
+    (quotation.status === 'SENT' || quotation.status === 'REJECTED');
+  const canDuplicate = hasPermission(user, 'job_card.edit', {
+    branchId: user.primaryBranchId ?? quotation.branchId,
+  });
+  const canChangeParty = canEdit && !partyChangeBlocker(history);
+  const partyOption = canChangeParty
+    ? ((await getCustomerOptions(user, [customer.id]))[0] ?? null)
+    : null;
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -98,13 +119,19 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
         leading={vehicle ? <VehiclePlate plateNumber={vehicle.plateNumber} /> : undefined}
         actions={
           <>
-            {canEdit &&
-            !draftDeleteBlocker({
-              status: quotation.status,
-              jobCardId: quotation.jobCardId,
-              previousVersionId: quotation.previousVersionId,
-              nextVersions: isLatest ? 0 : 1,
-            }) ? (
+            <QuotationHeaderActions
+              estimateId={quotation.id}
+              canRevise={canRevise}
+              canDuplicate={canDuplicate}
+            />
+            {canChangeParty ? (
+              <ChangeQuotationPartyButton
+                estimateId={quotation.id}
+                current={partyOption}
+                vehicleId={vehicle?.id ?? null}
+              />
+            ) : null}
+            {canEdit && !draftDeleteBlocker(history) ? (
               <DeleteDraftQuotationButton estimateId={quotation.id} />
             ) : null}
             {!isDraft ? (
@@ -276,10 +303,11 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
                     “{decision.notes}”
                   </p>
                 ) : null}
-                {quotation.status === 'REJECTED' && isLatest && canEdit ? (
-                  <div className="mt-6">
-                    <ReviseQuotationButton estimateId={quotation.id} variant="default" />
-                  </div>
+                {quotation.status === 'REJECTED' && canRevise ? (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Use <span className="font-medium text-foreground">Edit</span> at the top to
+                    change it and send a new version.
+                  </p>
                 ) : null}
               </Panel>
             </Section>
@@ -291,15 +319,18 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
                 title={expired ? 'Quotation expired' : 'Waiting for the customer'}
                 description={
                   expired
-                    ? 'The validity date has passed. Revise the quotation to send a fresh one.'
+                    ? 'The validity date has passed. Use Edit at the top to send a fresh version.'
                     : `${customer.name} can approve or reject using their secure link. Lost the link? Create a new one.`
                 }
               >
                 <Panel className="flex flex-col gap-4">
                   {!expired ? (
                     <NewLinkButton estimateId={quotation.id} customerName={customer.name} />
-                  ) : null}
-                  <ReviseQuotationButton estimateId={quotation.id} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Editing makes version {quotation.version + 1}; this one is kept.
+                    </p>
+                  )}
                 </Panel>
               </Section>
               {!expired ? (

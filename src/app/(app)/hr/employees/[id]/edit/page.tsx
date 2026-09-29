@@ -30,7 +30,7 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
         title={`${employee.firstName} ${employee.lastName}`}
         description="Changes are recorded in the audit log. Work already attributed to this person is untouched."
       />
-      <Panel className="max-w-3xl">
+      <Panel>
         <EmployeeForm
           action={updateEmployeeAction.bind(null, employee.id)}
           options={options}

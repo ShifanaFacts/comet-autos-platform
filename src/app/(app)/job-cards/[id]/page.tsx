@@ -11,6 +11,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
+import { getAccountChoices } from '@/lib/accounting/reports';
 import { NotFoundError } from '@/lib/errors';
 import { formatCalendarDate, formatDateTime, formatKm, formatMoney } from '@/lib/format';
 import { getJobWorkspace, getNextAction } from '@/lib/workshop/workspace';
@@ -177,6 +178,7 @@ export default async function JobCardWorkspacePage({
               canInvoice={hasPermission(user, 'invoice.create', { branchId: jobCard.branchId })}
               canPay={canPay}
               canDeliver={hasPermission(user, 'job_card.close', { branchId: jobCard.branchId })}
+              moneyAccounts={canPay ? (await getAccountChoices(user)).money : []}
             />
           ) : null}
           {repair ? (

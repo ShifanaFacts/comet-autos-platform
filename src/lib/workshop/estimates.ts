@@ -348,6 +348,7 @@ export async function saveEstimateDraft(
           estimateId: estimate.id,
           itemType: line.itemType,
           description: line.description,
+          vatTreatment: line.vatTreatment,
           ...lineData(line.amounts),
         },
       });
@@ -673,6 +674,7 @@ export async function reviseEstimate(user: AuthenticatedUser, estimateId: string
           discountType: item.discountType,
           discountValue: item.discountValue,
           discountAmount: item.discountAmount,
+          vatTreatment: item.vatTreatment,
           lineTotal: item.lineTotal,
           taxRate: item.taxRate,
           taxAmount: item.taxAmount,

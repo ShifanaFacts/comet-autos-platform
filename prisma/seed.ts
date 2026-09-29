@@ -14,6 +14,7 @@ const prisma = new PrismaClient({ adapter });
 // Permission is a global platform catalog (no organizationId) — see its
 // schema comment.
 import { PERMISSION_CODES } from '../src/lib/auth/permission-catalog.js';
+import { ensureChart } from '../src/lib/accounting/chart.js';
 
 const SEED_OWNER_EMAIL = 'shifanachennara@gmail.com';
 // Dev-only default password — change immediately in any non-local
@@ -360,42 +361,14 @@ async function main() {
     });
   }
 
-  // Expense categories, as EXPENSE accounts on the chart of accounts. Safe
-  // to re-run: each upserts by account code and existing rows are left
-  // alone, so a workshop that has renamed one keeps its wording.
-  const EXPENSE_ACCOUNTS = [
-    { code: '5100', name: 'Rent' },
-    { code: '5110', name: 'Utilities' },
-    { code: '5120', name: 'Workshop supplies' },
-    { code: '5130', name: 'Equipment & tools' },
-    { code: '5140', name: 'Vehicle & transport' },
-    { code: '5150', name: 'Repairs & maintenance' },
-    { code: '5160', name: 'Salaries & wages' },
-    { code: '5170', name: 'Marketing' },
-    { code: '5180', name: 'Government & licence fees' },
-    { code: '5900', name: 'Other operating expenses' },
-  ];
-  for (const account of EXPENSE_ACCOUNTS) {
-    await prisma.chartOfAccount.upsert({
-      where: {
-        organizationId_accountCode: {
-          organizationId: organization.id,
-          accountCode: account.code,
-        },
-      },
-      update: {},
-      create: {
-        organizationId: organization.id,
-        accountCode: account.code,
-        accountName: account.name,
-        accountType: 'EXPENSE',
-      },
-    });
-  }
+  // The standard chart of accounts (lib/accounting/chart.ts) — the same one
+  // every workshop gets when it first books anything. Safe to re-run: an
+  // account already there is left as it is.
+  await prisma.$transaction((tx) => ensureChart(tx, organization.id));
 
   console.log('Seed complete.');
   console.log(`  Organization: ${organization.name} (${organization.id})`);
-  console.log(`  Expense categories: ${EXPENSE_ACCOUNTS.length}`);
+  console.log('  Chart of accounts: standard');
   console.log(`  Branch: ${branch.name}`);
   console.log(`  Owner login: ${SEED_OWNER_EMAIL} / ${SEED_OWNER_PASSWORD}`);
 }

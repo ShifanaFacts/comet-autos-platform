@@ -19,6 +19,7 @@ import {
   sendEstimate,
 } from '@/lib/workshop/estimates';
 import { prisma } from '@/lib/prisma';
+import { changeQuotationParty, duplicateQuotation } from '@/lib/workshop/quotation-copy';
 
 /*
  * The quotation screen's actions. Every one of them calls the same estimate
@@ -127,4 +128,28 @@ export async function deleteDraftQuotationAction(estimateId: string): Promise<Ac
   if (!result.ok) return toClientResult(result);
   revalidatePath('/quotations');
   redirect('/quotations');
+}
+
+/** Copies any quotation into a new draft and opens it. */
+export async function duplicateQuotationAction(
+  estimateId: string,
+  requestKey: string,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => duplicateQuotation(user, estimateId, { requestKey }));
+  const id = result.data?.id ?? (result.duplicate ? result.duplicateOf : null);
+  if (!result.ok || !id) return toClientResult(result);
+  revalidatePath('/quotations');
+  redirect(`/quotations/${id}`);
+}
+
+/** Points an unsent first draft at a different customer or vehicle. */
+export async function changeQuotationPartyAction(
+  estimateId: string,
+  input: { customerId: string; vehicleId: string },
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => changeQuotationParty(user, estimateId, input));
+  if (result.ok) await refreshQuotation(estimateId);
+  return toClientResult(result);
 }

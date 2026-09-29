@@ -9,6 +9,8 @@ import { useFormAction } from '@/components/forms/use-form-action';
 import type { ActionResult } from '@/lib/errors';
 import { recordExpenseAction, updateExpenseAction } from '@/app/(app)/finance/actions';
 import { localDateString } from '@/lib/format';
+import { MoneyAccountField } from '@/components/accounting/money-account-field';
+import type { AccountChoice } from '@/lib/accounting/reports';
 
 /** An expense being corrected, as the form's starting values. */
 export interface ExpenseDraft {
@@ -20,6 +22,7 @@ export interface ExpenseDraft {
   expenseDate: string;
   vendorName: string;
   paymentMethod: string;
+  paidFromAccountId: string;
   categoryId: string;
 }
 
@@ -33,11 +36,14 @@ function today() {
 export function ExpenseForm({
   categories,
   defaultVatRate,
+  moneyAccounts = [],
   expense,
   onDone,
 }: {
   categories: { id: string; accountCode: string; accountName: string }[];
   defaultVatRate: string;
+  /** Cash and bank accounts it can be paid from. */
+  moneyAccounts?: AccountChoice[];
   /** Set to correct an existing expense instead of recording a new one. */
   expense?: ExpenseDraft;
   onDone?: () => void;
@@ -158,6 +164,19 @@ export function ExpenseForm({
           </NativeSelect>
         </Field>
       </div>
+      {moneyAccounts.length ? (
+        <div className="grid gap-6 sm:grid-cols-2">
+          <MoneyAccountField
+            id={id('paidFromAccountId')}
+            name="paidFromAccountId"
+            label="Paid from"
+            accounts={moneyAccounts}
+            defaultValue={expense?.paidFromAccountId ?? ''}
+            error={errors.paidFromAccountId}
+            className="h-11 text-base md:text-sm"
+          />
+        </div>
+      ) : null}
 
       <FormError message={Object.keys(errors).length ? undefined : state.error} />
       <div className="border-t border-border pt-4">

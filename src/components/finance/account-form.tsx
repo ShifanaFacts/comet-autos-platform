@@ -24,7 +24,34 @@ export interface AccountDraft {
   id: string;
   accountCode: string;
   accountName: string;
+  accountType: string;
   isActive: boolean;
+  isPaymentAccount: boolean;
+  /** A system account: automatic bookings use it, so it can't be retired. */
+  system: boolean;
+}
+
+/** Money can be received into or paid from it — offered on payment forms. */
+function MoneyAccountBox({ id, defaultChecked }: { id: string; defaultChecked: boolean }) {
+  return (
+    <label htmlFor={id} className="flex items-start gap-3 text-sm">
+      <input type="hidden" name="isPaymentAccount" value="false" />
+      <input
+        id={id}
+        type="checkbox"
+        name="isPaymentAccount"
+        value="true"
+        defaultChecked={defaultChecked}
+        className="mt-0.5 size-4 accent-primary"
+      />
+      <span className="flex flex-col gap-0.5">
+        <span className="font-medium">Money account</span>
+        <span className="text-muted-foreground">
+          A cash, bank or card account: offered as where a payment goes in or comes out.
+        </span>
+      </span>
+    </label>
+  );
 }
 
 /** Adds an account, or edits one when `account` is given. */
@@ -46,6 +73,7 @@ function AccountForm({ account, onDone }: { account?: AccountDraft; onDone?: () 
   );
   const errors = state.fieldErrors ?? {};
   const id = (name: string) => (account ? `${name}-${account.id}` : name);
+  const [type, setType] = useState(account?.accountType ?? 'EXPENSE');
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-6">
@@ -72,11 +100,20 @@ function AccountForm({ account, onDone }: { account?: AccountDraft; onDone?: () 
         />
       </div>
       {account ? (
-        <Field label="Status" htmlFor={id('isActive')}>
+        <Field
+          label="Status"
+          htmlFor={id('isActive')}
+          hint={
+            account.system
+              ? 'Automatic bookings use this account, so it stays in use. It can be renamed and renumbered.'
+              : undefined
+          }
+        >
           <NativeSelect
             id={id('isActive')}
             name="isActive"
             defaultValue={String(account.isActive)}
+            disabled={account.system}
             className="h-11 text-base md:text-sm"
           >
             <option value="true">In use — offered for new entries</option>
@@ -93,7 +130,8 @@ function AccountForm({ account, onDone }: { account?: AccountDraft; onDone?: () 
           <NativeSelect
             id="accountType"
             name="accountType"
-            defaultValue="EXPENSE"
+            value={type}
+            onChange={(event) => setType(event.target.value)}
             className="h-11 text-base md:text-sm"
           >
             <option value="EXPENSE">Expense</option>
@@ -104,6 +142,9 @@ function AccountForm({ account, onDone }: { account?: AccountDraft; onDone?: () 
           </NativeSelect>
         </Field>
       )}
+      {type === 'ASSET' ? (
+        <MoneyAccountBox id={id('isPaymentAccount')} defaultChecked={account?.isPaymentAccount ?? false} />
+      ) : null}
       <FormError message={Object.keys(errors).length ? undefined : state.error} />
       <div className="border-t border-border pt-4">
         <SubmitButton pending={isPending} size="lg" className="h-11" pendingLabel="Saving…">

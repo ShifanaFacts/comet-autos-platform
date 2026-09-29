@@ -11,6 +11,7 @@ import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { filsToString, toFils } from '@/lib/money';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { approvedLeaveDays, leaveDays, overlapDays } from '@/lib/hr/leave';
+import { syncPosting } from '@/lib/accounting/journal';
 
 /*
  * Salaries and the monthly payroll run.
@@ -579,6 +580,8 @@ export async function approvePayroll(user: AuthenticatedUser, payrollId: string)
       approvedByUserId: user.id,
       approvedAt: new Date(),
     });
+    await syncPosting(tx, user.organizationId, 'PAYROLL', payroll.id, user.id);
+    await syncPosting(tx, user.organizationId, 'PAYROLL_PAYMENT', payroll.id, user.id);
     const totals = totalsOf(items);
     await audit(
       tx,
@@ -604,6 +607,8 @@ export async function markPayrollPaid(user: AuthenticatedUser, payrollId: string
       paidByUserId: user.id,
       paidAt,
     });
+    await syncPosting(tx, user.organizationId, 'PAYROLL', payroll.id, user.id);
+    await syncPosting(tx, user.organizationId, 'PAYROLL_PAYMENT', payroll.id, user.id);
     await audit(
       tx,
       user,
@@ -643,6 +648,9 @@ export async function cancelPayroll(user: AuthenticatedUser, payrollId: string, 
     );
     if (payroll.status === 'APPROVED') requirePermission(user, 'payroll.approve');
     await transition(tx, payroll.id, payroll.status, { status: 'CANCELLED' });
+    // An approved run had been booked as owed; cancelling it reverses that.
+    await syncPosting(tx, user.organizationId, 'PAYROLL', payroll.id, user.id);
+    await syncPosting(tx, user.organizationId, 'PAYROLL_PAYMENT', payroll.id, user.id);
     await audit(
       tx,
       user,

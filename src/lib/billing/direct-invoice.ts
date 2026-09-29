@@ -10,6 +10,7 @@ import { DomainError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import {
+  assertIncomeAccounts,
   discountFields,
   lineData,
   lineSchema,
@@ -21,6 +22,9 @@ import {
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { emptyToNull } from '@/lib/normalize';
+import { toFils } from '@/lib/money';
+import { takePayment } from '@/lib/billing/invoice';
+import { syncPosting } from '@/lib/accounting/journal';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 import { CLOSED_JOB_STATUSES } from '@/lib/workshop/stages';
 
@@ -57,8 +61,19 @@ const directInvoiceSchema = z.object({
     .max(60, "Keep the customer's order number under 60 characters.")
     .optional(),
   notes: z.string().trim().max(1000, 'Keep the notes under 1000 characters.').optional(),
+  /**
+   * A sale paid on the spot — a sales receipt: the invoice is issued and its
+   * whole total recorded as received, in one step.
+   */
+  payNow: z.string().optional(),
+  paymentMethod: z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'CHEQUE', 'ONLINE']).optional(),
+  paymentReference: z.string().trim().max(100).optional(),
+  /** Where the money went: a cash, bank or card account; blank for the method's default. */
+  paymentAccountId: z.union([z.literal(''), z.uuid()]).optional(),
   requestKey: z.string().optional(),
 });
+
+const ON = new Set(['1', 'on', 'true']);
 
 /**
  * When an invoice is due: the date chosen, which may not be before it was
@@ -111,6 +126,9 @@ async function linesFromEstimate(
     lines: estimate.items.map((item) => ({
       itemType: item.itemType,
       description: item.description,
+      // Quotations don't choose accounts: the default for each line's type.
+      accountId: null,
+      vatTreatment: item.vatTreatment,
       amounts: storedLineAmounts(item),
     })),
     totals: storedTotals(estimate),
@@ -120,6 +138,8 @@ async function linesFromEstimate(
 export interface DirectInvoiceResult {
   invoiceId: string;
   invoiceNumber: string;
+  /** Set when the sale was paid on the spot. */
+  paymentId: string | null;
 }
 
 /**
@@ -142,6 +162,13 @@ export async function createDirectInvoice(
   requirePermission(user, 'invoice.create', { branchId: user.primaryBranchId });
   if (!input.estimateId && (input.items ?? []).length === 0) {
     throw new DomainError('Add at least one line, or choose a quotation to invoice.', 'items');
+  }
+  const payNow = ON.has(input.payNow ?? '');
+  if (payNow) {
+    requirePermission(user, 'payment.create', { branchId: user.primaryBranchId });
+    if (!input.paymentMethod) {
+      throw new DomainError('Choose how the customer paid.', 'paymentMethod');
+    }
   }
 
   const defaultVatRate = await resolveDefaultVatRate(user.organizationId);
@@ -242,6 +269,7 @@ export async function createDirectInvoice(
     }
 
     const { lines, totals } = source ?? priceDocument(input.items ?? [], defaultVatRate, input);
+    await assertIncomeAccounts(tx, user.organizationId, lines);
 
     const organization = await tx.organization.findUniqueOrThrow({
       where: { id: user.organizationId },
@@ -290,10 +318,13 @@ export async function createDirectInvoice(
           invoiceId: invoice.id,
           itemType: line.itemType,
           description: line.description,
+          accountId: line.accountId ?? null,
+          vatTreatment: line.vatTreatment,
           ...lineData(line.amounts),
         },
       });
     }
+    await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
 
     if (jobCard) {
       await applyJobStatusChange(tx, {
@@ -309,6 +340,26 @@ export async function createDirectInvoice(
         },
       });
     }
+
+    // A sales receipt: the whole total received now, under the same payment
+    // rules as any other payment. Nothing to take on a zero-total bill.
+    const payment =
+      payNow && toFils(totals.totalAmount) > 0
+        ? await takePayment(
+            tx,
+            user,
+            invoice.id,
+            jobCard ? { id: jobCard.id, status: 'INVOICED' } : null,
+            {
+              amount: totals.totalAmount,
+              method: input.paymentMethod!,
+              referenceNumber: input.paymentReference,
+              notes: undefined,
+              accountId: input.paymentAccountId,
+            },
+            new Date(),
+          )
+        : null;
 
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
@@ -333,10 +384,11 @@ export async function createDirectInvoice(
         estimateId: source?.estimate.id ?? null,
         estimateNumber: source?.estimate.estimateNumber ?? null,
         standalone: jobCard === null,
+        paidOnTheSpot: payment !== null,
       },
     });
 
     await settleRequestKey(tx, user, rawInput, invoice.id);
-    return { invoiceId: invoice.id, invoiceNumber };
+    return { invoiceId: invoice.id, invoiceNumber, paymentId: payment?.id ?? null };
   });
 }

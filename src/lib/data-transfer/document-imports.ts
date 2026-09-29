@@ -22,6 +22,7 @@ import {
 import type { DocumentTotals } from '@/lib/money';
 import { filsToString, toFils } from '@/lib/money';
 import { resolveDefaultVatRate } from '@/lib/tax';
+import { syncPosting } from '@/lib/accounting/journal';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { OPEN_JOB_STATUSES } from '@/lib/workshop/check-in';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/lib/workshop/estimates';
@@ -805,6 +806,7 @@ export const DOCUMENT_IMPORTS: Record<string, ImportDefinition> = {
               estimateId: estimate.id,
               itemType: line.itemType,
               description: line.description,
+              vatTreatment: line.vatTreatment,
               ...lineData(line.amounts),
             })),
           });
@@ -991,11 +993,13 @@ export const DOCUMENT_IMPORTS: Record<string, ImportDefinition> = {
               invoiceId: invoice.id,
               itemType: line.itemType,
               description: line.description,
+              vatTreatment: line.vatTreatment,
               ...lineData(line.amounts),
             })),
           });
+          await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
           if (receipt && paid > 0) {
-            await tx.payment.create({
+            const payment = await tx.payment.create({
               data: {
                 organizationId: user.organizationId,
                 invoiceId: invoice.id,
@@ -1008,6 +1012,7 @@ export const DOCUMENT_IMPORTS: Record<string, ImportDefinition> = {
                 receivedByUserId: user.id,
               },
             });
+            await syncPosting(tx, user.organizationId, 'PAYMENT', payment.id, user.id);
           }
           await writeAuditLog(tx, {
             organizationId: user.organizationId,

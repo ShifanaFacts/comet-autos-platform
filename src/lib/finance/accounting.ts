@@ -337,8 +337,14 @@ const accountSchema = z.object({
   accountName: z.string({ error: 'Enter a name.' }).trim().min(2, 'Enter a name.').max(120),
   accountType: z.enum(ACCOUNT_TYPES, { error: 'Choose the kind of account.' }).optional(),
   isActive: z.enum(['true', 'false']).optional(),
+  /** Cash, bank and card accounts money can go into or come out of. */
+  isPaymentAccount: z.union([z.enum(['true', 'false']), z.array(z.enum(['true', 'false']))]).optional(),
   requestKey: z.string().optional(),
 });
+
+/** The last value of a checkbox sent with its hidden "false" companion. */
+const checked = (value: 'true' | 'false' | ('true' | 'false')[] | undefined) =>
+  value === undefined ? undefined : (Array.isArray(value) ? value.at(-1) : value) === 'true';
 
 /** Every account, grouped by type in the usual order, with how often each is used. */
 export async function listAccounts(user: AuthenticatedUser) {
@@ -352,7 +358,9 @@ export async function listAccounts(user: AuthenticatedUser) {
       accountName: true,
       accountType: true,
       isActive: true,
-      _count: { select: { expenses: true } },
+      role: true,
+      isPaymentAccount: true,
+      _count: { select: { expenses: true, journalEntryLines: true } },
     },
   });
   return ACCOUNT_TYPES.map((type) => ({
@@ -392,6 +400,7 @@ export async function createAccount(user: AuthenticatedUser, rawInput: unknown) 
         accountCode: code,
         accountName: input.accountName.replace(/\s+/g, ' '),
         accountType: input.accountType!,
+        isPaymentAccount: input.accountType === 'ASSET' && checked(input.isPaymentAccount) === true,
       },
     });
     await writeAuditLog(tx, {
@@ -424,6 +433,14 @@ export async function updateAccount(user: AuthenticatedUser, accountId: string, 
   if (!before) throw new NotFoundError('account');
   const code = input.accountCode.toUpperCase();
   await assertCodeFree(user.organizationId, code, before.id);
+  // Automatic bookings go to system accounts, so they can't be retired.
+  if (before.role && input.isActive === 'false') {
+    throw new DomainError(
+      'This account is used by automatic bookings, so it stays in use. It can be renamed or renumbered.',
+      'isActive',
+    );
+  }
+  const paymentAccount = checked(input.isPaymentAccount);
 
   return prisma.$transaction(async (tx) => {
     const account = await tx.chartOfAccount.update({
@@ -431,7 +448,10 @@ export async function updateAccount(user: AuthenticatedUser, accountId: string, 
       data: {
         accountCode: code,
         accountName: input.accountName.replace(/\s+/g, ' '),
-        isActive: input.isActive ? input.isActive === 'true' : before.isActive,
+        isActive: before.role ? true : input.isActive ? input.isActive === 'true' : before.isActive,
+        ...(before.accountType === 'ASSET' && paymentAccount !== undefined
+          ? { isPaymentAccount: paymentAccount }
+          : {}),
       },
     });
     await writeAuditLog(tx, {

@@ -1,7 +1,12 @@
 import Link from 'next/link';
-import { Info, Percent, ShieldCheck } from 'lucide-react';
-import { requireUser } from '@/lib/auth/authorize';
+import { ChevronRight, Info, Percent, ShieldCheck } from 'lucide-react';
+import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { AuthError } from '@/lib/auth/authorize';
+import { listVatFilings, vatDueDate, type VatFilingState } from '@/lib/accounting/vat-filing';
+import { getAccountChoices } from '@/lib/accounting/reports';
+import { localDateString } from '@/lib/format';
+import { StatusPill } from '@/components/shared/status-pill';
+import { FileVatReturnForm, SettleVatButton } from '@/components/accounting/vat-filing-controls';
 import { getVatReturn, type VatReturn } from '@/lib/finance/vat';
 import { formatCalendarDate, formatDate, formatMoney } from '@/lib/format';
 import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
@@ -12,35 +17,139 @@ import { cn } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
-/** One line of the return: its box number, what it is, the amount and the VAT. */
+const FILING_STATE: Record<
+  VatFilingState,
+  { label: string; tone: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }
+> = {
+  PAYMENT_DUE: { label: 'Payment due', tone: 'warning' },
+  OVERDUE: { label: 'Payment overdue', tone: 'danger' },
+  PAID: { label: 'Paid', tone: 'success' },
+  REFUND_DUE: { label: 'Refund due from FTA', tone: 'info' },
+  REFUNDED: { label: 'Refunded', tone: 'success' },
+  NIL: { label: 'Nil return', tone: 'neutral' },
+};
+
+/** How a VAT201 return is submitted and paid — shown beside the figures. */
+function HowToFile({ emirate }: { emirate: VatReturn['emirate'] }) {
+  const steps = [
+    'Choose the VAT period above (usually a calendar quarter) and check the figures and the documents listed below.',
+    'Sign in to EmaraTax at tax.gov.ae, open VAT, then "VAT201 – VAT Returns", and start the return for the same period.',
+    `Box ${emirate.box} — enter the standard-rated supplies and their VAT against ${emirate.name}. Box 4 — the zero-rated supplies, and Box 5 — the exempt supplies, if any.`,
+    'Box 9 — enter the standard-rated expenses and the VAT recoverable on them.',
+    'Check that Box 14 (payable or refundable) matches the figure here, tick the declaration and submit. Note the reference EmaraTax gives you.',
+    'Record the return here as filed, with that reference. Filing is due by the 28th day after the period ends.',
+    'Pay by the same date — by bank transfer to your GIBAN (shown in EmaraTax) or by card — then record the payment here.',
+  ];
+  return (
+    <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm">
+      {steps.map((step) => (
+        <li key={step}>{step}</li>
+      ))}
+    </ol>
+  );
+}
+
+/** A document behind a box of the return, opened with a click. */
+interface BoxDocument {
+  key: string;
+  href: string;
+  number: string;
+  date: string;
+  party: string;
+  net: string;
+  vat: string;
+}
+
+const BOX_ROW =
+  'grid grid-cols-[2.5rem_1fr_auto] items-baseline gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[2.5rem_1fr_9rem_9rem] sm:px-6';
+
+/**
+ * One line of the return: its box number, what it is, the amount and the
+ * VAT. A box with documents behind it opens to list them — each one a link
+ * to the invoice, expense or delivery itself.
+ */
 function Box({
   box,
   label,
   amount,
   vat,
   strong,
+  documents,
 }: {
   box: string;
   label: string;
   amount?: string;
   vat?: string;
   strong?: boolean;
+  documents?: BoxDocument[];
 }) {
-  return (
-    <li
-      className={cn(
-        'grid grid-cols-[2.5rem_1fr_auto] items-baseline gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[2.5rem_1fr_9rem_9rem] sm:px-6',
-        strong && 'bg-muted/40 font-semibold',
-      )}
-    >
+  const figures = (
+    <>
       <span className="font-mono text-xs text-muted-foreground">{box}</span>
-      <span className="text-sm">{label}</span>
+      <span className="flex items-center gap-2 text-sm">
+        {documents ? (
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+        ) : null}
+        {label}
+        {documents ? (
+          <span className="text-xs font-normal text-muted-foreground">
+            {documents.length} document{documents.length === 1 ? '' : 's'}
+          </span>
+        ) : null}
+      </span>
       <span className="text-right text-sm tabular-nums sm:col-auto">
         {amount !== undefined ? formatMoney(amount) : ''}
       </span>
       <span className="col-start-3 text-right text-sm tabular-nums sm:col-start-auto">
         {vat !== undefined ? formatMoney(vat) : ''}
       </span>
+    </>
+  );
+  if (!documents) {
+    return <li className={cn(BOX_ROW, strong && 'bg-muted/40 font-semibold')}>{figures}</li>;
+  }
+  return (
+    <li>
+      <details className="group">
+        <summary
+          className={cn(
+            BOX_ROW,
+            'cursor-pointer list-none hover:bg-muted/40 [&::-webkit-details-marker]:hidden',
+            strong && 'bg-muted/40 font-semibold',
+          )}
+        >
+          {figures}
+        </summary>
+        {documents.length === 0 ? (
+          <p className="border-t border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground sm:px-6 sm:pl-[4.25rem]">
+            Nothing in this box for the period.
+          </p>
+        ) : (
+          <ul className="divide-y divide-border border-t border-border bg-muted/20">
+            {documents.map((doc) => (
+              <li key={doc.key}>
+                <Link
+                  href={doc.href}
+                  className="grid grid-cols-[1fr_auto] gap-x-3 px-4 py-2.5 text-sm hover:bg-muted sm:grid-cols-[2.5rem_1fr_9rem_9rem] sm:px-6"
+                >
+                  <span className="hidden sm:block" />
+                  <span className="min-w-0">
+                    <span className="font-medium text-primary">{doc.number}</span>
+                    <span className="text-muted-foreground">
+                      {' '}
+                      · {doc.date} · {doc.party}
+                    </span>
+                  </span>
+                  <span className="text-right tabular-nums">{formatMoney(doc.net)}</span>
+                  <span className="col-start-2 text-right text-muted-foreground tabular-nums sm:col-start-auto">
+                    {formatMoney(doc.vat)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
     </li>
   );
 }
@@ -130,6 +239,85 @@ export default async function VatPage({
   }
   const { period, boxes } = data;
   const payable = boxes.netFils >= 0;
+  const canFile = hasPermission(user, 'accounting.edit');
+  const canSeeFilings = hasPermission(user, 'accounting.view');
+  const today = localDateString();
+  const [filings, money] = canSeeFilings
+    ? await Promise.all([
+        listVatFilings(user),
+        canFile ? getAccountChoices(user).then((c) => c.money) : [],
+      ])
+    : [[], []];
+  const alreadyFiled = filings.find(
+    (filing) =>
+      filing.periodFrom.toISOString().slice(0, 10) <= period.to &&
+      filing.periodTo.toISOString().slice(0, 10) >= period.from,
+  );
+  const ended = period.to < today;
+
+  // The documents behind each box, for opening them from the return.
+  const saleHref = (row: VatReturn['sales'][number]) => `/finance/invoices/${row.id}`;
+  const standardSales: BoxDocument[] = data.sales
+    .filter((row) => row.standard !== '0.00')
+    .map((row) => ({
+      key: row.id,
+      href: saleHref(row),
+      number: row.number,
+      date: formatCalendarDate(row.date),
+      party: row.party,
+      net: row.standard,
+      vat: row.vat,
+    }));
+  // Credit notes sit in the same boxes, taking their part back off.
+  const credited = (part: 'standard' | 'zeroRated' | 'exempt', withVat: boolean) =>
+    data.credits
+      .filter((row) => row[part] !== '0.00')
+      .map((row) => ({
+        key: `credit-${row.id}`,
+        href: `/finance/credit-notes/${row.id}`,
+        number: row.number,
+        date: formatCalendarDate(row.date),
+        party: `${row.party} · credits ${row.invoiceNumber}`,
+        net: `-${row[part]}`,
+        vat: withVat ? `-${row.vat}` : '0.00',
+      }));
+  const standardDocuments = [...standardSales, ...credited('standard', true)];
+  const salesIn = (part: 'zeroRated' | 'exempt'): BoxDocument[] => [
+    ...data.sales
+      .filter((row) => row[part] !== '0.00')
+      .map((row) => ({
+        key: row.id,
+        href: saleHref(row),
+        number: row.number,
+        date: formatCalendarDate(row.date),
+        party: row.party,
+        net: row[part],
+        vat: '0.00',
+      })),
+    ...credited(part, false),
+  ];
+  const zeroRatedSales = salesIn('zeroRated');
+  const exemptSales = salesIn('exempt');
+  const expenseDocuments: BoxDocument[] = [
+    ...data.expenses.map((row) => ({
+      key: `expense-${row.id}`,
+      href: `/finance/expenses?q=${encodeURIComponent(row.number ?? row.description)}`,
+      number: row.number ?? 'Expense',
+      date: formatCalendarDate(row.date),
+      party: row.party,
+      net: row.net,
+      vat: row.vat,
+    })),
+    ...data.purchases.map((row) => ({
+      key: `purchase-${row.id}`,
+      href: `/inventory/purchases/${row.id}`,
+      number: row.number,
+      date: formatDate(row.date),
+      party: row.party,
+      net: row.net,
+      vat: row.vat,
+    })),
+  ];
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -170,6 +358,9 @@ export default async function VatPage({
               </span>
               <span className="text-xs text-muted-foreground">
                 On {data.sales.length} tax invoice{data.sales.length === 1 ? '' : 's'}
+                {data.credits.length > 0
+                  ? `, less ${data.credits.length} credit note${data.credits.length === 1 ? '' : 's'}`
+                  : ''}
               </span>
             </div>
             <div className="flex flex-col gap-1">
@@ -211,12 +402,24 @@ export default async function VatPage({
               </div>
               <ul className="divide-y divide-border">
                 <Box
-                  box="1"
-                  label="Standard-rated supplies"
+                  box={data.emirate.box}
+                  label={`Standard-rated supplies in ${data.emirate.name}`}
                   amount={boxes.standardSupplies}
                   vat={boxes.outputVat}
+                  documents={standardDocuments}
                 />
-                <Box box="4" label="Zero-rated supplies" amount={boxes.zeroRatedSupplies} />
+                <Box
+                  box="4"
+                  label="Zero-rated supplies"
+                  amount={boxes.zeroRatedSupplies}
+                  documents={zeroRatedSales}
+                />
+                <Box
+                  box="5"
+                  label="Exempt supplies"
+                  amount={boxes.exemptSupplies}
+                  documents={exemptSales}
+                />
                 <Box
                   box="8"
                   label="Total supplies"
@@ -229,6 +432,7 @@ export default async function VatPage({
                   label="Standard-rated expenses"
                   amount={boxes.standardExpenses}
                   vat={boxes.inputVat}
+                  documents={expenseDocuments}
                 />
                 <Box
                   box="11"
@@ -249,9 +453,15 @@ export default async function VatPage({
             </Panel>
             <p className="flex items-start gap-2 text-xs text-muted-foreground">
               <Info className="mt-0.5 size-3.5 shrink-0" />
-              Supplies are reported for the emirate of the workshop. Exempt supplies, reverse-charge
-              imports and adjustments are not recorded in the system — add them on the form if they
-              apply.
+              Standard-rated supplies are reported against {data.emirate.name}, the emirate set in
+              Settings; credit notes issued in the period are already taken off. Lines marked out of
+              scope
+              {boxes.outOfScopeSupplies !== '0.00'
+                ? ` (${formatMoney(boxes.outOfScopeSupplies)} this period)`
+                : ''}{' '}
+              are not supplies and are left off the return. Tourist refunds, reverse-charge and
+              import boxes (2, 3, 6, 7 and 10) do not arise for a workshop selling locally — add them
+              on the form only if they apply.
             </p>
           </Section>
         </>
@@ -276,9 +486,30 @@ export default async function VatPage({
         />
       </Section>
 
+      {data.credits.length > 0 ? (
+        <Section
+          title="Credit notes"
+          description="Tax credit notes issued in the period. Each one reduces the supplies and output VAT of this return, whatever the date of the invoice it corrects."
+        >
+          <DocumentTable
+            empty=""
+            rows={data.credits.map((row) => ({
+              key: row.id,
+              href: `/finance/credit-notes/${row.id}`,
+              number: row.number,
+              date: formatCalendarDate(row.date),
+              party: row.party,
+              detail: `Against ${row.invoiceNumber} — ${row.reason}`,
+              net: `-${row.net}`,
+              vat: `-${row.vat}`,
+            }))}
+          />
+        </Section>
+      ) : null}
+
       <Section
-        title="Parts received"
-        description={`Deliveries booked into stock in the period, with the VAT on them${data.registered ? ` (${formatMoney(boxes.purchaseVat)})` : ''}.`}
+        title="Parts received and returned"
+        description={`Deliveries booked into stock in the period, less parts returned to the supplier, with the VAT on them${data.registered ? ` (${formatMoney(boxes.purchaseVat)})` : ''}.`}
       >
         <DocumentTable
           empty="No parts carrying VAT were received in this period."
@@ -294,6 +525,119 @@ export default async function VatPage({
           }))}
         />
       </Section>
+
+      {data.registered && canSeeFilings ? (
+        <Section
+          title="Filing with the FTA"
+          description={`A return for this period is due by ${formatCalendarDate(vatDueDate(period.to))}, and so is any payment.`}
+        >
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Panel>
+              <HowToFile emirate={data.emirate} />
+            </Panel>
+            <Panel>
+              {alreadyFiled ? (
+                <p className="text-sm">
+                  The return for {formatCalendarDate(alreadyFiled.periodFrom)} to{' '}
+                  {formatCalendarDate(alreadyFiled.periodTo)} was recorded as filed on{' '}
+                  {formatCalendarDate(alreadyFiled.filedOn)}
+                  {alreadyFiled.ftaReference ? ` (FTA ref. ${alreadyFiled.ftaReference})` : ''}. See
+                  the filed returns below.
+                </p>
+              ) : !ended ? (
+                <p className="text-sm text-muted-foreground">
+                  This period hasn&apos;t ended yet. Once it has, file the return on EmaraTax and
+                  record it here.
+                </p>
+              ) : canFile ? (
+                <FileVatReturnForm
+                  from={period.from}
+                  to={period.to}
+                  today={today}
+                  net={boxes.net}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Only someone who manages the accounts can record a filed return.
+                </p>
+              )}
+            </Panel>
+          </div>
+        </Section>
+      ) : null}
+
+      {canSeeFilings && filings.length > 0 ? (
+        <Section
+          title="Filed returns"
+          description="Every return recorded as filed, and whether it has been paid."
+        >
+          <Panel padding="none" className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="bg-muted/40 text-left text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">
+                <tr>
+                  <th className="px-4 py-3">Period</th>
+                  <th className="px-2 py-3">Filed</th>
+                  <th className="px-2 py-3 text-right">Output VAT</th>
+                  <th className="px-2 py-3 text-right">Input VAT</th>
+                  <th className="px-2 py-3 text-right">Net</th>
+                  <th className="px-4 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filings.map((filing) => (
+                  <tr key={filing.id}>
+                    <td className="px-4 py-3">
+                      {formatCalendarDate(filing.periodFrom)} –{' '}
+                      {formatCalendarDate(filing.periodTo)}
+                      <span className="block text-xs text-muted-foreground">
+                        Due {formatCalendarDate(filing.dueOn)}
+                      </span>
+                    </td>
+                    <td className="px-2 py-3">
+                      {formatCalendarDate(filing.filedOn)}
+                      <span className="block text-xs text-muted-foreground">
+                        {filing.ftaReference ? `Ref. ${filing.ftaReference}` : 'No reference'} ·{' '}
+                        {filing.filedBy.fullName}
+                      </span>
+                    </td>
+                    <td className="px-2 py-3 text-right tabular-nums">
+                      {formatMoney(filing.outputVat.toString())}
+                    </td>
+                    <td className="px-2 py-3 text-right tabular-nums">
+                      {formatMoney(filing.inputVat.toString())}
+                    </td>
+                    <td className="px-2 py-3 text-right font-medium tabular-nums">
+                      {formatMoney(filing.netVat.toString().replace('-', ''))}
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        {filing.netFils < 0 ? 'refundable' : 'payable'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <StatusPill tone={FILING_STATE[filing.state].tone}>
+                          {FILING_STATE[filing.state].label}
+                        </StatusPill>
+                        {filing.settledOn ? (
+                          <span className="text-xs text-muted-foreground">
+                            {formatCalendarDate(filing.settledOn)}
+                          </span>
+                        ) : canFile && filing.state !== 'NIL' ? (
+                          <SettleVatButton
+                            filingId={filing.id}
+                            net={filing.netVat.toString()}
+                            today={today}
+                            accounts={money}
+                          />
+                        ) : null}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+        </Section>
+      ) : null}
 
       <Section
         title="Expenses"

@@ -42,7 +42,7 @@ export default async function NewPartPage() {
         title="New part"
         description="Add a part to the catalogue. Opening stock is recorded in the stock history."
       />
-      <Panel className="w-full max-w-3xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <PartForm
           action={createPartAction}
           categories={categories}

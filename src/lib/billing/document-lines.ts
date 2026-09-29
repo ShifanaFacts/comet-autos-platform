@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import type { EstimateItemType } from '@/generated/prisma/enums';
+import type { Prisma } from '@/generated/prisma/client';
+import type { EstimateItemType, VatTreatment } from '@/generated/prisma/enums';
+import { rateFor, treatmentFromRate } from '@/lib/vat-treatment';
 import { DomainError } from '@/lib/errors';
 import {
   calculateDocument,
@@ -42,8 +44,13 @@ export const lineSchema = z.object({
     .max(300, 'Keep a line description under 300 characters.'),
   quantity: z.string().trim().min(1, 'Enter a quantity.'),
   unitPrice: z.string().trim().min(1, 'Enter a price.'),
+  /** Only for lines given a rate and no treatment (imports, older forms). */
   taxRate: z.string().trim().optional(),
+  /** How the line is treated for VAT; its rate follows from it. */
+  vatTreatment: z.enum(['STANDARD', 'ZERO_RATED', 'EXEMPT', 'OUT_OF_SCOPE']).optional(),
   ...discountFields,
+  /** The income account it books to; blank for the default of its type. */
+  accountId: z.union([z.literal(''), z.uuid()]).optional(),
 });
 
 export type TypedLine = z.infer<typeof lineSchema>;
@@ -51,7 +58,40 @@ export type TypedLine = z.infer<typeof lineSchema>;
 export interface PricedLine {
   itemType: EstimateItemType;
   description: string;
+  vatTreatment: VatTreatment;
   amounts: LineAmounts;
+  /** Invoices only: the income account chosen, or null for the default. */
+  accountId?: string | null;
+}
+
+/**
+ * Checks the income accounts chosen on invoice lines belong to the workshop,
+ * are income accounts and are in use.
+ */
+export async function assertIncomeAccounts(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  lines: { accountId?: string | null }[],
+) {
+  const ids = [...new Set(lines.map((line) => line.accountId).filter(Boolean) as string[])];
+  if (ids.length === 0) return;
+  const accounts = await tx.chartOfAccount.findMany({
+    where: { organizationId, id: { in: ids } },
+    select: { id: true, accountType: true, isActive: true, role: true },
+  });
+  const ok = new Set(
+    accounts
+      .filter((a) => a.accountType === 'REVENUE' && a.isActive && a.role !== 'SALES_DISCOUNTS')
+      .map((a) => a.id),
+  );
+  lines.forEach((line, index) => {
+    if (line.accountId && !ok.has(line.accountId)) {
+      throw new DomainError(
+        `Line ${index + 1}: choose an income account that is in use.`,
+        `items.${index}`,
+      );
+    }
+  });
 }
 
 /**
@@ -66,13 +106,20 @@ export function priceDocument(
 ): { lines: PricedLine[]; totals: DocumentTotals } {
   const lines = items.map((item, index) => {
     try {
+      // A treatment decides the rate; a bare rate (an import) decides the treatment.
+      const vatTreatment = item.vatTreatment ?? treatmentFromRate(item.taxRate || defaultVatRate);
+      const taxRate = item.vatTreatment
+        ? rateFor(item.vatTreatment, defaultVatRate)
+        : item.taxRate || defaultVatRate;
       return {
         itemType: item.itemType as EstimateItemType,
         description: item.description,
+        vatTreatment,
+        accountId: item.accountId || null,
         amounts: calculateLine({
           quantity: item.quantity,
           unitPrice: item.unitPrice,
-          taxRate: item.taxRate || defaultVatRate,
+          taxRate,
           discount: readDiscount(item.discountType, item.discount),
         }),
       };

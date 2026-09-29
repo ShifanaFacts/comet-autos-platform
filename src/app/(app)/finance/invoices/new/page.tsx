@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation';
-import { requirePermission, requireUser } from '@/lib/auth/authorize';
+import { hasPermission, requirePermission, requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
 import { resolveDefaultVatRate } from '@/lib/tax';
+import { getAccountChoices } from '@/lib/accounting/reports';
 import { getCustomerOptions, type CustomerOption } from '@/lib/customers/picker';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { NewInvoiceForm, type QuotationChoice } from './invoice-form';
@@ -11,7 +12,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export default async function NewInvoicePage({
   searchParams,
 }: {
-  searchParams: Promise<{ customer?: string; quotation?: string; workOrder?: string }>;
+  searchParams: Promise<{
+    customer?: string;
+    quotation?: string;
+    workOrder?: string;
+    /** "now": a sales receipt — the customer pays on the spot. */
+    pay?: string;
+  }>;
 }) {
   const user = await requireUser();
   requirePermission(user, 'invoice.create', { branchId: user.primaryBranchId ?? undefined });
@@ -65,6 +72,7 @@ export default async function NewInvoicePage({
     quotation?.customerId ??
     workOrder?.customerId ??
     (params.customer && UUID.test(params.customer) ? params.customer : null);
+  const accounts = await getAccountChoices(user);
   let initialCustomer: CustomerOption | null = null;
   if (customerId) {
     [initialCustomer = null] = await getCustomerOptions(user, [customerId]);
@@ -74,19 +82,25 @@ export default async function NewInvoicePage({
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
         eyebrow="Invoices"
-        title="New invoice"
+        title={params.pay === 'now' ? 'New sales receipt' : 'New invoice'}
         description={
           quotation
             ? 'Billing an approved quotation — the lines and VAT are carried across as the customer saw them.'
             : 'Bill a customer for work done. A job card is not needed — link one only if you want to.'
         }
       />
-      <Panel className="w-full max-w-4xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <NewInvoiceForm
           initialCustomer={initialCustomer}
           initialWorkOrder={workOrder}
           quotation={quotation}
           defaultVatRate={await resolveDefaultVatRate(user.organizationId)}
+          initialPayNow={params.pay === 'now'}
+          canTakePayment={hasPermission(user, 'payment.create', {
+            branchId: user.primaryBranchId ?? undefined,
+          })}
+          incomeAccounts={hasPermission(user, 'accounting.view') ? accounts.income : undefined}
+          moneyAccounts={accounts.money}
         />
       </Panel>
     </Stack>

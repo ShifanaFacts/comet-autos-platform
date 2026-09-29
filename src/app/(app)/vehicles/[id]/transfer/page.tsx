@@ -93,7 +93,7 @@ export default async function TransferVehiclePage({
       ) : null}
 
       {chosen ? (
-        <Panel className="max-w-2xl">
+        <Panel>
           <TransferVehicleForm
             vehicleId={vehicle.id}
             plateNumber={vehicle.plateNumber}

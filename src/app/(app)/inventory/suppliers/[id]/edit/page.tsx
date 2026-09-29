@@ -30,7 +30,7 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
         }
         title="Edit supplier"
       />
-      <Panel className="w-full max-w-2xl sm:p-8">
+      <Panel className="w-full sm:p-8">
         <SupplierForm
           action={updateSupplierAction.bind(null, supplier.id)}
           initial={supplier}

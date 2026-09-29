@@ -385,6 +385,9 @@ async function recentActivity(
           where: {
             organizationId,
             status: 'COMPLETED',
+            // Money that stands: not a reversal, and not since reversed.
+            reversalOfPaymentId: null,
+            reversals: { none: {} },
             invoice: { organizationId, ...branch, status: { notIn: ['VOID', 'CANCELLED'] } },
           },
           orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],

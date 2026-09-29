@@ -1,5 +1,7 @@
 'use client';
 
+import { MoneyAccountField } from '@/components/accounting/money-account-field';
+import type { AccountChoice } from '@/lib/accounting/reports';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Banknote, CheckCircle2, TriangleAlert, Wallet } from 'lucide-react';
@@ -63,8 +65,11 @@ export function SupplierPaymentForm({
   purchase,
   defaultPaidAt,
   backHref,
+  moneyAccounts = [],
 }: {
   purchase: PayablePurchase;
+  /** Cash and bank accounts it can be paid from. */
+  moneyAccounts?: AccountChoice[];
   /** Now, in the workshop's timezone, from the server. */
   defaultPaidAt: string;
   backHref: string;
@@ -74,6 +79,7 @@ export function SupplierPaymentForm({
   const [method, setMethod] = useState<PaymentMethod>('BANK_TRANSFER');
   const [reference, setReference] = useState('');
   const [paidAt, setPaidAt] = useState(defaultPaidAt);
+  const [accountId, setAccountId] = useState('');
   const [confirming, setConfirming] = useState(false);
 
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
@@ -124,8 +130,19 @@ export function SupplierPaymentForm({
         <input type="hidden" name="method" value={method} />
         <input type="hidden" name="referenceNumber" value={reference} />
         <input type="hidden" name="paidAt" value={paidAt} />
+        <input type="hidden" name="accountId" value={accountId} />
 
         <div hidden={confirming} className="flex flex-col gap-5">
+          {moneyAccounts.length ? (
+            <MoneyAccountField
+              id="supplier-payment-account"
+              label="Paid from"
+              accounts={moneyAccounts}
+              value={accountId}
+              onChange={setAccountId}
+              error={errors.accountId}
+            />
+          ) : null}
           <Field
             label="Amount paid"
             htmlFor="supplier-payment-amount"
