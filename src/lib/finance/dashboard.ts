@@ -42,6 +42,13 @@ export interface ResolvedPeriod {
   /** Inclusive Dubai calendar dates, "YYYY-MM-DD". */
   from: string;
   to: string;
+  /**
+   * The last day of the calendar period itself, "YYYY-MM-DD". For a period
+   * still running ("This quarter") `to` is today — the figures stop there —
+   * but anything measured from the period's end, like a VAT return's due
+   * date, is measured from this.
+   */
+  periodEnd: string;
   /** Half-open instant window for timestamp columns. */
   start: Date;
   end: Date;
@@ -74,7 +81,9 @@ export function resolvePeriod(input: {
   let key: PeriodKey = 'month';
   let from = today;
   let to = today;
+  let periodEnd = today;
   let label = '';
+  const [year, month] = today.split('-').map(Number);
 
   if (input.period === 'today') {
     key = 'today';
@@ -84,24 +93,26 @@ export function resolvePeriod(input: {
     // The workshop week starts on Monday.
     const weekday = (asInstant(today).getUTCDay() + 6) % 7;
     from = addDays(today, -weekday);
+    periodEnd = addDays(from, 6);
     label = 'This week';
   } else if (input.period === 'last-month') {
     key = 'last-month';
-    const [year, month] = today.split('-').map(Number);
     from = monthStart(year, month - 1);
     to = addDays(monthStart(year, month), -1);
+    periodEnd = to;
     label = 'Last month';
   } else if (input.period === 'quarter' || input.period === 'last-quarter') {
     // Calendar quarters — the periods a UAE VAT return is usually filed for.
     key = input.period;
-    const [year, month] = today.split('-').map(Number);
     const first = month - ((month - 1) % 3) - (key === 'last-quarter' ? 3 : 0);
     from = monthStart(year, first);
-    if (key === 'last-quarter') to = addDays(monthStart(year, first + 3), -1);
+    periodEnd = addDays(monthStart(year, first + 3), -1);
+    if (key === 'last-quarter') to = periodEnd;
     label = key === 'quarter' ? 'This quarter' : 'Last quarter';
   } else if (input.period === 'year') {
     key = 'year';
-    from = `${today.slice(0, 4)}-01-01`;
+    from = `${year}-01-01`;
+    periodEnd = `${year}-12-31`;
     label = 'This year';
   } else if (
     input.period === 'custom' &&
@@ -112,9 +123,11 @@ export function resolvePeriod(input: {
     from = input.from!;
     to = input.to!;
     if (from > to) [from, to] = [to, from];
+    periodEnd = to;
     label = 'Custom range';
   } else {
     from = `${today.slice(0, 7)}-01`;
+    periodEnd = addDays(monthStart(year, month + 1), -1);
     label = 'This month';
   }
 
@@ -123,6 +136,7 @@ export function resolvePeriod(input: {
     label,
     from,
     to,
+    periodEnd,
     start: asInstant(from),
     // Half-open: up to, but not including, the morning after `to`.
     end: asInstant(addDays(to, 1)),
@@ -186,16 +200,21 @@ export async function getFinanceDashboard(
           })
         : null,
 
-      // --- Collected: the payments that actually count, in this window.
+      // --- Collected: the payments that actually count, in this window. A
+      // reversed payment keeps status COMPLETED — its reversal is a separate
+      // REVERSED row — so "counts" means: completed, not itself a reversal,
+      // and never reversed (whenever the reversal happened).
       access.sales
-        ? prisma.payment.findMany({
+        ? prisma.payment.aggregate({
             where: {
               organizationId,
               status: 'COMPLETED',
+              reversalOfPaymentId: null,
+              reversals: { none: {} },
               receivedAt: { gte: period.start, lt: period.end },
               invoice: { organizationId, ...branch, status: { notIn: ['VOID', 'CANCELLED'] } },
             },
-            select: { id: true, amount: true, reversalOfPaymentId: true },
+            _sum: { amount: true },
           })
         : null,
 
@@ -235,16 +254,7 @@ export async function getFinanceDashboard(
       getVatSettings(organizationId),
     ]);
 
-  // Collected: exclude a reversal row and the payment it reversed.
-  let collectedFils = 0;
-  if (collected) {
-    const reversed = new Set(
-      collected.map((payment) => payment.reversalOfPaymentId).filter(Boolean),
-    );
-    collectedFils = collected
-      .filter((payment) => !payment.reversalOfPaymentId && !reversed.has(payment.id))
-      .reduce((sum, payment) => sum + toFils(payment.amount.toString()), 0);
-  }
+  const collectedFils = toFils(collected?._sum.amount?.toString() ?? '0');
 
   const revenueNet = toFils(revenue?._sum.subtotal?.toString() ?? '0');
   const revenueVat = toFils(revenue?._sum.taxAmount?.toString() ?? '0');

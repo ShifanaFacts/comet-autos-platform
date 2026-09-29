@@ -48,6 +48,17 @@ import { resolvePeriod, type ResolvedPeriod } from '@/lib/finance/dashboard';
 
 const SUPPLY_STATUSES: InvoiceStatus[] = ['ISSUED', 'PARTIALLY_PAID', 'PAID'];
 
+/** Days after a VAT period ends by which the return and the payment are due. */
+export const VAT_DUE_DAYS = 28;
+
+/**
+ * When a return for a period ending on `periodEnd` ("YYYY-MM-DD", the last
+ * day of the quarter or month) must be filed and paid.
+ */
+export function vatDueDate(periodEnd: string): Date {
+  return new Date(parseCalendarDate(periodEnd)!.getTime() + VAT_DUE_DAYS * 86_400_000);
+}
+
 const fils = (value: { toString(): string } | null | undefined) =>
   value ? toFils(value.toString()) : 0;
 
@@ -293,6 +304,11 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
 
   return {
     period,
+    /**
+     * When the return and any payment are due: 28 days after the last day of
+     * the period itself — the quarter's end for "This quarter", not today.
+     */
+    dueDate: vatDueDate(period.periodEnd),
     registered,
     rate: settings.vatRate,
     taxNumber: settings.taxNumber,

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { ChevronRight, Info, Percent, ShieldCheck } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { AuthError } from '@/lib/auth/authorize';
-import { listVatFilings, vatDueDate, type VatFilingState } from '@/lib/accounting/vat-filing';
+import { listVatFilings, type VatFilingState } from '@/lib/accounting/vat-filing';
 import { getAccountChoices } from '@/lib/accounting/reports';
 import { localDateString } from '@/lib/format';
 import { StatusPill } from '@/components/shared/status-pill';
@@ -460,8 +460,8 @@ export default async function VatPage({
                 ? ` (${formatMoney(boxes.outOfScopeSupplies)} this period)`
                 : ''}{' '}
               are not supplies and are left off the return. Tourist refunds, reverse-charge and
-              import boxes (2, 3, 6, 7 and 10) do not arise for a workshop selling locally — add them
-              on the form only if they apply.
+              import boxes (2, 3, 6, 7 and 10) do not arise for a workshop selling locally — add
+              them on the form only if they apply.
             </p>
           </Section>
         </>
@@ -529,7 +529,7 @@ export default async function VatPage({
       {data.registered && canSeeFilings ? (
         <Section
           title="Filing with the FTA"
-          description={`A return for this period is due by ${formatCalendarDate(vatDueDate(period.to))}, and so is any payment.`}
+          description={`A return for this period is due by ${formatCalendarDate(data.dueDate)}, and so is any payment.`}
         >
           <div className="grid gap-6 lg:grid-cols-2">
             <Panel>

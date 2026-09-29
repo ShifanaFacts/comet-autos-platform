@@ -9,7 +9,7 @@ import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { toFils } from '@/lib/money';
 import { formatCalendarDate, localDateString, parseCalendarDate } from '@/lib/format';
 import { emptyToNull } from '@/lib/normalize';
-import { getVatReturn } from '@/lib/finance/vat';
+import { getVatReturn, VAT_DUE_DAYS } from '@/lib/finance/vat';
 import { syncPosting } from '@/lib/accounting/journal';
 import { booksClosedThrough } from '@/lib/accounting/periods';
 
@@ -30,8 +30,9 @@ import { booksClosedThrough } from '@/lib/accounting/periods';
  * 28th day after its period ends; so is the payment.
  */
 
-/** Days after a VAT period ends by which the return and the payment are due. */
-export const VAT_DUE_DAYS = 28;
+// The due-date rule lives with the return itself (lib/finance/vat.ts), which
+// this file already imports; re-exported so callers keep one place to ask.
+export { VAT_DUE_DAYS, vatDueDate } from '@/lib/finance/vat';
 
 const day = (value: string) => parseCalendarDate(value)!;
 const addDays = (date: Date, days: number) => new Date(date.getTime() + days * 86_400_000);
@@ -248,8 +249,3 @@ export async function listVatFilings(user: AuthenticatedUser) {
 }
 
 export type VatFilingRow = Awaited<ReturnType<typeof listVatFilings>>[number];
-
-/** When a return for a period ending `to` must be filed and paid. */
-export function vatDueDate(to: string): Date {
-  return addDays(day(to), VAT_DUE_DAYS);
-}

@@ -21,9 +21,12 @@ import {
 } from '@/lib/workshop/estimates';
 import { recordLabour, startRepair } from '@/lib/workshop/repair';
 import { recordQualityCheck } from '@/lib/workshop/quality-check';
-import { createInvoice, recordPayment } from '@/lib/billing/invoice';
+import { createInvoice, recordInvoicePayment, recordPayment } from '@/lib/billing/invoice';
+import { createDirectInvoice } from '@/lib/billing/direct-invoice';
+import { reverseInvoicePayment } from '@/lib/billing/invoice-changes';
+import { getFinanceSnapshot, getTodaysActivity } from '@/lib/data/dashboard';
 import { recordExpense, voidExpense } from '@/lib/finance/expenses';
-import { getVatReturn, splitSupplies } from '@/lib/finance/vat';
+import { getVatReturn, splitSupplies, vatDueDate } from '@/lib/finance/vat';
 import {
   createAccount,
   getCashSummary,
@@ -32,7 +35,7 @@ import {
   updateAccount,
 } from '@/lib/finance/accounting';
 import { getWorkshopReport } from '@/lib/reports/workshop';
-import { resolvePeriod } from '@/lib/finance/dashboard';
+import { getFinanceDashboard, resolvePeriod } from '@/lib/finance/dashboard';
 import { localDateString, toLocalDateTimeInput } from '@/lib/format';
 import { createTestOrg, expectDomainError, RUN, type TestOrg } from './support';
 
@@ -66,7 +69,13 @@ async function invoicedJob(org: TestOrg) {
   await saveEstimateDraft(org.owner, estimate.id, {
     validUntil: new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10),
     items: [
-      { itemType: 'LABOUR', description: 'Service', quantity: '3', unitPrice: '300.00', taxRate: '5' },
+      {
+        itemType: 'LABOUR',
+        description: 'Service',
+        quantity: '3',
+        unitPrice: '300.00',
+        taxRate: '5',
+      },
     ],
   });
   await sendEstimate(org.owner, estimate.id);
@@ -266,5 +275,75 @@ describe('reports', () => {
     assert.ok(report.parts);
     const nobody = { ...a.owner, orgWidePermissions: new Set<string>() };
     await assert.rejects(getWorkshopReport(nobody, {}), AuthError);
+  });
+});
+
+describe('collected, when a payment is reversed', () => {
+  // A reversed payment keeps status COMPLETED; the reversal is a second row
+  // with status REVERSED pointing back at it. Neither may count as money in.
+  test('both dashboards count only the payment that stands', async () => {
+    const c = await createTestOrg('AccCollected');
+    const customer = await prisma.customer.create({
+      data: {
+        organizationId: c.organizationId,
+        name: `Collected Customer ${RUN}`,
+        phone: '050 808 1122',
+      },
+    });
+    // 219.00 + 5% VAT = 229.95 — the shape of the real RCT-000002 case.
+    const { invoiceId } = await createDirectInvoice(c.owner, {
+      customerId: customer.id,
+      items: [
+        { itemType: 'LABOUR', description: 'Periodic service', quantity: '1', unitPrice: '219' },
+      ],
+    });
+    const now = () => toLocalDateTimeInput(new Date());
+
+    const wrong = await recordInvoicePayment(c.owner, invoiceId, {
+      amount: '100.00',
+      method: 'CASH',
+      receivedAt: now(),
+    });
+    await reverseInvoicePayment(c.owner, wrong.id, { reason: 'Wrong amount entered' });
+    await recordInvoicePayment(c.owner, invoiceId, {
+      amount: '229.95',
+      method: 'CASH',
+      receivedAt: now(),
+    });
+
+    // Finance → Overview: "Collected".
+    const finance = await getFinanceDashboard(c.owner, { period: 'today' });
+    assert.equal(finance.revenue?.collected, '229.95', 'the reversed 100.00 is not collected');
+
+    // Home: "Collected today".
+    const snapshot = await getFinanceSnapshot(c.organizationId);
+    assert.equal(snapshot.todaysCollections, '229.95');
+
+    // Home: today's activity lists only the receipt that stands.
+    const activity = await getTodaysActivity(c.organizationId, { includeMoney: true });
+    const receipts = activity.filter((item) => item.kind === 'payment');
+    assert.equal(receipts.length, 1, 'the reversed receipt is not listed');
+    assert.equal(receipts[0].amount, '229.95');
+  });
+});
+
+describe('VAT due date', () => {
+  test('the current quarter is due 28 days after the quarter ends, not after today', async () => {
+    const vat = await getVatReturn(a.owner, { period: 'quarter' });
+
+    // The last day of the calendar quarter today falls in, worked out here
+    // independently of the code under test.
+    const [year, month] = today.split('-').map(Number);
+    const lastMonth = month - ((month - 1) % 3) + 2;
+    const quarterEnd = new Date(Date.UTC(year, lastMonth, 0));
+    const expected = new Date(quarterEnd.getTime() + 28 * 86_400_000).toISOString().slice(0, 10);
+
+    assert.equal(vat.period.periodEnd, quarterEnd.toISOString().slice(0, 10));
+    assert.equal(vat.dueDate.toISOString().slice(0, 10), expected);
+    assert.equal(vat.period.to, today, 'the figures still run only to today');
+  });
+
+  test('July to September is due on 28 October', () => {
+    assert.equal(vatDueDate('2026-09-30').toISOString().slice(0, 10), '2026-10-28');
   });
 });
