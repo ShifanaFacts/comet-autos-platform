@@ -13,6 +13,7 @@ const DEFAULT_PREFIX: Record<DocumentType, string> = {
   JOURNAL_ENTRY: 'JV-',
   CREDIT_NOTE: 'CN-',
   FIXED_ASSET: 'FA-',
+  OPENING_BALANCE: 'OB-',
 };
 
 /**

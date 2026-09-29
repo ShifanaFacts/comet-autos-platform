@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Cog, Pencil, Plus, ShoppingCart } from 'lucide-react';
+import { Cog, FileSpreadsheet, Pencil, Plus, ShoppingCart } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getSupplierDetail } from '@/lib/inventory/suppliers';
@@ -33,6 +33,7 @@ export default async function SupplierDetailPage({ params }: { params: Promise<{
   const { supplier, parts, purchases, balance } = detail;
   const canManage = hasPermission(user, 'inventory.manage');
   const canPurchase = hasPermission(user, 'purchase.create');
+  const canStatement = hasPermission(user, 'invoice.view');
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -57,6 +58,16 @@ export default async function SupplierDetailPage({ params }: { params: Promise<{
         }
         actions={
           <>
+            {canStatement ? (
+              <LinkButton
+                href={`/finance/statements?supplier=${supplier.id}`}
+                variant="outline"
+                size="lg"
+              >
+                <FileSpreadsheet />
+                Statement
+              </LinkButton>
+            ) : null}
             {canManage ? (
               <LinkButton
                 href={`/inventory/suppliers/${supplier.id}/edit`}

@@ -121,8 +121,8 @@ export default async function FinanceOverviewPage({
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
-        eyebrow="Finance"
-        title="Overview"
+        eyebrow="Accounting"
+        title="Financial overview"
         description={`Money in, money owed and what the workshop spent. Every figure below covers ${
           period.key === 'today'
             ? 'today'

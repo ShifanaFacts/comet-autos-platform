@@ -399,7 +399,12 @@ function invoiceModel(invoice: InvoiceRecord, seller: DocumentSeller): CustomerD
     ...(additional.length ? [{ title: 'Additional approved work', lines: additional }] : []),
   ];
   const payments = countedPayments(invoice);
-  const title = invoice.invoiceType === 'PROFORMA' ? 'Proforma invoice' : 'Tax invoice';
+  const title =
+    invoice.invoiceType === 'PROFORMA'
+      ? 'Proforma invoice'
+      : invoice.invoiceType === 'OPENING_BALANCE'
+        ? 'Opening balance'
+        : 'Tax invoice';
 
   return {
     kind: 'INVOICE',

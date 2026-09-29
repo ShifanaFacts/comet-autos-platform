@@ -320,3 +320,38 @@
     display: none !important;
   }
 }
+
+/*
+ * A report printed on its own (a statement of account, a reconciliation):
+ * wrap it in .print-sheet and only it prints — no sidebar, header or
+ * controls. Anything inside marked print:hidden stays on screen only.
+ */
+@media print {
+  body:has(.print-sheet) {
+    background: #fff !important;
+  }
+  body:has(.print-sheet) *:not(:has(.print-sheet)):not(.print-sheet):not(.print-sheet *) {
+    display: none !important;
+  }
+  body:has(.print-sheet) *:has(.print-sheet) {
+    display: block !important;
+    position: static !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    transform: none !important;
+    animation: none !important;
+  }
+  .print-sheet {
+    font-size: 11px;
+    color: #000;
+  }
+  .print-sheet table {
+    min-width: 0 !important;
+  }
+  .print-sheet tr {
+    break-inside: avoid;
+  }
+}

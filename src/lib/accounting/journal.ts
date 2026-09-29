@@ -26,7 +26,11 @@ import { POSTING_RULES, type Posting, type PostingLine } from '@/lib/accounting/
 
 type Tx = Prisma.TransactionClient;
 
-export type PostedSource = Exclude<JournalSource, 'MANUAL'>;
+/**
+ * Sources booked from a record through its posting rule. Manual, opening
+ * balance and year-end closing entries are booked directly instead.
+ */
+export type PostedSource = Exclude<JournalSource, 'MANUAL' | 'OPENING_BALANCE' | 'YEAR_END_CLOSE'>;
 
 interface EntryInput {
   organizationId: string;
@@ -38,11 +42,17 @@ interface EntryInput {
   sourceId: string | null;
   reversalOfId?: string;
   actorUserId: string;
+  /**
+   * Book into a closed period. Only a year-end closing entry (and its
+   * reversal) may: it is dated on the last day of the year it closes, which
+   * is normally already closed by then.
+   */
+  allowClosedPeriod?: boolean;
 }
 
 /** Books one entry, numbered JV-…, inside the caller's transaction. */
 export async function bookEntry(tx: Tx, input: EntryInput) {
-  await assertBooksOpen(tx, input.organizationId, input.date);
+  if (!input.allowClosedPeriod) await assertBooksOpen(tx, input.organizationId, input.date);
   const entryNumber = await allocateDocumentNumber(tx, input.organizationId, null, 'JOURNAL_ENTRY');
   const now = new Date();
   const entry = await tx.journalEntry.create({
@@ -119,8 +129,10 @@ export async function reverseEntry(
   date: Date,
   actorUserId: string,
   reason: string,
+  options: { allowClosedPeriod?: boolean } = {},
 ) {
   return bookEntry(tx, {
+    allowClosedPeriod: options.allowClosedPeriod,
     organizationId: entry.organizationId,
     branchId: entry.branchId,
     date,

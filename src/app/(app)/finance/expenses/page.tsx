@@ -12,6 +12,8 @@ import { InlineForm } from '@/components/shared/inline-form';
 import { ExpenseForm } from '@/components/finance/expense-form';
 import { VoidExpenseButton } from '@/components/finance/void-expense';
 import { EditExpenseButton } from '@/components/finance/edit-expense';
+import { ExpenseBills } from '@/components/finance/expense-bills';
+import { listExpenseBills } from '@/lib/finance/expense-bills';
 
 const METHOD_LABEL: Record<string, string> = {
   CASH: 'Cash',
@@ -47,6 +49,19 @@ export default async function ExpensesPage({
   const canRecord = hasPermission(user, 'accounting.create');
   const canVoid = hasPermission(user, 'accounting.edit');
   const formOptions = canRecord || canVoid ? await getExpenseFormOptions(user) : null;
+  // The supplier's bill behind each expense, kept as evidence for the VAT reclaimed.
+  const bills = await listExpenseBills(
+    user,
+    expenses.map((expense) => expense.id),
+  );
+  const billsCell = (expense: (typeof expenses)[number]) => (
+    <ExpenseBills
+      expenseId={expense.id}
+      bills={bills.get(expense.id) ?? []}
+      canAttach={canRecord && expense.status === 'RECORDED'}
+      canRemove={canVoid && expense.status === 'RECORDED'}
+    />
+  );
   const draft = (expense: (typeof expenses)[number]) => ({
     id: expense.id,
     description: expense.description,
@@ -64,8 +79,8 @@ export default async function ExpensesPage({
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
-        eyebrow="Finance"
-        title="Expenses"
+        eyebrow="Receivables & payables"
+        title="Expenses & bills"
         description="What the workshop spends to keep running — rent, utilities, supplies. Parts bought for a job are purchases, not expenses."
       />
 
@@ -160,6 +175,7 @@ export default async function ExpensesPage({
                     ]}
                     footer={`${expense.vendorName ? `${expense.vendorName} · ` : ''}Recorded by ${expense.recordedBy.fullName}`}
                   >
+                    {billsCell(expense)}
                     {canVoid && expense.status === 'RECORDED' ? (
                       <span className="flex flex-wrap gap-2">
                         {formOptions ? (
@@ -190,6 +206,7 @@ export default async function ExpensesPage({
                       <th className="w-24 px-2 py-4 text-right">Net</th>
                       <th className="w-24 px-2 py-4 text-right">VAT</th>
                       <th className="w-28 px-4 py-4 pr-6 text-right">Total</th>
+                      <th className="px-2 py-4">Bill</th>
                       {canVoid ? <th className="w-0 px-2 py-4" /> : null}
                     </tr>
                   </thead>
@@ -231,6 +248,7 @@ export default async function ExpensesPage({
                         <td className="px-4 py-4 pr-6 text-right font-semibold tabular-nums whitespace-nowrap">
                           {formatMoney(expense.total)}
                         </td>
+                        <td className="px-2 py-4">{billsCell(expense)}</td>
                         {canVoid ? (
                           <td className="px-2 py-4 text-right">
                             {expense.status === 'RECORDED' ? (

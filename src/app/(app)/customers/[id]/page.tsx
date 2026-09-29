@@ -1,6 +1,15 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { CalendarDays, Car, ClipboardList, LogIn, Pencil, Plus, Receipt } from 'lucide-react';
+import {
+  CalendarDays,
+  Car,
+  ClipboardList,
+  FileSpreadsheet,
+  LogIn,
+  Pencil,
+  Plus,
+  Receipt,
+} from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getCustomerDetail } from '@/lib/customers/service';
@@ -39,6 +48,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
   const openJobs = jobCards.filter((job) => OPEN_JOB_STATUSES.includes(job.status));
   const canEdit = hasPermission(user, 'customer.edit');
   const canAddVehicle = hasPermission(user, 'vehicle.create');
+  const canStatement = hasPermission(user, 'invoice.view');
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -64,6 +74,16 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
             ) : undefined
           ) : (
             <>
+              {canStatement ? (
+                <LinkButton
+                  href={`/finance/statements?customer=${customer.id}`}
+                  variant="outline"
+                  size="lg"
+                >
+                  <FileSpreadsheet />
+                  Statement
+                </LinkButton>
+              ) : null}
               {canEdit ? (
                 <LinkButton href={`/customers/${customer.id}/edit`} variant="outline" size="lg">
                   <Pencil />

@@ -209,6 +209,12 @@ enum JournalSource {
   DEPRECIATION
   /// A fixed asset sold or scrapped.
   ASSET_DISPOSAL
+  /// The balances brought in when the books began (accounts, and each
+  /// customer's opening balance invoice).
+  OPENING_BALANCE
+  /// A financial year closed: income and expenses moved to retained
+  /// earnings. Left out of every profit and loss.
+  YEAR_END_CLOSE
   MANUAL
 }
 
@@ -319,6 +325,9 @@ enum InventoryTransactionType {
 enum InvoiceType {
   TAX_INVOICE
   PROFORMA
+  /// What a customer already owed when the books began. Not a supply: no
+  /// VAT, no income — receipts are taken against it like any invoice.
+  OPENING_BALANCE
 }
 
 enum InvoiceStatus {
@@ -404,6 +413,7 @@ enum DocumentType {
   JOURNAL_ENTRY
   CREDIT_NOTE
   FIXED_ASSET
+  OPENING_BALANCE
 }
 
 enum DocumentCategory {
@@ -469,6 +479,9 @@ model Organization {
   /// The books are closed up to and including this date: nothing may be
   /// booked, changed or voided on or before it (lib/accounting/periods.ts).
   booksClosedThrough DateTime? @map("books_closed_through") @db.Date
+  /// The date the books begin: every opening balance (accounts, customers)
+  /// is booked on it (lib/accounting/opening-balances.ts).
+  openingBalanceDate DateTime? @map("opening_balance_date") @db.Date
   /// Where its supplies are made; VAT201 reports Box 1 by emirate.
   emirate           Emirate   @default(DUBAI)
   isActive        Boolean  @default(true) @map("is_active")
@@ -2073,8 +2086,10 @@ model FixedAsset {
   funding                AssetFunding
   /// PAID: the cash or bank account it was paid from.
   paidFromAccountId      String?          @map("paid_from_account_id") @db.Uuid
-  /// OPENING: depreciation already charged before the books began.
+  /// OPENING: depreciation already charged before the books began, and the
+  /// day it was charged to — the day the asset comes into the books.
   openingDepreciation    Decimal          @default(0) @map("opening_depreciation") @db.Decimal(14, 2)
+  openingThrough         DateTime?        @map("opening_through") @db.Date
   status                 FixedAssetStatus @default(ACTIVE)
   disposedOn             DateTime?        @map("disposed_on") @db.Date
   disposalProceeds       Decimal?         @map("disposal_proceeds") @db.Decimal(14, 2)

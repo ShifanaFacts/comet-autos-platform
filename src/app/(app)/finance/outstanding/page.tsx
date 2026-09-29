@@ -104,8 +104,8 @@ export default async function OutstandingPage({
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
-        eyebrow="Finance"
-        title="Outstanding"
+        eyebrow="Receivables & payables"
+        title="Receivables & payables ageing"
         description="What customers still owe the workshop, and what the workshop still owes its suppliers. Cancelled documents and reversed payments never count."
       />
 

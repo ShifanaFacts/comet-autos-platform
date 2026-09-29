@@ -14,6 +14,12 @@ import {
 } from '@/lib/accounting/entries';
 import { closeBooks, reopenAllBooks } from '@/lib/accounting/periods';
 import { localDateString } from '@/lib/format';
+import {
+  addCustomerOpeningBalance,
+  removeCustomerOpeningBalance,
+  saveOpeningBalances,
+} from '@/lib/accounting/opening-balances';
+import { closeFinancialYear, reopenFinancialYear } from '@/lib/accounting/year-end';
 
 function refresh() {
   revalidatePath('/finance', 'layout');
@@ -103,6 +109,64 @@ export async function closeBooksAction(
 export async function reopenBooksAction(input: { reason: string }): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() => reopenAllBooks(user, input));
+  if (result.ok) refresh();
+  return toClientResult(result);
+}
+
+/** The general accounts' opening balances. The rows arrive as one JSON field. */
+export async function saveOpeningBalancesAction(
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const input = formDataToObject(formData);
+  let lines: unknown = [];
+  try {
+    lines = input.lines ? JSON.parse(input.lines) : [];
+  } catch {
+    return { ok: false, error: 'The balances could not be read. Refresh and try again.' };
+  }
+  const result = await runAction(() => saveOpeningBalances(user, { ...input, lines }));
+  if (result.ok || result.duplicate) refresh();
+  return toClientResult(result);
+}
+
+export async function addCustomerOpeningBalanceAction(
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => addCustomerOpeningBalance(user, formDataToObject(formData)));
+  if (result.ok || result.duplicate) refresh();
+  return toClientResult(result);
+}
+
+export async function removeCustomerOpeningBalanceAction(
+  invoiceId: string,
+  input: { reason: string },
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => removeCustomerOpeningBalance(user, invoiceId, input));
+  if (result.ok) refresh();
+  return toClientResult(result);
+}
+
+export async function closeFinancialYearAction(
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => closeFinancialYear(user, formDataToObject(formData)));
+  if (result.ok) refresh();
+  return toClientResult(result);
+}
+
+export async function reopenFinancialYearAction(
+  entryId: string,
+  input: { reason: string },
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => reopenFinancialYear(user, entryId, input));
   if (result.ok) refresh();
   return toClientResult(result);
 }

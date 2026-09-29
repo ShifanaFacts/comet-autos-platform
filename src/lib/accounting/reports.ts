@@ -60,7 +60,12 @@ interface AccountTotals {
 /** Each account's debits and credits between two dates (inclusive). */
 async function accountTotals(
   organizationId: string,
-  range: { from?: Date; to: Date },
+  /**
+   * `excludeClosing` leaves out year-end closing entries: a profit and loss
+   * reports what was earned, not the entry that later moved it to retained
+   * earnings.
+   */
+  range: { from?: Date; to: Date; excludeClosing?: boolean },
 ): Promise<AccountTotals[]> {
   const [accounts, sums] = await Promise.all([
     prisma.chartOfAccount.findMany({
@@ -81,6 +86,7 @@ async function accountTotals(
         organizationId,
         journalEntry: {
           entryDate: { ...(range.from ? { gte: range.from } : {}), lte: range.to },
+          ...(range.excludeClosing ? { sourceType: { not: 'YEAR_END_CLOSE' } } : {}),
         },
       },
       _sum: { debitAmount: true, creditAmount: true },
@@ -157,6 +163,7 @@ export async function getLedgerProfitAndLoss(user: AuthenticatedUser, input: Per
   const totals = await accountTotals(user.organizationId, {
     from: day(period.from),
     to: day(period.to),
+    excludeClosing: true,
   });
   const moved = (account: AccountTotals) => account.debitFils !== 0 || account.creditFils !== 0;
 
@@ -269,7 +276,15 @@ async function sourceLinks(
               ? '/finance/payables'
               : source === 'STOCK_MOVEMENT'
                 ? '/inventory/movements'
-                : null;
+                : source === 'CREDIT_NOTE' || source === 'CREDIT_NOTE_REFUND'
+                  ? `/finance/credit-notes/${id}`
+                  : source === 'FIXED_ASSET' || source === 'ASSET_DISPOSAL'
+                    ? `/finance/fixed-assets/${id}`
+                    : source === 'DEPRECIATION'
+                      ? '/finance/fixed-assets'
+                      : source === 'VAT_FILING' || source === 'VAT_PAYMENT'
+                        ? '/finance/vat'
+                        : null;
     return { type: source, id, href };
   };
 }

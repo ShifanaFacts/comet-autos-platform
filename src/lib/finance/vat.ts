@@ -1,6 +1,11 @@
 import type { InvoiceStatus } from '@/generated/prisma/client';
 import type { VatTreatment } from '@/generated/prisma/enums';
-import { EMIRATE_BOX, treatmentFromRate } from '@/lib/vat-treatment';
+import { EMIRATE_BOX } from '@/lib/vat-treatment';
+import { splitByTreatment, type SupplySplit } from '@/lib/finance/vat-split';
+
+export { splitByTreatment, splitSupplies, type SupplySplit } from '@/lib/finance/vat-split';
+
+const TREATMENT_ORDER: VatTreatment[] = ['STANDARD', 'ZERO_RATED', 'EXEMPT', 'OUT_OF_SCOPE'];
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
@@ -46,64 +51,10 @@ const SUPPLY_STATUSES: InvoiceStatus[] = ['ISSUED', 'PARTIALLY_PAID', 'PAID'];
 const fils = (value: { toString(): string } | null | undefined) =>
   value ? toFils(value.toString()) : 0;
 
-export type SupplySplit = Record<VatTreatment, number>;
-
-const TREATMENT_ORDER: VatTreatment[] = ['STANDARD', 'ZERO_RATED', 'EXEMPT', 'OUT_OF_SCOPE'];
-
 export interface VatReturnInput {
   period?: string;
   from?: string;
   to?: string;
-}
-
-/**
- * Splits a document's subtotal (after any bill discount) by VAT treatment,
- * in fils, in proportion to its lines. Largest remainder, so the parts always
- * add up to the subtotal exactly.
- */
-export function splitByTreatment(
-  subtotalFils: number,
-  lines: { lineTotal: { toString(): string }; vatTreatment: VatTreatment }[],
-): SupplySplit {
-  const split: SupplySplit = { STANDARD: 0, ZERO_RATED: 0, EXEMPT: 0, OUT_OF_SCOPE: 0 };
-  const byTreatment = { ...split };
-  for (const line of lines) byTreatment[line.vatTreatment] += fils(line.lineTotal);
-  const linesFils = TREATMENT_ORDER.reduce((sum, t) => sum + byTreatment[t], 0);
-  if (linesFils <= 0) {
-    split.STANDARD = subtotalFils;
-    return split;
-  }
-  let given = 0;
-  const remainders: { treatment: VatTreatment; rest: bigint }[] = [];
-  for (const treatment of TREATMENT_ORDER) {
-    const exact = BigInt(subtotalFils) * BigInt(byTreatment[treatment]);
-    split[treatment] = Number(exact / BigInt(linesFils));
-    given += split[treatment];
-    remainders.push({ treatment, rest: exact % BigInt(linesFils) });
-  }
-  remainders.sort((x, y) => (y.rest > x.rest ? 1 : y.rest < x.rest ? -1 : 0));
-  for (let i = 0; given < subtotalFils; i += 1, given += 1) {
-    split[remainders[i % remainders.length].treatment] += 1;
-  }
-  return split;
-}
-
-/**
- * Splits an invoice's subtotal into its standard-rated and zero-rated parts,
- * in fils, from the lines' rates alone (0% or none is zero-rated).
- */
-export function splitSupplies(
-  subtotalFils: number,
-  lines: { lineTotal: { toString(): string }; taxRate: { toString(): string } | null }[],
-) {
-  const split = splitByTreatment(
-    subtotalFils,
-    lines.map((line) => ({
-      lineTotal: line.lineTotal,
-      vatTreatment: treatmentFromRate(line.taxRate),
-    })),
-  );
-  return { standard: split.STANDARD, zero: split.ZERO_RATED };
 }
 
 export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInput = {}) {

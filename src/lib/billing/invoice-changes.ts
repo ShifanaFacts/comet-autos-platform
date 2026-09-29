@@ -129,11 +129,15 @@ const isCredited = (invoice: { creditedAmount?: { toString(): string } }) =>
 /** Why an invoice can't be edited, or null when it can. Shared with the screens. */
 export function invoiceEditBlocker(invoice: {
   status: string;
+  invoiceType?: string;
   paidAmount?: string;
   creditedAmount?: { toString(): string };
   items: { labourId: string | null; partUsageId: string | null }[];
 }): string | null {
   if (invoice.status === 'VOID' || invoice.status === 'CANCELLED') return 'This invoice is void.';
+  if (invoice.invoiceType === 'OPENING_BALANCE') {
+    return 'An opening balance is changed on the Opening balances screen.';
+  }
   if (isCredited(invoice)) return CREDITED;
   if (
     invoice.status !== 'ISSUED' ||
@@ -163,6 +167,7 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
     requirePermission(user, 'invoice.create', { branchId: invoice.branchId });
     const blocker = invoiceEditBlocker({
       status: invoice.status,
+      invoiceType: invoice.invoiceType,
       paidAmount: filsToString(paidFils(invoice.payments)),
       creditedAmount: invoice.creditedAmount,
       items: invoice.items,
