@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { notFound } from 'next/navigation';
 import {
   ArrowRight,
@@ -14,8 +15,8 @@ import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { getAccountChoices } from '@/lib/accounting/reports';
 import { NotFoundError } from '@/lib/errors';
 import { formatCalendarDate, formatDateTime, formatKm, formatMoney } from '@/lib/format';
-import { getJobWorkspace, getNextAction } from '@/lib/workshop/workspace';
-import { getSecondaryNextStatuses } from '@/lib/workshop/job-status';
+import { getJobWorkspace, getNextAction, jobHasRepairRecords } from '@/lib/workshop/workspace';
+import { canMarkCompleted, getSecondaryNextStatuses } from '@/lib/workshop/job-status';
 import { employeeName, listWorkshopEmployees } from '@/lib/workshop/assignment';
 import { Grid, Panel, Section, Stack } from '@/components/layout/primitives';
 import { JobHero } from '@/components/workshop/job-hero';
@@ -81,7 +82,12 @@ export default async function JobCardWorkspacePage({
   // The minimal job card unless the workshop chose the standard one — or
   // this job is already part-way through the standard steps, which only
   // the standard job card can finish.
-  const standard = STANDARD_ONLY.includes(workspace.status) || (await usesDetailedJobCards(user));
+  // A job marked completed without repair records has nothing only the
+  // standard card can bill: it stays on the simple card.
+  const standardOnly =
+    STANDARD_ONLY.includes(workspace.status) &&
+    (workspace.status !== 'READY' || (await jobHasRepairRecords(user, workspace.jobCard.id)));
+  const standard = standardOnly || (await usesDetailedJobCards(user));
   if (!standard) return <MinimalJobCard user={user} workspace={workspace} />;
 
   const {
@@ -159,6 +165,7 @@ export default async function JobCardWorkspacePage({
             next={next}
             canHold={canEdit && secondary.includes('ON_HOLD')}
             canCancel={canEdit && secondary.includes('CANCELLED')}
+            canComplete={canEdit && canMarkCompleted(jobCard.status)}
           />
           <Panel>
             <WorkflowProgress effectiveStatus={effectiveStatus} />
@@ -179,6 +186,7 @@ export default async function JobCardWorkspacePage({
               canPay={canPay}
               canDeliver={hasPermission(user, 'job_card.close', { branchId: jobCard.branchId })}
               moneyAccounts={canPay ? (await getAccountChoices(user)).money : []}
+              modes={canPay ? await getPaymentModeOptions(user.organizationId, 'receipts') : []}
             />
           ) : null}
           {repair ? (

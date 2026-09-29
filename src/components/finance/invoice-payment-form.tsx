@@ -18,6 +18,8 @@ import type { ActionResult } from '@/lib/errors';
 import { formatMoney } from '@/lib/format';
 import { MoneyAccountField } from '@/components/accounting/money-account-field';
 import type { AccountChoice } from '@/lib/accounting/reports';
+import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
+import { PaymentModeField } from '@/components/accounting/payment-mode-field';
 import { recordInvoicePaymentAction } from '@/app/(app)/finance/invoices/actions';
 
 /*
@@ -41,10 +43,13 @@ export function InvoicePaymentForm({
   balance,
   now,
   moneyAccounts = [],
+  modes = [],
 }: {
   invoiceId: string;
   /** Cash, bank and card accounts the money can go into. */
   moneyAccounts?: AccountChoice[];
+  /** The receipt modes (payment mode master). Given, one choice sets method and account. */
+  modes?: PaymentModeOption[];
   /** Outstanding balance, pre-filled as the most likely amount. */
   balance: string;
   /** "now" as a datetime-local value, computed on the server in workshop time. */
@@ -53,6 +58,9 @@ export function InvoicePaymentForm({
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [amount, setAmount] = useState(balance);
+  const [needsReference, setNeedsReference] = useState(
+    (modes.find((mode) => mode.isDefault) ?? modes[0])?.requiresReference ?? false,
+  );
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
     async (prev, formData) => {
       const result = await recordInvoicePaymentAction(invoiceId, prev, formData);
@@ -81,21 +89,31 @@ export function InvoicePaymentForm({
           hint={`Balance due ${formatMoney(balance)}. Enter less for a part payment.`}
           className="[&_input]:h-12 [&_input]:text-base md:[&_input]:h-11 md:[&_input]:text-sm"
         />
-        <Field label="Method" htmlFor="method" required error={errors.method}>
-          <NativeSelect
-            id="method"
-            name="method"
-            required
-            defaultValue="CASH"
-            className="h-12 text-base md:h-11 md:text-sm"
-          >
-            {PAYMENT_METHODS.map((method) => (
-              <option key={method.value} value={method.value}>
-                {method.label}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
+        {modes.length ? (
+          <PaymentModeField
+            id={`mode-${invoiceId}`}
+            modes={modes}
+            label="Received by"
+            error={errors.method ?? errors.accountId}
+            onChange={(mode) => setNeedsReference(mode?.requiresReference ?? false)}
+          />
+        ) : (
+          <Field label="Method" htmlFor="method" required error={errors.method}>
+            <NativeSelect
+              id="method"
+              name="method"
+              required
+              defaultValue="CASH"
+              className="h-12 text-base md:h-11 md:text-sm"
+            >
+              {PAYMENT_METHODS.map((method) => (
+                <option key={method.value} value={method.value}>
+                  {method.label}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        )}
         <Field label="Received" htmlFor="receivedAt" required error={errors.receivedAt}>
           <Input
             id="receivedAt"
@@ -110,11 +128,12 @@ export function InvoicePaymentForm({
         <TextField
           label="Reference"
           name="referenceNumber"
+          required={needsReference}
           error={errors.referenceNumber}
           hint="Card slip, transfer or cheque number."
           className="[&_input]:h-12 [&_input]:text-base md:[&_input]:h-11 md:[&_input]:text-sm"
         />
-        {moneyAccounts.length ? (
+        {moneyAccounts.length && !modes.length ? (
           <MoneyAccountField
             id={`accountId-${invoiceId}`}
             name="accountId"

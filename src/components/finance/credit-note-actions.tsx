@@ -11,6 +11,8 @@ import { useFormAction } from '@/components/forms/use-form-action';
 import { ReasonAction } from '@/components/shared/reason-action';
 import { MoneyAccountField } from '@/components/accounting/money-account-field';
 import type { AccountChoice } from '@/lib/accounting/reports';
+import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
+import { PaymentModeField } from '@/components/accounting/payment-mode-field';
 import type { ActionResult } from '@/lib/errors';
 import { formatMoney } from '@/lib/format';
 import { PAYMENT_METHODS } from '@/components/finance/invoice-payment-form';
@@ -26,12 +28,15 @@ export function CreditNoteRefundForm({
   amount,
   today,
   moneyAccounts,
+  modes = [],
 }: {
   creditNoteId: string;
   invoiceId: string;
   amount: string;
   today: string;
   moneyAccounts: AccountChoice[];
+  /** The payment modes (payment mode master). Given, one choice sets method and account. */
+  modes?: PaymentModeOption[];
 }) {
   const router = useRouter();
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
@@ -64,16 +69,26 @@ export function CreditNoteRefundForm({
             className="h-11"
           />
         </Field>
-        <Field label="Method" htmlFor="refund-method" required error={errors.method}>
-          <NativeSelect id="refund-method" name="method" defaultValue="CASH" className="h-11">
-            {PAYMENT_METHODS.map((method) => (
-              <option key={method.value} value={method.value}>
-                {method.label}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
-        {moneyAccounts.length ? (
+        {modes.length ? (
+          <PaymentModeField
+            id={`refund-mode-${creditNoteId}`}
+            modes={modes}
+            label="Refunded by"
+            error={errors.method ?? errors.accountId}
+            className="h-11"
+          />
+        ) : (
+          <Field label="Method" htmlFor="refund-method" required error={errors.method}>
+            <NativeSelect id="refund-method" name="method" defaultValue="CASH" className="h-11">
+              {PAYMENT_METHODS.map((method) => (
+                <option key={method.value} value={method.value}>
+                  {method.label}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        )}
+        {moneyAccounts.length && !modes.length ? (
           <MoneyAccountField
             id={`refund-account-${creditNoteId}`}
             name="accountId"

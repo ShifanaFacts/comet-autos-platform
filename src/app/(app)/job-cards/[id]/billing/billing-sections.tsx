@@ -1,4 +1,5 @@
 import { CheckCircle2, Info, KeyRound, TriangleAlert } from 'lucide-react';
+import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
 import type { PaymentMethod } from '@/generated/prisma/enums';
 import type { WorkflowStatus } from '@/lib/workshop/stages';
 import type { JobWorkspace } from '@/lib/workshop/workspace';
@@ -174,6 +175,7 @@ export function BillingSections({
   canPay,
   canDeliver,
   moneyAccounts = [],
+  modes = [],
 }: {
   workspace: JobWorkspace;
   status: WorkflowStatus;
@@ -188,6 +190,8 @@ export function BillingSections({
   canDeliver: boolean;
   /** Cash, bank and card accounts a payment can go into. */
   moneyAccounts?: AccountChoice[];
+  /** The receipt modes (payment mode master). */
+  modes?: PaymentModeOption[];
 }) {
   const { jobCard } = workspace;
   const customer = jobCard.customer;
@@ -377,6 +381,7 @@ export function BillingSections({
               <div className="border-t border-border bg-muted/20 px-4 py-6 sm:px-6">
                 <InvoicePaymentForm
                   moneyAccounts={moneyAccounts}
+                  modes={modes}
                   key={invoice.balanceDue}
                   invoiceId={invoice.id}
                   balance={invoice.balanceDue}
@@ -394,7 +399,7 @@ export function BillingSections({
           <SectionHeading
             id="delivery"
             title="Delivery"
-            description="Hand the vehicle back once the invoice is fully paid."
+            description="Hand the vehicle back once it is invoiced — paid in full, or on credit with the balance paid later."
           />
           <Panel
             className={cn('flex flex-col gap-6', status === 'DELIVERED' && 'border-success/30')}
@@ -429,14 +434,16 @@ export function BillingSections({
                   ) : null}
                 </div>
               </div>
-            ) : status === 'PAID' && canDeliver ? (
-              <DeliveryForm jobCardId={jobCard.id} customerName={jobCard.customer.name} />
+            ) : (status === 'PAID' || status === 'INVOICED') && canDeliver ? (
+              <DeliveryForm
+                jobCardId={jobCard.id}
+                customerName={jobCard.customer.name}
+                balanceDue={invoice.balanceDue}
+              />
             ) : (
               <p className="flex items-center gap-2 text-sm text-muted-foreground">
                 <KeyRound className="size-4" />
-                {invoice.paymentState === 'PAID'
-                  ? 'Ready to deliver.'
-                  : `The vehicle can be delivered once the balance of ${formatMoney(invoice.balanceDue)} is paid.`}
+                Ready to deliver.
               </p>
             )}
           </Panel>

@@ -1,5 +1,8 @@
 'use client';
 
+import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
+import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
+import { PaymentModeField } from '@/components/accounting/payment-mode-field';
 import { useState } from 'react';
 import Link from 'next/link';
 import { Banknote, FileText, Receipt } from 'lucide-react';
@@ -62,6 +65,8 @@ export function NewInvoiceForm({
   canTakePayment,
   incomeAccounts,
   moneyAccounts = [],
+  taxCodes,
+  modes = [],
 }: {
   initialCustomer: CustomerOption | null;
   /** Set when arriving from a job card: it is billed, and moves to Invoiced. */
@@ -77,6 +82,10 @@ export function NewInvoiceForm({
   incomeAccounts?: AccountChoice[];
   /** Cash, bank and card accounts a sales receipt's money can go into. */
   moneyAccounts?: AccountChoice[];
+  /** The sales tax codes a line can be given. */
+  taxCodes?: TaxCodeOption[];
+  /** The receipt modes (payment mode master) for a sales receipt. */
+  modes?: PaymentModeOption[];
 }) {
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(createDirectInvoiceAction, {
     ok: false,
@@ -93,7 +102,9 @@ export function NewInvoiceForm({
         }
       : null,
   );
-  const [lines, setLines] = useState<EditableLine[]>([newEditableLine('PART', defaultVatRate)]);
+  const [lines, setLines] = useState<EditableLine[]>([
+    newEditableLine('PART', defaultVatRate, taxCodes?.find((code) => code.isDefault) ?? null),
+  ]);
   const [bill, setBill] = useState<BillDiscount>(NO_BILL_DISCOUNT);
   const [payNow, setPayNow] = useState(initialPayNow && canTakePayment);
   const errors = state.fieldErrors ?? {};
@@ -166,6 +177,7 @@ export function NewInvoiceForm({
             onBillChange={setBill}
             defaultVatRate={defaultVatRate}
             incomeAccounts={incomeAccounts}
+            taxCodes={taxCodes}
           />
         </section>
       )}
@@ -211,20 +223,37 @@ export function NewInvoiceForm({
           </label>
           {payNow ? (
             <div className="grid gap-6 sm:grid-cols-2">
-              <Field label="Paid by" htmlFor="paymentMethod" required error={errors.paymentMethod}>
-                <NativeSelect
-                  id="paymentMethod"
-                  name="paymentMethod"
-                  defaultValue="CASH"
+              {modes.length ? (
+                <PaymentModeField
+                  id="paymentMode"
+                  modes={modes}
+                  label="Received by"
+                  methodName="paymentMethod"
+                  accountName="paymentAccountId"
+                  error={errors.paymentMethod ?? errors.paymentAccountId}
                   className="h-11"
+                />
+              ) : (
+                <Field
+                  label="Paid by"
+                  htmlFor="paymentMethod"
+                  required
+                  error={errors.paymentMethod}
                 >
-                  {PAYMENT_METHODS.map((method) => (
-                    <option key={method.value} value={method.value}>
-                      {method.label}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </Field>
+                  <NativeSelect
+                    id="paymentMethod"
+                    name="paymentMethod"
+                    defaultValue="CASH"
+                    className="h-11"
+                  >
+                    {PAYMENT_METHODS.map((method) => (
+                      <option key={method.value} value={method.value}>
+                        {method.label}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </Field>
+              )}
               <TextField
                 label="Payment reference"
                 name="paymentReference"
@@ -232,7 +261,7 @@ export function NewInvoiceForm({
                 hint="Optional — card slip, transfer or cheque number."
                 className="[&_input]:h-11"
               />
-              {moneyAccounts.length ? (
+              {moneyAccounts.length && !modes.length ? (
                 <MoneyAccountField
                   id="paymentAccountId"
                   name="paymentAccountId"

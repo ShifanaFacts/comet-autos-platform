@@ -18,6 +18,7 @@ import {
 import { formatMoney } from '@/lib/format';
 import type { BillDiscount, EditableLine, LineType } from '@/lib/billing/editable-lines';
 import { rateFor, VAT_TREATMENTS, type VatTreatment } from '@/lib/vat-treatment';
+import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import { cn } from '@/lib/utils';
 
 /*
@@ -39,7 +40,12 @@ export const NO_BILL_DISCOUNT: BillDiscount = { type: 'PERCENT', value: '' };
 export const trimRate = (rate: string) => (rate.includes('.') ? rate.replace(/\.?0+$/, '') : rate);
 
 let counter = 0;
-export function newEditableLine(itemType: LineType, defaultVatRate: string): EditableLine {
+export function newEditableLine(
+  itemType: LineType,
+  defaultVatRate: string,
+  /** The workshop's default tax code, when it keeps a tax code master. */
+  taxCode?: TaxCodeOption | null,
+): EditableLine {
   counter += 1;
   return {
     key: `line-${Date.now()}-${counter}`,
@@ -47,8 +53,9 @@ export function newEditableLine(itemType: LineType, defaultVatRate: string): Edi
     description: '',
     quantity: '1',
     unitPrice: '',
-    taxRate: trimRate(defaultVatRate),
-    vatTreatment: 'STANDARD',
+    taxRate: trimRate(taxCode?.rate ?? defaultVatRate),
+    vatTreatment: taxCode?.treatment ?? 'STANDARD',
+    taxCodeId: taxCode?.id ?? '',
     discountType: 'PERCENT',
     discount: '',
     accountId: '',
@@ -60,12 +67,23 @@ export function linesPayload(lines: EditableLine[]) {
   return lines
     .filter((line) => !isBlankLine(line))
     .map(
-      ({ itemType, description, quantity, unitPrice, vatTreatment, discountType, discount, accountId }) => ({
+      ({
         itemType,
         description,
         quantity,
         unitPrice,
         vatTreatment,
+        taxCodeId,
+        discountType,
+        discount,
+        accountId,
+      }) => ({
+        itemType,
+        description,
+        quantity,
+        unitPrice,
+        vatTreatment,
+        taxCodeId,
         discountType,
         discount,
         accountId,
@@ -78,12 +96,16 @@ export function billDiscountPayload(bill: BillDiscount) {
   return { discountType: bill.type, discount: bill.value };
 }
 
+/** The rate a line is priced at: its tax code's, else its treatment's. */
+const lineRate = (line: EditableLine, defaultVatRate: string) =>
+  line.taxCodeId ? line.taxRate : rateFor(line.vatTreatment, defaultVatRate);
+
 function price(line: EditableLine, defaultVatRate: string): LineAmounts | null {
   try {
     return calculateLine({
       quantity: line.quantity,
       unitPrice: line.unitPrice,
-      taxRate: rateFor(line.vatTreatment, defaultVatRate),
+      taxRate: lineRate(line, defaultVatRate),
       discount: readDiscount(line.discountType, line.discount),
     });
   } catch {
@@ -115,7 +137,7 @@ export function useLineTotals(
     }
     const rates = new Set(
       used.map((entry) =>
-        formatMilli(signedToMilli(rateFor(entry.line.vatTreatment, defaultVatRate))),
+        formatMilli(signedToMilli(lineRate(entry.line, defaultVatRate))),
       ),
     );
     return {
@@ -139,6 +161,7 @@ export function DocumentLinesEditor({
   onBillChange,
   defaultVatRate,
   incomeAccounts,
+  taxCodes,
 }: {
   lines: EditableLine[];
   onChange: (lines: EditableLine[]) => void;
@@ -151,6 +174,8 @@ export function DocumentLinesEditor({
    * no account column is shown.
    */
   incomeAccounts?: { id: string; code: string; name: string }[];
+  /** The tax code master. Given, each line picks a code instead of a treatment. */
+  taxCodes?: TaxCodeOption[];
 }) {
   const { priced, totals, vatLabel, billError } = useLineTotals(lines, defaultVatRate, bill);
   const billOff = toFils(totals.discountAmount) > 0;
@@ -174,7 +199,11 @@ export function DocumentLinesEditor({
     onChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
   const remove = (key: string) => onChange(lines.filter((line) => line.key !== key));
   const add = (itemType: LineType) => {
-    const line = newEditableLine(itemType, defaultVatRate);
+    const line = newEditableLine(
+      itemType,
+      defaultVatRate,
+      taxCodes?.find((code) => code.isDefault) ?? null,
+    );
     focusLine.current = line.key;
     onChange([...lines, line]);
   };
@@ -261,8 +290,9 @@ export function DocumentLinesEditor({
                   <span className="text-xs font-medium text-muted-foreground">VAT</span>
                   <VatSelect
                     label={`Line ${n} VAT`}
-                    value={line.vatTreatment}
-                    onChange={(vatTreatment) => update(line.key, { vatTreatment })}
+                    line={line}
+                    taxCodes={taxCodes}
+                    onChange={(patch) => update(line.key, patch)}
                     large
                   />
                 </label>
@@ -382,8 +412,9 @@ export function DocumentLinesEditor({
                   <td className="px-2 py-2">
                     <VatSelect
                       label={`Line ${n} VAT`}
-                      value={line.vatTreatment}
-                      onChange={(vatTreatment) => update(line.key, { vatTreatment })}
+                      line={line}
+                      taxCodes={taxCodes}
+                      onChange={(patch) => update(line.key, patch)}
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -546,24 +577,61 @@ function LineAmount({ line, amounts }: { line: EditableLine; amounts: LineAmount
  */
 function VatSelect({
   label,
-  value,
+  line,
+  taxCodes,
   onChange,
   large = false,
 }: {
   label: string;
-  value: VatTreatment;
-  onChange: (value: VatTreatment) => void;
+  line: EditableLine;
+  /** The tax code master; without it, the four treatments are offered. */
+  taxCodes?: TaxCodeOption[];
+  onChange: (patch: Partial<EditableLine>) => void;
   large?: boolean;
 }) {
+  const className = cn(
+    'w-full min-w-0 rounded-lg border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50',
+    large ? 'h-12 text-base' : 'h-9',
+  );
+  if (taxCodes?.length) {
+    // A line saved before tax codes shows the code of its treatment.
+    const value =
+      line.taxCodeId || taxCodes.find((code) => code.treatment === line.vatTreatment)?.id || '';
+    return (
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => {
+          const code = taxCodes.find((option) => option.id === event.target.value);
+          if (code) {
+            onChange({
+              taxCodeId: code.id,
+              vatTreatment: code.treatment,
+              taxRate: trimRate(code.rate),
+            });
+          }
+        }}
+        className={className}
+        title={taxCodes.find((code) => code.id === value)?.name}
+      >
+        {value === '' ? <option value="">—</option> : null}
+        {taxCodes.map((code) => (
+          <option key={code.id} value={code.id}>
+            {code.code}
+            {code.treatment === 'STANDARD' ? ` ${trimRate(code.rate)}%` : ''}
+          </option>
+        ))}
+      </select>
+    );
+  }
   return (
     <select
       aria-label={label}
-      value={value}
-      onChange={(event) => onChange(event.target.value as VatTreatment)}
-      className={cn(
-        'w-full min-w-0 rounded-lg border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50',
-        large ? 'h-12 text-base' : 'h-9',
-      )}
+      value={line.vatTreatment}
+      onChange={(event) =>
+        onChange({ vatTreatment: event.target.value as VatTreatment, taxCodeId: '' })
+      }
+      className={className}
     >
       {VAT_TREATMENTS.map((treatment) => (
         <option key={treatment.value} value={treatment.value}>

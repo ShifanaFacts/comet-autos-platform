@@ -455,27 +455,27 @@ enum SignerType {
 // =============================================================================
 
 model Organization {
-  id              String   @id @default(uuid(7)) @db.Uuid
-  name            String
-  legalName       String?  @map("legal_name")
-  taxNumber       String?  @map("tax_number")
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  name               String
+  legalName          String?   @map("legal_name")
+  taxNumber          String?   @map("tax_number")
   /// Whether the business charges VAT. When false, new lines default to 0%.
   /// Existing documents keep the rate they were priced at either way.
-  isVatRegistered Boolean  @default(true) @map("is_vat_registered")
+  isVatRegistered    Boolean   @default(true) @map("is_vat_registered")
   /// Standard VAT rate as a percentage, e.g. 5.00. Read through lib/tax —
   /// never hard-coded elsewhere.
-  vatRate         Decimal  @default(5.00) @map("vat_rate") @db.Decimal(5, 2)
-  address         String?
-  phone           String?
-  email           String?
-  baseCurrency    String   @default("AED") @map("base_currency")
+  vatRate            Decimal   @default(5.00) @map("vat_rate") @db.Decimal(5, 2)
+  address            String?
+  phone              String?
+  email              String?
+  baseCurrency       String    @default("AED") @map("base_currency")
   /// Whether work orders open as the full step-by-step job card (inspection,
   /// diagnosis, approval, repair, quality check). Off: the simple job card —
   /// one person takes the vehicle in, bills it and hands it back.
-  detailedJobCards Boolean @default(false) @map("detailed_job_cards")
+  detailedJobCards   Boolean   @default(false) @map("detailed_job_cards")
   /// Menu items (their hrefs, from lib/nav.ts) the workshop chose not to show.
   /// Display only — permissions still decide what each user may open.
-  hiddenMenus     String[] @default([]) @map("hidden_menus")
+  hiddenMenus        String[]  @default([]) @map("hidden_menus")
   /// The books are closed up to and including this date: nothing may be
   /// booked, changed or voided on or before it (lib/accounting/periods.ts).
   booksClosedThrough DateTime? @map("books_closed_through") @db.Date
@@ -483,10 +483,10 @@ model Organization {
   /// is booked on it (lib/accounting/opening-balances.ts).
   openingBalanceDate DateTime? @map("opening_balance_date") @db.Date
   /// Where its supplies are made; VAT201 reports Box 1 by emirate.
-  emirate           Emirate   @default(DUBAI)
-  isActive        Boolean  @default(true) @map("is_active")
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  emirate            Emirate   @default(DUBAI)
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   branches                Branch[]
   users                   User[]
@@ -535,14 +535,16 @@ model Organization {
   documents               Document[]
   sessions                Session[]
   customerAccessTokens    CustomerAccessToken[]
+  taxCodes                TaxCode[]
+  paymentModes            PaymentMode[]
   vatFilings              VatFiling[]
 
-  creditNotes          CreditNote[]
-  creditNoteItems      CreditNoteItem[]
-  bankReconciliations  BankReconciliation[]
-  reconciledLines      ReconciledLine[]
-  fixedAssets          FixedAsset[]
-  assetDepreciations   AssetDepreciation[]
+  creditNotes         CreditNote[]
+  creditNoteItems     CreditNoteItem[]
+  bankReconciliations BankReconciliation[]
+  reconciledLines     ReconciledLine[]
+  fixedAssets         FixedAsset[]
+  assetDepreciations  AssetDepreciation[]
 
   @@map("organizations")
 }
@@ -634,11 +636,11 @@ model User {
   sessions                   Session[]
   issuedCustomerAccessTokens CustomerAccessToken[]
 
-  vatFilingsFiled VatFiling[] @relation("VatFilingFiledBy")
-  creditNotesCreated        CreditNote[]         @relation("CreditNoteCreatedBy")
-  reconciliationsCreated    BankReconciliation[] @relation("ReconciliationCreatedBy")
-  reconciliationsCompleted  BankReconciliation[] @relation("ReconciliationCompletedBy")
-  fixedAssetsCreated        FixedAsset[]         @relation("FixedAssetCreatedBy")
+  vatFilingsFiled          VatFiling[]          @relation("VatFilingFiledBy")
+  creditNotesCreated       CreditNote[]         @relation("CreditNoteCreatedBy")
+  reconciliationsCreated   BankReconciliation[] @relation("ReconciliationCreatedBy")
+  reconciliationsCompleted BankReconciliation[] @relation("ReconciliationCompletedBy")
+  fixedAssetsCreated       FixedAsset[]         @relation("FixedAssetCreatedBy")
 
   @@unique([organizationId, id])
   @@unique([organizationId, email])
@@ -1067,9 +1069,9 @@ model Estimate {
   /// percentage or a fixed amount (type + value, as entered), and the AED
   /// it came to. `subtotal` is already net of it — the taxable amount —
   /// so total = subtotal + VAT holds with or without a discount.
-  discountType      DiscountType? @map("discount_type")
-  discountValue     Decimal?      @map("discount_value") @db.Decimal(14, 2)
-  discountAmount    Decimal       @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  discountType      DiscountType?  @map("discount_type")
+  discountValue     Decimal?       @map("discount_value") @db.Decimal(14, 2)
+  discountAmount    Decimal        @default(0) @map("discount_amount") @db.Decimal(14, 2)
   subtotal          Decimal        @db.Decimal(14, 2)
   taxAmount         Decimal        @default(0) @map("tax_amount") @db.Decimal(14, 2)
   totalAmount       Decimal        @map("total_amount") @db.Decimal(14, 2)
@@ -1117,21 +1119,26 @@ model EstimateItem {
   lineTotal      Decimal          @map("line_total") @db.Decimal(14, 2)
   taxRate        Decimal?         @map("tax_rate") @db.Decimal(5, 2)
   taxAmount      Decimal?         @map("tax_amount") @db.Decimal(14, 2)
+  /// The tax code chosen (Accounting → Tax codes). Its rate and treatment
+  /// are copied onto the record when saved, so changing the code later never
+  /// alters an issued document.
+  taxCodeId      String?          @map("tax_code_id") @db.Uuid
   /// How the line is treated for VAT; its rate follows from it.
-  vatTreatment   VatTreatment @default(STANDARD) @map("vat_treatment")
+  vatTreatment   VatTreatment     @default(STANDARD) @map("vat_treatment")
   /// The line's own discount: a percentage or a fixed amount (type +
   /// value, as entered), and the AED it came to. `lineTotal` is net of it.
   /// `taxAmount` is the VAT on this line after its share of the bill
   /// discount too.
-  discountType   DiscountType? @map("discount_type")
-  discountValue  Decimal?      @map("discount_value") @db.Decimal(14, 2)
-  discountAmount Decimal       @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  discountType   DiscountType?    @map("discount_type")
+  discountValue  Decimal?         @map("discount_value") @db.Decimal(14, 2)
+  discountAmount Decimal          @default(0) @map("discount_amount") @db.Decimal(14, 2)
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   estimate     Estimate     @relation(fields: [organizationId, estimateId], references: [organizationId, id], onDelete: Cascade)
   part         Part?        @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
+  taxCode      TaxCode?     @relation(fields: [organizationId, taxCodeId], references: [organizationId, id], onDelete: Restrict)
 
   approvalItems ApprovalItem[]
   labours       Labour[]
@@ -1447,12 +1454,17 @@ model PurchaseItem {
   unitCost         Decimal  @map("unit_cost") @db.Decimal(14, 2)
   taxRate          Decimal? @map("tax_rate") @db.Decimal(5, 2)
   taxAmount        Decimal? @map("tax_amount") @db.Decimal(14, 2)
+  /// The tax code chosen (Accounting → Tax codes). Its rate and treatment
+  /// are copied onto the record when saved, so changing the code later never
+  /// alters an issued document.
+  taxCodeId        String?  @map("tax_code_id") @db.Uuid
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   purchase     Purchase     @relation(fields: [organizationId, purchaseId], references: [organizationId, id], onDelete: Cascade)
   part         Part         @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
+  taxCode      TaxCode?     @relation(fields: [organizationId, taxCodeId], references: [organizationId, id], onDelete: Restrict)
 
   inventoryTransactions InventoryTransaction[]
 
@@ -1610,43 +1622,48 @@ model Invoice {
 /// partUsageId/labourId provide audit traceability from a financial line
 /// back to the exact actual-work record it was billed from.
 model InvoiceItem {
-  id             String   @id @default(uuid(7)) @db.Uuid
-  organizationId String   @map("organization_id") @db.Uuid
-  invoiceId      String   @map("invoice_id") @db.Uuid
+  id             String            @id @default(uuid(7)) @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  invoiceId      String            @map("invoice_id") @db.Uuid
   /// Parts or labour, as printed in the invoice's TYPE column. Set from the
   /// labour / part record for a repair-billed line, from the quotation line
   /// for a quotation-billed one, and chosen on screen for a typed one.
   /// Label only — no total, VAT or balance ever reads it.
   itemType       EstimateItemType? @map("item_type")
   description    String
-  quantity       Decimal  @db.Decimal(12, 3)
-  unitPrice      Decimal  @map("unit_price") @db.Decimal(14, 2)
-  lineTotal      Decimal  @map("line_total") @db.Decimal(14, 2)
-  taxRate        Decimal? @map("tax_rate") @db.Decimal(5, 2)
-  taxAmount      Decimal? @map("tax_amount") @db.Decimal(14, 2)
+  quantity       Decimal           @db.Decimal(12, 3)
+  unitPrice      Decimal           @map("unit_price") @db.Decimal(14, 2)
+  lineTotal      Decimal           @map("line_total") @db.Decimal(14, 2)
+  taxRate        Decimal?          @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount      Decimal?          @map("tax_amount") @db.Decimal(14, 2)
+  /// The tax code chosen (Accounting → Tax codes). Its rate and treatment
+  /// are copied onto the record when saved, so changing the code later never
+  /// alters an issued document.
+  taxCodeId      String?           @map("tax_code_id") @db.Uuid
   /// How the line is treated for VAT; its rate follows from it.
-  vatTreatment   VatTreatment @default(STANDARD) @map("vat_treatment")
+  vatTreatment   VatTreatment      @default(STANDARD) @map("vat_treatment")
   /// The line's own discount: a percentage or a fixed amount (type +
   /// value, as entered), and the AED it came to. `lineTotal` is net of it.
   /// `taxAmount` is the VAT on this line after its share of the bill
   /// discount too.
-  discountType   DiscountType? @map("discount_type")
-  discountValue  Decimal?      @map("discount_value") @db.Decimal(14, 2)
-  discountAmount Decimal       @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  discountType   DiscountType?     @map("discount_type")
+  discountValue  Decimal?          @map("discount_value") @db.Decimal(14, 2)
+  discountAmount Decimal           @default(0) @map("discount_amount") @db.Decimal(14, 2)
   /// The income account this line books to. Null: the default for its type
   /// (parts sales, labour sales) — lib/accounting/postings.ts.
-  accountId      String?  @map("account_id") @db.Uuid
-  partUsageId    String?  @map("part_usage_id") @db.Uuid
-  labourId       String?  @map("labour_id") @db.Uuid
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  accountId      String?           @map("account_id") @db.Uuid
+  partUsageId    String?           @map("part_usage_id") @db.Uuid
+  labourId       String?           @map("labour_id") @db.Uuid
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  invoice      Invoice      @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Cascade)
-  partUsage    PartUsage?   @relation(fields: [organizationId, partUsageId], references: [organizationId, id], onDelete: Restrict)
-  labour       Labour?      @relation(fields: [organizationId, labourId], references: [organizationId, id], onDelete: Restrict)
-  account        ChartOfAccount? @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
-  credits        CreditNoteItem[]
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  invoice      Invoice          @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Cascade)
+  partUsage    PartUsage?       @relation(fields: [organizationId, partUsageId], references: [organizationId, id], onDelete: Restrict)
+  labour       Labour?          @relation(fields: [organizationId, labourId], references: [organizationId, id], onDelete: Restrict)
+  account      ChartOfAccount?  @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
+  taxCode      TaxCode?         @relation(fields: [organizationId, taxCodeId], references: [organizationId, id], onDelete: Restrict)
+  credits      CreditNoteItem[]
 
   @@index([organizationId])
   @@index([organizationId, invoiceId])
@@ -1686,13 +1703,13 @@ model Payment {
   createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  invoice      Invoice       @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Restrict)
-  reversalOf   Payment?      @relation("PaymentReversal", fields: [organizationId, reversalOfPaymentId], references: [organizationId, id], onDelete: Restrict)
-  reversals    Payment[]     @relation("PaymentReversal")
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  invoice      Invoice         @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Restrict)
+  reversalOf   Payment?        @relation("PaymentReversal", fields: [organizationId, reversalOfPaymentId], references: [organizationId, id], onDelete: Restrict)
+  reversals    Payment[]       @relation("PaymentReversal")
   account      ChartOfAccount? @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
-  receivedBy   User          @relation(fields: [organizationId, receivedByUserId], references: [organizationId, id], onDelete: Restrict)
-  journalEntry JournalEntry? @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+  receivedBy   User            @relation(fields: [organizationId, receivedByUserId], references: [organizationId, id], onDelete: Restrict)
+  journalEntry JournalEntry?   @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
 
   @@unique([organizationId, id])
   @@unique([organizationId, paymentNumber])
@@ -1730,7 +1747,7 @@ model SupplierPayment {
   purchase     Purchase          @relation(fields: [organizationId, purchaseId], references: [organizationId, id], onDelete: Restrict)
   reversalOf   SupplierPayment?  @relation("SupplierPaymentReversal", fields: [organizationId, reversalOfSupplierPaymentId], references: [organizationId, id], onDelete: Restrict)
   reversals    SupplierPayment[] @relation("SupplierPaymentReversal")
-  account      ChartOfAccount?  @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
+  account      ChartOfAccount?   @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
   paidBy       User              @relation(fields: [organizationId, paidByUserId], references: [organizationId, id], onDelete: Restrict)
   journalEntry JournalEntry?     @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
 
@@ -1744,29 +1761,33 @@ model SupplierPayment {
 }
 
 model Expense {
-  id               String         @id @default(uuid(7)) @db.Uuid
-  organizationId   String         @map("organization_id") @db.Uuid
-  branchId         String         @map("branch_id") @db.Uuid
-  chartOfAccountId String?        @map("chart_of_account_id") @db.Uuid
-  expenseNumber    String?        @map("expense_number")
-  status           ExpenseStatus  @default(RECORDED)
-  description      String
-  amount           Decimal        @db.Decimal(14, 2)
-  taxRate          Decimal?       @map("tax_rate") @db.Decimal(5, 2)
-  taxAmount        Decimal?       @map("tax_amount") @db.Decimal(14, 2)
-  expenseDate      DateTime       @map("expense_date") @db.Date
-  vendorName       String?        @map("vendor_name")
+  id                String         @id @default(uuid(7)) @db.Uuid
+  organizationId    String         @map("organization_id") @db.Uuid
+  branchId          String         @map("branch_id") @db.Uuid
+  chartOfAccountId  String?        @map("chart_of_account_id") @db.Uuid
+  expenseNumber     String?        @map("expense_number")
+  status            ExpenseStatus  @default(RECORDED)
+  description       String
+  amount            Decimal        @db.Decimal(14, 2)
+  taxRate           Decimal?       @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount         Decimal?       @map("tax_amount") @db.Decimal(14, 2)
+  /// The tax code chosen (Accounting → Tax codes). Its rate and treatment
+  /// are copied onto the record when saved, so changing the code later never
+  /// alters an issued document.
+  taxCodeId         String?        @map("tax_code_id") @db.Uuid
+  expenseDate       DateTime       @map("expense_date") @db.Date
+  vendorName        String?        @map("vendor_name")
   // If set, the expense was settled immediately (Cr Cash/Bank in the
   // journal posting). If null, it's treated as an accrued/unpaid liability
   // (Cr Accounts Payable) — no further payable-tracking entity in V1.
-  paymentMethod    PaymentMethod? @map("payment_method")
+  paymentMethod     PaymentMethod? @map("payment_method")
   /// The cash or bank account it was paid from, when paid. Null: the default
   /// for its method.
-  paidFromAccountId String?       @map("paid_from_account_id") @db.Uuid
-  recordedByUserId String         @map("recorded_by_user_id") @db.Uuid
-  journalEntryId   String?        @map("journal_entry_id") @db.Uuid
-  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  paidFromAccountId String?        @map("paid_from_account_id") @db.Uuid
+  recordedByUserId  String         @map("recorded_by_user_id") @db.Uuid
+  journalEntryId    String?        @map("journal_entry_id") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz
 
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branch         Branch          @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
@@ -1774,6 +1795,7 @@ model Expense {
   paidFrom       ChartOfAccount? @relation("ExpensePaidFrom", fields: [organizationId, paidFromAccountId], references: [organizationId, id], onDelete: Restrict)
   recordedBy     User            @relation(fields: [organizationId, recordedByUserId], references: [organizationId, id], onDelete: Restrict)
   journalEntry   JournalEntry?   @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+  taxCode        TaxCode?        @relation(fields: [organizationId, taxCodeId], references: [organizationId, id], onDelete: Restrict)
 
   @@unique([organizationId, id])
   @@unique([organizationId, expenseNumber])
@@ -1784,19 +1806,19 @@ model Expense {
 }
 
 model ChartOfAccount {
-  id              String      @id @default(uuid(7)) @db.Uuid
-  organizationId  String      @map("organization_id") @db.Uuid
-  accountCode     String      @map("account_code")
-  accountName     String      @map("account_name")
-  accountType     AccountType @map("account_type")
-  parentAccountId String?     @map("parent_account_id") @db.Uuid
-  isActive        Boolean     @default(true) @map("is_active")
+  id               String       @id @default(uuid(7)) @db.Uuid
+  organizationId   String       @map("organization_id") @db.Uuid
+  accountCode      String       @map("account_code")
+  accountName      String       @map("account_name")
+  accountType      AccountType  @map("account_type")
+  parentAccountId  String?      @map("parent_account_id") @db.Uuid
+  isActive         Boolean      @default(true) @map("is_active")
   /// Set on the accounts automatic postings use; null on the workshop's own.
-  role             AccountRole?  @map("role")
+  role             AccountRole? @map("role")
   /// Money can be received into or paid from it: cash, bank and card accounts.
-  isPaymentAccount Boolean       @default(false) @map("is_payment_account")
-  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+  isPaymentAccount Boolean      @default(false) @map("is_payment_account")
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
   organization  Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   parentAccount ChartOfAccount?  @relation("ChartOfAccountHierarchy", fields: [organizationId, parentAccountId], references: [organizationId, id], onDelete: Restrict)
@@ -1818,6 +1840,7 @@ model ChartOfAccount {
   fixedAssetsExpense     FixedAsset[]         @relation("FixedAssetExpense")
   fixedAssetsPaidFrom    FixedAsset[]         @relation("FixedAssetPaidFrom")
   fixedAssetsProceeds    FixedAsset[]         @relation("FixedAssetProceeds")
+  paymentModes           PaymentMode[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, accountCode])
@@ -1831,24 +1854,24 @@ model ChartOfAccount {
 /// JournalEntry with reversalOfJournalEntryId pointing back at the original,
 /// never an edit to a posted entry.
 model JournalEntry {
-  id                       String    @id @default(uuid(7)) @db.Uuid
-  organizationId           String    @map("organization_id") @db.Uuid
-  branchId                 String?   @map("branch_id") @db.Uuid
+  id                       String        @id @default(uuid(7)) @db.Uuid
+  organizationId           String        @map("organization_id") @db.Uuid
+  branchId                 String?       @map("branch_id") @db.Uuid
   /// JV-000001, in order of booking.
-  entryNumber              String?        @map("entry_number")
+  entryNumber              String?       @map("entry_number")
   /// The record this entry books (an invoice, payment, …), or MANUAL for an
   /// entry made by hand. `sourceId` is that record's id.
-  sourceType               JournalSource  @default(MANUAL) @map("source_type")
-  sourceId                 String?        @map("source_id") @db.Uuid
-  entryDate                DateTime  @map("entry_date") @db.Date
+  sourceType               JournalSource @default(MANUAL) @map("source_type")
+  sourceId                 String?       @map("source_id") @db.Uuid
+  entryDate                DateTime      @map("entry_date") @db.Date
   description              String?
-  isPosted                 Boolean   @default(false) @map("is_posted")
-  postedAt                 DateTime? @map("posted_at") @db.Timestamptz
-  postedByUserId           String?   @map("posted_by_user_id") @db.Uuid
-  reversalOfJournalEntryId String?   @map("reversal_of_journal_entry_id") @db.Uuid
-  createdByUserId          String    @map("created_by_user_id") @db.Uuid
-  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  isPosted                 Boolean       @default(false) @map("is_posted")
+  postedAt                 DateTime?     @map("posted_at") @db.Timestamptz
+  postedByUserId           String?       @map("posted_by_user_id") @db.Uuid
+  reversalOfJournalEntryId String?       @map("reversal_of_journal_entry_id") @db.Uuid
+  createdByUserId          String        @map("created_by_user_id") @db.Uuid
+  createdAt                DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branch       Branch?        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
@@ -1907,30 +1930,30 @@ model JournalEntryLine {
 /// Filing books the period's VAT into what is due to the FTA and usually
 /// closes the books through the period's last day (lib/accounting/vat-filing.ts).
 model VatFiling {
-  id                   String    @id @default(uuid(7)) @db.Uuid
-  organizationId       String    @map("organization_id") @db.Uuid
-  periodFrom           DateTime  @map("period_from") @db.Date
-  periodTo             DateTime  @map("period_to") @db.Date
+  id                  String    @id @default(uuid(7)) @db.Uuid
+  organizationId      String    @map("organization_id") @db.Uuid
+  periodFrom          DateTime  @map("period_from") @db.Date
+  periodTo            DateTime  @map("period_to") @db.Date
   /// Box 1 — standard-rated supplies and their VAT.
-  standardSupplies     Decimal   @map("standard_supplies") @db.Decimal(14, 2)
-  outputVat            Decimal   @map("output_vat") @db.Decimal(14, 2)
+  standardSupplies    Decimal   @map("standard_supplies") @db.Decimal(14, 2)
+  outputVat           Decimal   @map("output_vat") @db.Decimal(14, 2)
   /// Box 4 — zero-rated supplies.
-  zeroRatedSupplies    Decimal   @default(0) @map("zero_rated_supplies") @db.Decimal(14, 2)
+  zeroRatedSupplies   Decimal   @default(0) @map("zero_rated_supplies") @db.Decimal(14, 2)
   /// Box 9 — standard-rated expenses and the VAT recoverable on them.
-  standardExpenses     Decimal   @map("standard_expenses") @db.Decimal(14, 2)
-  inputVat             Decimal   @map("input_vat") @db.Decimal(14, 2)
+  standardExpenses    Decimal   @map("standard_expenses") @db.Decimal(14, 2)
+  inputVat            Decimal   @map("input_vat") @db.Decimal(14, 2)
   /// Box 14 — payable when positive, refundable when negative.
-  netVat               Decimal   @map("net_vat") @db.Decimal(14, 2)
+  netVat              Decimal   @map("net_vat") @db.Decimal(14, 2)
   /// The FTA's reference for the submitted return.
-  ftaReference         String?   @map("fta_reference")
-  filedOn              DateTime  @map("filed_on") @db.Date
-  filedByUserId        String    @map("filed_by_user_id") @db.Uuid
+  ftaReference        String?   @map("fta_reference")
+  filedOn             DateTime  @map("filed_on") @db.Date
+  filedByUserId       String    @map("filed_by_user_id") @db.Uuid
   /// When the VAT was paid (or the refund received), and from which account.
-  settledOn            DateTime? @map("settled_on") @db.Date
-  settledAccountId     String?   @map("settled_account_id") @db.Uuid
-  settlementReference  String?   @map("settlement_reference")
-  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  settledOn           DateTime? @map("settled_on") @db.Date
+  settledAccountId    String?   @map("settled_account_id") @db.Uuid
+  settlementReference String?   @map("settlement_reference")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   filedBy        User            @relation("VatFilingFiledBy", fields: [organizationId, filedByUserId], references: [organizationId, id], onDelete: Restrict)
@@ -2025,17 +2048,17 @@ model CreditNoteItem {
 /// the statement shows are ticked as cleared until the books' cleared
 /// balance equals the statement's. Completed reconciliations are kept.
 model BankReconciliation {
-  id                  String               @id @default(uuid(7)) @db.Uuid
-  organizationId      String               @map("organization_id") @db.Uuid
-  accountId           String               @map("account_id") @db.Uuid
-  statementDate       DateTime             @map("statement_date") @db.Date
-  statementBalance    Decimal              @map("statement_balance") @db.Decimal(14, 2)
-  status              ReconciliationStatus @default(IN_PROGRESS)
-  completedAt         DateTime?            @map("completed_at") @db.Timestamptz
-  completedByUserId   String?              @map("completed_by_user_id") @db.Uuid
-  createdByUserId     String               @map("created_by_user_id") @db.Uuid
-  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+  id                String               @id @default(uuid(7)) @db.Uuid
+  organizationId    String               @map("organization_id") @db.Uuid
+  accountId         String               @map("account_id") @db.Uuid
+  statementDate     DateTime             @map("statement_date") @db.Date
+  statementBalance  Decimal              @map("statement_balance") @db.Decimal(14, 2)
+  status            ReconciliationStatus @default(IN_PROGRESS)
+  completedAt       DateTime?            @map("completed_at") @db.Timestamptz
+  completedByUserId String?              @map("completed_by_user_id") @db.Uuid
+  createdByUserId   String               @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   account      ChartOfAccount   @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
@@ -2069,43 +2092,43 @@ model ReconciledLine {
 /// line, down to its residual value); a sale or scrapping takes it off the
 /// books with any gain or loss.
 model FixedAsset {
-  id                     String           @id @default(uuid(7)) @db.Uuid
-  organizationId         String           @map("organization_id") @db.Uuid
-  assetNumber            String           @map("asset_number")
-  name                   String
-  description            String?
+  id                   String           @id @default(uuid(7)) @db.Uuid
+  organizationId       String           @map("organization_id") @db.Uuid
+  assetNumber          String           @map("asset_number")
+  name                 String
+  description          String?
   /// Where its cost sits, where its depreciation builds up, and where each
   /// month's depreciation is charged.
-  assetAccountId         String           @map("asset_account_id") @db.Uuid
-  accumulatedAccountId   String           @map("accumulated_account_id") @db.Uuid
-  expenseAccountId       String           @map("expense_account_id") @db.Uuid
-  acquiredOn             DateTime         @map("acquired_on") @db.Date
-  cost                   Decimal          @db.Decimal(14, 2)
-  residualValue          Decimal          @default(0) @map("residual_value") @db.Decimal(14, 2)
-  usefulLifeMonths       Int              @map("useful_life_months")
-  funding                AssetFunding
+  assetAccountId       String           @map("asset_account_id") @db.Uuid
+  accumulatedAccountId String           @map("accumulated_account_id") @db.Uuid
+  expenseAccountId     String           @map("expense_account_id") @db.Uuid
+  acquiredOn           DateTime         @map("acquired_on") @db.Date
+  cost                 Decimal          @db.Decimal(14, 2)
+  residualValue        Decimal          @default(0) @map("residual_value") @db.Decimal(14, 2)
+  usefulLifeMonths     Int              @map("useful_life_months")
+  funding              AssetFunding
   /// PAID: the cash or bank account it was paid from.
-  paidFromAccountId      String?          @map("paid_from_account_id") @db.Uuid
+  paidFromAccountId    String?          @map("paid_from_account_id") @db.Uuid
   /// OPENING: depreciation already charged before the books began, and the
   /// day it was charged to — the day the asset comes into the books.
-  openingDepreciation    Decimal          @default(0) @map("opening_depreciation") @db.Decimal(14, 2)
-  openingThrough         DateTime?        @map("opening_through") @db.Date
-  status                 FixedAssetStatus @default(ACTIVE)
-  disposedOn             DateTime?        @map("disposed_on") @db.Date
-  disposalProceeds       Decimal?         @map("disposal_proceeds") @db.Decimal(14, 2)
-  proceedsAccountId      String?          @map("proceeds_account_id") @db.Uuid
-  createdByUserId        String           @map("created_by_user_id") @db.Uuid
-  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+  openingDepreciation  Decimal          @default(0) @map("opening_depreciation") @db.Decimal(14, 2)
+  openingThrough       DateTime?        @map("opening_through") @db.Date
+  status               FixedAssetStatus @default(ACTIVE)
+  disposedOn           DateTime?        @map("disposed_on") @db.Date
+  disposalProceeds     Decimal?         @map("disposal_proceeds") @db.Decimal(14, 2)
+  proceedsAccountId    String?          @map("proceeds_account_id") @db.Uuid
+  createdByUserId      String           @map("created_by_user_id") @db.Uuid
+  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz
 
-  organization     Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  assetAccount     ChartOfAccount      @relation("FixedAssetAccount", fields: [organizationId, assetAccountId], references: [organizationId, id], onDelete: Restrict)
-  accumulated      ChartOfAccount      @relation("FixedAssetAccumulated", fields: [organizationId, accumulatedAccountId], references: [organizationId, id], onDelete: Restrict)
-  expenseAccount   ChartOfAccount      @relation("FixedAssetExpense", fields: [organizationId, expenseAccountId], references: [organizationId, id], onDelete: Restrict)
-  paidFrom         ChartOfAccount?     @relation("FixedAssetPaidFrom", fields: [organizationId, paidFromAccountId], references: [organizationId, id], onDelete: Restrict)
-  proceedsAccount  ChartOfAccount?     @relation("FixedAssetProceeds", fields: [organizationId, proceedsAccountId], references: [organizationId, id], onDelete: Restrict)
-  createdBy        User                @relation("FixedAssetCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
-  depreciations    AssetDepreciation[]
+  organization    Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  assetAccount    ChartOfAccount      @relation("FixedAssetAccount", fields: [organizationId, assetAccountId], references: [organizationId, id], onDelete: Restrict)
+  accumulated     ChartOfAccount      @relation("FixedAssetAccumulated", fields: [organizationId, accumulatedAccountId], references: [organizationId, id], onDelete: Restrict)
+  expenseAccount  ChartOfAccount      @relation("FixedAssetExpense", fields: [organizationId, expenseAccountId], references: [organizationId, id], onDelete: Restrict)
+  paidFrom        ChartOfAccount?     @relation("FixedAssetPaidFrom", fields: [organizationId, paidFromAccountId], references: [organizationId, id], onDelete: Restrict)
+  proceedsAccount ChartOfAccount?     @relation("FixedAssetProceeds", fields: [organizationId, proceedsAccountId], references: [organizationId, id], onDelete: Restrict)
+  createdBy       User                @relation("FixedAssetCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+  depreciations   AssetDepreciation[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, assetNumber])
@@ -2520,4 +2543,82 @@ model AuthThrottle {
 
   @@index([updatedAt])
   @@map("auth_throttles")
+}
+
+// =============================================================================
+// ACCOUNTING MASTERS
+// =============================================================================
+
+/// A tax code — how a line is taxed, chosen on every sales and purchase line.
+/// The four standard UAE codes (SR, ZR, EX, OS) are created for every
+/// workshop; more can be added. The rate and treatment are copied onto each
+/// line when it is saved (lib/accounting/tax-codes.ts).
+model TaxCode {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  /// Short code printed on reports, e.g. SR, ZR, EX, OS.
+  code           String
+  name           String
+  /// Percentage, e.g. 5.00. Always 0 unless the treatment is STANDARD.
+  rate           Decimal      @db.Decimal(5, 2)
+  /// Where it goes on the VAT return.
+  treatment      VatTreatment
+  /// Offered on sales documents (quotations, invoices).
+  forSales       Boolean      @default(true) @map("for_sales")
+  /// Offered on purchases and expenses.
+  forPurchases   Boolean      @default(true) @map("for_purchases")
+  /// The code new lines start with.
+  isDefault      Boolean      @default(false) @map("is_default")
+  /// One of the four standard codes: can be renamed, not deleted or re-treated.
+  isSystem       Boolean      @default(false) @map("is_system")
+  isActive       Boolean      @default(true) @map("is_active")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  invoiceItems  InvoiceItem[]
+  estimateItems EstimateItem[]
+  purchaseItems PurchaseItem[]
+  expenses      Expense[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, code])
+  @@unique([organizationId], map: "tax_codes_one_default", where: raw("is_default"))
+  @@index([organizationId])
+  @@map("tax_codes")
+}
+
+/// A way money is received or paid — "Cash", "Card (Network)", "ADCB
+/// current account", "Cheque" — each tied to the ledger account the money
+/// goes into or comes out of. Choosing a mode on a receipt or payment
+/// decides both its method and its account (lib/accounting/payment-modes.ts).
+model PaymentMode {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  organizationId    String        @map("organization_id") @db.Uuid
+  name              String
+  /// The kind of payment it is — printed on receipts, used for the defaults.
+  method            PaymentMethod
+  /// The cash, bank or card account it posts to.
+  accountId         String        @map("account_id") @db.Uuid
+  /// Offered when taking money in (receipts).
+  forReceipts       Boolean       @default(true) @map("for_receipts")
+  /// Offered when paying money out (suppliers, expenses, refunds).
+  forPayments       Boolean       @default(true) @map("for_payments")
+  /// A cheque, card slip or transfer number must be given.
+  requiresReference Boolean       @default(false) @map("requires_reference")
+  isDefault         Boolean       @default(false) @map("is_default")
+  isActive          Boolean       @default(true) @map("is_active")
+  sortOrder         Int           @default(0) @map("sort_order")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  account      ChartOfAccount @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+  @@unique([organizationId], map: "payment_modes_one_default", where: raw("is_default"))
+  @@index([organizationId])
+  @@map("payment_modes")
 }

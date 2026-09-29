@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { notFound } from 'next/navigation';
 import { ArrowRight, Ban, FileText, User } from 'lucide-react';
 import { AuthError, hasPermission, requireUser } from '@/lib/auth/authorize';
@@ -207,6 +208,7 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
                     amount={note.refundAmount.toString()}
                     today={localDateString()}
                     moneyAccounts={moneyAccounts}
+                    modes={await getPaymentModeOptions(user.organizationId, 'payments')}
                   />
                 ) : (
                   <p className="text-sm text-muted-foreground">

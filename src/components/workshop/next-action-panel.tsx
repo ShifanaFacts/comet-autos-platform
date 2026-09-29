@@ -11,6 +11,7 @@ import { changeJobStatusAction, startRepairAction } from '@/app/(app)/job-cards/
 import type { NextAction } from '@/lib/workshop/workspace';
 import type { WorkflowStatus } from '@/lib/workshop/stages';
 import { cn } from '@/lib/utils';
+import { CompleteJobButton } from '@/components/workshop/complete-job-button';
 
 const TONE = {
   action: { box: 'border-primary/25 bg-accent/40', icon: ArrowRight, iconClass: 'bg-primary text-primary-foreground' },
@@ -26,12 +27,15 @@ export function NextActionPanel({
   next,
   canHold,
   canCancel,
+  canComplete = false,
 }: {
   jobCardId: string;
   status: JobCardStatus;
   next: NextAction;
   canHold: boolean;
   canCancel: boolean;
+  /** Offer "Mark completed": the work is done, whatever step it was at. */
+  canComplete?: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -75,6 +79,7 @@ export function NextActionPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+          {canComplete ? <CompleteJobButton jobCardId={jobCardId} /> : null}
           {canHold ? (
             <Button variant="outline" disabled={isPending} onClick={() => apply('ON_HOLD')}>
               <PauseCircle />

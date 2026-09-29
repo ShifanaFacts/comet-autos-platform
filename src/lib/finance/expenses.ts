@@ -13,6 +13,8 @@ import { resolveDefaultVatRate } from '@/lib/tax';
 import { resolveInventoryBranch } from '@/lib/inventory/stock';
 import { syncPosting } from '@/lib/accounting/journal';
 import { checkMoneyAccount } from '@/lib/accounting/chart';
+import { getTaxCodeOptions, resolveTaxCode } from '@/lib/accounting/tax-codes';
+import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { getAccountChoices } from '@/lib/accounting/reports';
 
 /*
@@ -42,7 +44,9 @@ const expenseSchema = z.object({
     .string({ error: 'Enter the amount.' })
     .trim()
     .regex(/^\d{1,9}(\.\d{1,2})?$/, 'Enter an amount like 250.00.'),
-  /** Percentage. Empty means the expense carries no VAT. */
+  /** The purchase tax code; when given, its rate is the expense's VAT rate. */
+  taxCodeId: z.union([z.literal(''), z.uuid()]).optional(),
+  /** Percentage. Empty means the expense carries no VAT. (Imports and older forms.) */
   taxRate: z
     .union([z.literal(''), z.string().regex(/^\d{1,2}(\.\d{1,2})?$/, 'Enter a VAT rate like 5.')])
     .optional(),
@@ -62,6 +66,18 @@ const expenseSchema = z.object({
  * The amount entered is net of VAT; the rate adds the tax on top — the same
  * convention estimates and invoices use, so the two are comparable.
  */
+/**
+ * The VAT rate an expense carries: its tax code's, else the rate typed. A 0%
+ * code (zero-rated, exempt, out of scope) carries none to reclaim.
+ */
+async function readTax(organizationId: string, input: { taxCodeId?: string; taxRate?: string }) {
+  if (input.taxCodeId) {
+    const code = await resolveTaxCode(prisma, organizationId, input.taxCodeId);
+    return { taxCodeId: code.id, taxRate: Number(code.rate) > 0 ? code.rate : null };
+  }
+  return { taxCodeId: null, taxRate: emptyToNull(input.taxRate) };
+}
+
 function split(amount: string, taxRate: string | null) {
   const amounts = calculateLine({ quantity: '1', unitPrice: amount, taxRate: taxRate ?? '0' });
   return {
@@ -87,7 +103,7 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
 
   if (toFils(input.amount) <= 0)
     throw new DomainError('The amount must be more than zero.', 'amount');
-  const taxRate = emptyToNull(input.taxRate);
+  const { taxRate, taxCodeId } = await readTax(user.organizationId, input);
   const categoryId = emptyToNull(input.categoryId);
   await assertCategory(user.organizationId, categoryId);
   const money = split(input.amount, taxRate);
@@ -105,6 +121,7 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
         amount: money.net,
         taxRate: taxRate,
         taxAmount: taxRate ? money.tax : null,
+        taxCodeId,
         expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
         vendorName: emptyToNull(input.vendorName),
         paymentMethod: emptyToNull(input.paymentMethod) as (typeof PAYMENT_METHODS)[number] | null,
@@ -148,7 +165,7 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
   requirePermission(user, 'accounting.edit');
   if (toFils(input.amount) <= 0)
     throw new DomainError('The amount must be more than zero.', 'amount');
-  const taxRate = emptyToNull(input.taxRate);
+  const { taxRate, taxCodeId } = await readTax(user.organizationId, input);
   const categoryId = emptyToNull(input.categoryId);
   await assertCategory(user.organizationId, categoryId);
   const money = split(input.amount, taxRate);
@@ -166,6 +183,7 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
       amount: money.net,
       taxRate,
       taxAmount: taxRate ? money.tax : null,
+      taxCodeId,
       expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
       vendorName: emptyToNull(input.vendorName),
       paymentMethod: emptyToNull(input.paymentMethod) as (typeof PAYMENT_METHODS)[number] | null,
@@ -343,5 +361,7 @@ export async function getExpenseFormOptions(user: AuthenticatedUser) {
     categories,
     defaultVatRate: await resolveDefaultVatRate(user.organizationId),
     moneyAccounts: accounts.money,
+    taxCodes: await getTaxCodeOptions(user.organizationId, 'purchases'),
+    modes: await getPaymentModeOptions(user.organizationId, 'payments'),
   };
 }

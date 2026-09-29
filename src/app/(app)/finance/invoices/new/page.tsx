@@ -1,4 +1,6 @@
 import { notFound } from 'next/navigation';
+import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
+import { getTaxCodeOptions } from '@/lib/accounting/tax-codes';
 import { hasPermission, requirePermission, requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
 import { resolveDefaultVatRate } from '@/lib/tax';
@@ -95,6 +97,8 @@ export default async function NewInvoicePage({
           initialWorkOrder={workOrder}
           quotation={quotation}
           defaultVatRate={await resolveDefaultVatRate(user.organizationId)}
+          taxCodes={await getTaxCodeOptions(user.organizationId, 'sales')}
+          modes={await getPaymentModeOptions(user.organizationId, 'receipts')}
           initialPayNow={params.pay === 'now'}
           canTakePayment={hasPermission(user, 'payment.create', {
             branchId: user.primaryBranchId ?? undefined,

@@ -71,3 +71,21 @@ export async function searchVehicleSummaries(user: AuthenticatedUser, query: str
     vehicles.map((v) => v.id),
   );
 }
+
+/** A customer's vehicles, for checking several of them in together. */
+export async function listCustomerVehicleSummaries(
+  user: AuthenticatedUser,
+  customerId: string,
+): Promise<VehicleSummary[]> {
+  requirePermission(user, 'vehicle.view');
+  const vehicles = await prisma.vehicle.findMany({
+    where: { organizationId: user.organizationId, customerId, isActive: true },
+    orderBy: { plateNumber: 'asc' },
+    take: 100,
+    select: { id: true },
+  });
+  return getVehicleSummaries(
+    user.organizationId,
+    vehicles.map((v) => v.id),
+  );
+}

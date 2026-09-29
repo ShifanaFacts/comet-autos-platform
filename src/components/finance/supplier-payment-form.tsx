@@ -2,6 +2,7 @@
 
 import { MoneyAccountField } from '@/components/accounting/money-account-field';
 import type { AccountChoice } from '@/lib/accounting/reports';
+import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Banknote, CheckCircle2, TriangleAlert, Wallet } from 'lucide-react';
@@ -66,8 +67,11 @@ export function SupplierPaymentForm({
   defaultPaidAt,
   backHref,
   moneyAccounts = [],
+  modes = [],
 }: {
   purchase: PayablePurchase;
+  /** The payment modes (payment mode master). Given, one choice sets method and account. */
+  modes?: PaymentModeOption[];
   /** Cash and bank accounts it can be paid from. */
   moneyAccounts?: AccountChoice[];
   /** Now, in the workshop's timezone, from the server. */
@@ -76,10 +80,18 @@ export function SupplierPaymentForm({
 }) {
   const router = useRouter();
   const [amount, setAmount] = useState('');
-  const [method, setMethod] = useState<PaymentMethod>('BANK_TRANSFER');
+  // A supplier is usually paid by transfer: start on that mode when there is one.
+  const startMode =
+    modes.find((mode) => mode.method === 'BANK_TRANSFER') ??
+    modes.find((mode) => mode.isDefault) ??
+    modes[0] ??
+    null;
+  const [modeId, setModeId] = useState(startMode?.id ?? '');
+  const mode = modes.find((option) => option.id === modeId) ?? null;
+  const [method, setMethod] = useState<PaymentMethod>(startMode?.method ?? 'BANK_TRANSFER');
   const [reference, setReference] = useState('');
   const [paidAt, setPaidAt] = useState(defaultPaidAt);
-  const [accountId, setAccountId] = useState('');
+  const [accountId, setAccountId] = useState(startMode?.accountId ?? '');
   const [confirming, setConfirming] = useState(false);
 
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
@@ -103,7 +115,13 @@ export function SupplierPaymentForm({
   const remaining = amountFils === null ? null : purchase.balanceFils - amountFils;
   const tooMuch = remaining !== null && remaining < 0;
   const settles = remaining === 0;
-  const ready = amountFils !== null && amountFils > 0 && !tooMuch && paidAt.length > 0;
+  const needsReference = mode?.requiresReference ?? false;
+  const ready =
+    amountFils !== null &&
+    amountFils > 0 &&
+    !tooMuch &&
+    paidAt.length > 0 &&
+    (!needsReference || reference.trim().length > 0);
 
   const money = (fils: number) => formatMoney((fils / 100).toFixed(2));
 
@@ -133,7 +151,7 @@ export function SupplierPaymentForm({
         <input type="hidden" name="accountId" value={accountId} />
 
         <div hidden={confirming} className="flex flex-col gap-5">
-          {moneyAccounts.length ? (
+          {moneyAccounts.length && !modes.length ? (
             <MoneyAccountField
               id="supplier-payment-account"
               label="Paid from"
@@ -214,20 +232,54 @@ export function SupplierPaymentForm({
           </p>
 
           <div className="grid gap-5 sm:grid-cols-2">
-            <Field label="Paid by" htmlFor="supplier-payment-method" required error={errors.method}>
-              <NativeSelect
-                id="supplier-payment-method"
-                value={method}
-                onChange={(event) => setMethod(event.target.value as PaymentMethod)}
-                className="h-12 text-base md:h-11 md:text-sm"
+            {modes.length ? (
+              <Field
+                label="Paid by"
+                htmlFor="supplier-payment-mode"
+                required
+                error={errors.method ?? errors.accountId}
+                hint={mode ? `Paid from ${mode.accountName}.` : undefined}
               >
-                {METHODS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </NativeSelect>
-            </Field>
+                <NativeSelect
+                  id="supplier-payment-mode"
+                  value={modeId}
+                  onChange={(event) => {
+                    const next = modes.find((option) => option.id === event.target.value);
+                    if (!next) return;
+                    setModeId(next.id);
+                    setMethod(next.method);
+                    setAccountId(next.accountId);
+                  }}
+                  className="h-12 text-base md:h-11 md:text-sm"
+                >
+                  {modes.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+            ) : (
+              <Field
+                label="Paid by"
+                htmlFor="supplier-payment-method"
+                required
+                error={errors.method}
+              >
+                <NativeSelect
+                  id="supplier-payment-method"
+                  value={method}
+                  onChange={(event) => setMethod(event.target.value as PaymentMethod)}
+                  className="h-12 text-base md:h-11 md:text-sm"
+                >
+                  {METHODS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+            )}
             <Field
               label="Payment date"
               htmlFor="supplier-payment-date"
@@ -249,8 +301,13 @@ export function SupplierPaymentForm({
             name="reference-display"
             value={reference}
             onChange={(event) => setReference(event.target.value)}
+            required={needsReference}
             error={errors.referenceNumber}
-            hint="Optional. Cheque number, transfer reference — whatever you would look up later."
+            hint={
+              needsReference
+                ? `Required for ${mode?.name}: the cheque number or transfer reference.`
+                : 'Optional. Cheque number, transfer reference — whatever you would look up later.'
+            }
             className="[&_input]:h-12 [&_input]:text-base md:[&_input]:h-11 md:[&_input]:text-sm"
           />
 
@@ -299,7 +356,7 @@ export function SupplierPaymentForm({
                 ['Currently outstanding', formatMoney(purchase.balance)],
                 ['Payment amount', amountFils === null ? '—' : money(amountFils)],
                 ['Remaining after', remaining === null ? '—' : money(Math.max(remaining, 0))],
-                ['Method', METHOD_LABEL[method]],
+                ['Paid by', mode ? `${mode.name} (${mode.accountName})` : METHOD_LABEL[method]],
                 ...(reference ? [['Reference', reference] as [string, string]] : []),
               ].map(([label, value], index) => (
                 <div

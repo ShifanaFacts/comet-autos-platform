@@ -1,4 +1,5 @@
 import { getAccountChoices } from '@/lib/accounting/reports';
+import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
@@ -61,6 +62,7 @@ export default async function RecordSupplierPaymentPage({
         ) : (
           <SupplierPaymentForm
             moneyAccounts={(await getAccountChoices(user)).money}
+            modes={await getPaymentModeOptions(user.organizationId, 'payments')}
             purchase={{
               id: purchase.id,
               number: purchase.number,

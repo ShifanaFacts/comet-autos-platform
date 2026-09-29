@@ -8,6 +8,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull, normalizePhone } from '@/lib/normalize';
+import { syncStandardRate } from '@/lib/accounting/tax-codes';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 
 /*
@@ -224,6 +225,8 @@ export async function updateOrganizationSettings(user: AuthenticatedUser, rawInp
       where: { id: user.organizationId },
       data,
     });
+    // The standard-rated tax code (SR) carries the same rate: one standard rate.
+    await syncStandardRate(tx, user.organizationId, data.vatRate);
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
       branchId: user.primaryBranchId,

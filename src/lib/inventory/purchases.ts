@@ -23,6 +23,7 @@ import {
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { postMovement, resolveInventoryBranch } from '@/lib/inventory/stock';
+import { getTaxCodeOptions, resolveTaxCodes } from '@/lib/accounting/tax-codes';
 import { PURCHASE_STATUS_LABEL } from '@/lib/inventory/labels';
 
 /*
@@ -59,6 +60,8 @@ const lineSchema = z.object({
       (value) => !value || (/^\d+(\.\d{1,2})?$/.test(value) && Number(value) <= 100),
       'VAT must be between 0 and 100.',
     ),
+  /** The purchase tax code; when given, its rate is the line's VAT rate. */
+  taxCodeId: z.union([z.literal(''), z.uuid()]).optional(),
 });
 
 const purchaseSchema = z.object({
@@ -126,6 +129,7 @@ async function prepareLines(
     select: { id: true, sku: true, isActive: true },
   });
   const defaultVat = await resolveDefaultVatRate(organizationId, tx);
+  const codes = await resolveTaxCodes(tx, organizationId, items);
   return items.map((item, index) => {
     const part = parts.find((p) => p.id === item.partId);
     if (!part)
@@ -134,13 +138,15 @@ async function prepareLines(
       throw new ValidationError({
         items: `Line ${index + 1}: ${part.sku} is inactive — reactivate it first.`,
       });
-    const taxRate = item.taxRate || defaultVat;
+    const code = item.taxCodeId ? codes.get(item.taxCodeId) : undefined;
+    const taxRate = code?.rate ?? (item.taxRate || defaultVat);
     const quantity = milliToString(toMilli(item.quantity));
     return {
       partId: part.id,
       quantity,
       unitCost: item.unitCost,
       taxRate,
+      taxCodeId: code?.id ?? null,
       amounts: purchaseLineAmounts(quantity, item.unitCost, taxRate),
     };
   });
@@ -215,6 +221,7 @@ function itemRows(lines: Awaited<ReturnType<typeof prepareLines>>) {
     unitCost: line.unitCost,
     taxRate: line.taxRate,
     taxAmount: line.amounts.taxAmount,
+    taxCodeId: line.taxCodeId,
   }));
 }
 
@@ -665,5 +672,6 @@ export async function getPurchaseFormOptions(user: AuthenticatedUser) {
       supplierId: p.preferredSupplierId,
     })),
     defaultVat: await resolveDefaultVatRate(user.organizationId),
+    taxCodes: await getTaxCodeOptions(user.organizationId, 'purchases'),
   };
 }

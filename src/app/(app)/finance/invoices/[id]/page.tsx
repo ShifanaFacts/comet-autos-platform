@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { notFound } from 'next/navigation';
 import {
   ArrowRight,
@@ -315,6 +316,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
                 <div className="border-t border-border bg-muted/20 px-4 py-6 sm:px-6">
                   <InvoicePaymentForm
                     moneyAccounts={(await getAccountChoices(user)).money}
+                    modes={await getPaymentModeOptions(user.organizationId, 'receipts')}
                     key={invoice.balanceDue}
                     invoiceId={invoice.id}
                     balance={invoice.balanceDue}

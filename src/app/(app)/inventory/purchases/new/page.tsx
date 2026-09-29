@@ -36,6 +36,7 @@ export default async function NewPurchasePage({
           parts={options.parts}
           suppliers={options.suppliers}
           defaultVat={options.defaultVat}
+          taxCodes={options.taxCodes}
           today={localDateString()}
           initial={
             preselected

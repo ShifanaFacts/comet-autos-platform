@@ -8,7 +8,7 @@ import { requireUser } from '@/lib/auth/authorize';
 import { runAction, toClientResult } from '@/lib/action';
 import type { ActionResult } from '@/lib/errors';
 import { formDataToObject } from '@/lib/form-data';
-import { transitionJobStatus } from '@/lib/workshop/job-status';
+import { markJobCompleted, transitionJobStatus } from '@/lib/workshop/job-status';
 import { assignPrimaryTechnician } from '@/lib/workshop/assignment';
 import { startInspection, saveInspection } from '@/lib/workshop/inspection';
 import { saveDiagnosis } from '@/lib/workshop/diagnosis';
@@ -47,6 +47,16 @@ export async function changeJobStatusAction(
   const user = await requireUser();
   const result = await runAction(async () => {
     await prisma.$transaction((tx) => transitionJobStatus(tx, user, jobCardId, toStatus));
+  });
+  if (result.ok) refreshJob(jobCardId);
+  return toClientResult(result);
+}
+
+/** The work is done: the job becomes Completed, ready to invoice and hand over. */
+export async function markJobCompletedAction(jobCardId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(async () => {
+    await prisma.$transaction((tx) => markJobCompleted(tx, user, jobCardId));
   });
   if (result.ok) refreshJob(jobCardId);
   return toClientResult(result);

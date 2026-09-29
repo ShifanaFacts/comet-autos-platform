@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Prisma } from '@/generated/prisma/client';
 import type { JobCardStatus } from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
@@ -69,7 +70,20 @@ const visitSchema = z.object({
 export interface CheckInResult {
   jobCardId: string;
   jobNumber: string;
+  /** Job cards opened in the same check-in for the customer's other vehicles. */
+  others?: { jobCardId: string; jobNumber: string; plateNumber: string }[];
 }
+
+/** One more of the same customer's vehicles, checked in alongside the first. */
+export interface AdditionalVehicle {
+  vehicleId: string;
+  /** Blank: the same work as the first vehicle. */
+  complaint?: string;
+  mileage?: string;
+}
+
+/** A fleet customer's cars arrive together; a check-in opens a job card for each. */
+export const MAX_VEHICLES_PER_CHECK_IN = 20;
 
 /**
  * Checks a vehicle in and opens its Job Card (status ARRIVED). Either an existing vehicle is chosen, or a new customer and
@@ -79,7 +93,14 @@ export interface CheckInResult {
 export async function checkInVehicle(
   user: AuthenticatedUser,
   input:
-    | { mode: 'existing'; vehicleId: string; visit: Record<string, string | undefined>; requestKey?: string }
+    | {
+        mode: 'existing';
+        vehicleId: string;
+        visit: Record<string, string | undefined>;
+        /** The same customer's other vehicles, each on its own job card. */
+        alsoVehicles?: AdditionalVehicle[];
+        requestKey?: string;
+      }
     | {
         mode: 'new';
         customer: CustomerInput;
@@ -94,6 +115,36 @@ export async function checkInVehicle(
   const branchId = user.primaryBranchId;
   requirePermission(user, 'job_card.create', { branchId });
   const visit = parseInput(visitSchema, input.visit);
+  const also = input.mode === 'existing' ? (input.alsoVehicles ?? []) : [];
+  if (also.length + 1 > MAX_VEHICLES_PER_CHECK_IN) {
+    throw new DomainError(
+      `Check in up to ${MAX_VEHICLES_PER_CHECK_IN} vehicles at a time.`,
+      'alsoVehicles',
+    );
+  }
+  // Each extra vehicle's own visit: its own mileage, and its own work if it differs.
+  const alsoVisits = also.map((extra, index) => {
+    try {
+      return {
+        vehicleId: extra.vehicleId,
+        visit: parseInput(visitSchema, {
+          complaint: extra.complaint?.trim() ? extra.complaint : visit.complaint,
+          mileage: extra.mileage ?? '',
+        }),
+      };
+    } catch (error) {
+      if (error instanceof DomainError) {
+        throw new DomainError(`Vehicle ${index + 2}: ${error.message}`, `alsoVehicles.${index}`);
+      }
+      throw error;
+    }
+  });
+  if (input.mode === 'existing') {
+    const ids = [input.vehicleId, ...also.map((extra) => extra.vehicleId)];
+    if (new Set(ids).size !== ids.length) {
+      throw new DomainError('The same vehicle is listed twice.', 'alsoVehicles');
+    }
+  }
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, input, 'job_card.check_in');
@@ -106,116 +157,181 @@ export async function checkInVehicle(
       vehicleId = vehicle.id;
     }
 
-    // Lock the vehicle row: two desks checking the same car in at once must not both succeed.
-    const locked = await tx.$queryRaw<{ id: string }[]>`
+    const first = await openJobCard(
+      tx,
+      user,
+      branchId,
+      vehicleId,
+      visit,
+      visit.appointmentId || null,
+    );
+    const others: NonNullable<CheckInResult['others']> = [];
+    for (const extra of alsoVisits) {
+      const opened = await openJobCard(
+        tx,
+        user,
+        branchId,
+        extra.vehicleId,
+        extra.visit,
+        null,
+        first.customerId,
+      );
+      others.push({
+        jobCardId: opened.jobCardId,
+        jobNumber: opened.jobNumber,
+        plateNumber: opened.plateNumber,
+      });
+    }
+
+    await settleRequestKey(tx, user, input, first.jobCardId);
+    return {
+      jobCardId: first.jobCardId,
+      jobNumber: first.jobNumber,
+      ...(others.length ? { others } : {}),
+    };
+  });
+}
+
+/**
+ * Opens one vehicle's job card (status ARRIVED) inside the check-in's
+ * transaction. With `sameCustomer`, the vehicle must belong to that customer:
+ * a fleet check-in is one customer's cars, never someone else's.
+ */
+async function openJobCard(
+  tx: Prisma.TransactionClient,
+  user: AuthenticatedUser,
+  branchId: string,
+  vehicleId: string,
+  visit: z.infer<typeof visitSchema>,
+  requestedAppointmentId: string | null,
+  sameCustomer?: string,
+) {
+  // Lock the vehicle row: two desks checking the same car in at once must not both succeed.
+  const locked = await tx.$queryRaw<{ id: string }[]>`
       SELECT id FROM vehicles
       WHERE id = ${vehicleId}::uuid AND organization_id = ${user.organizationId}::uuid AND is_active
       FOR UPDATE`;
-    if (locked.length === 0) throw new DomainError('Choose the vehicle to check in.', 'vehicleId');
+  if (locked.length === 0) throw new DomainError('Choose the vehicle to check in.', 'vehicleId');
 
-    const vehicle = await tx.vehicle.findUniqueOrThrow({
-      where: { id: vehicleId },
-      select: { id: true, customerId: true, lastMileage: true, plateNumber: true },
-    });
+  const vehicle = await tx.vehicle.findUniqueOrThrow({
+    where: { id: vehicleId },
+    select: { id: true, customerId: true, lastMileage: true, plateNumber: true },
+  });
+  if (sameCustomer && vehicle.customerId !== sameCustomer) {
+    throw new DomainError(
+      `${vehicle.plateNumber} belongs to another customer. Check it in on its own.`,
+      'alsoVehicles',
+    );
+  }
 
-    const openJob = await tx.jobCard.findFirst({
-      where: { organizationId: user.organizationId, vehicleId, status: { in: OPEN_JOB_STATUSES } },
-      select: { jobNumber: true },
-    });
-    if (openJob) {
-      throw new DomainError(
-        `${vehicle.plateNumber} is already in the workshop on job ${openJob.jobNumber}.`,
-        'vehicleId',
-      );
-    }
+  const openJob = await tx.jobCard.findFirst({
+    where: { organizationId: user.organizationId, vehicleId, status: { in: OPEN_JOB_STATUSES } },
+    select: { jobNumber: true },
+  });
+  if (openJob) {
+    throw new DomainError(
+      `${vehicle.plateNumber} is already in the workshop on job ${openJob.jobNumber}.`,
+      'vehicleId',
+    );
+  }
 
-    if (visit.mileage !== null && vehicle.lastMileage !== null && visit.mileage < vehicle.lastMileage) {
-      throw new DomainError(
-        `Mileage can't be lower than the last recorded reading (${formatKm(vehicle.lastMileage)}).`,
-        'mileage',
-      );
-    }
+  if (
+    visit.mileage !== null &&
+    vehicle.lastMileage !== null &&
+    visit.mileage < vehicle.lastMileage
+  ) {
+    throw new DomainError(
+      `${sameCustomer ? `${vehicle.plateNumber}: m` : 'M'}ileage can't be lower than the last recorded reading (${formatKm(vehicle.lastMileage)}).`,
+      sameCustomer ? 'alsoVehicles' : 'mileage',
+    );
+  }
 
-    let appointmentId: string | null = null;
-    if (visit.appointmentId) {
-      const appointment = await tx.appointment.findFirst({
-        where: {
-          id: visit.appointmentId,
-          organizationId: user.organizationId,
-          status: { in: OPEN_APPOINTMENT_STATUSES },
-        },
-      });
-      if (!appointment) {
-        throw new DomainError('That appointment is no longer open for check-in.', 'appointmentId');
-      }
-      if (appointment.vehicleId && appointment.vehicleId !== vehicle.id) {
-        throw new DomainError('The appointment was booked for a different vehicle.', 'appointmentId');
-      }
-      await tx.appointment.update({ where: { id: appointment.id }, data: { status: 'CHECKED_IN' } });
-      await writeAuditLog(tx, {
+  let appointmentId: string | null = null;
+  if (requestedAppointmentId) {
+    const appointment = await tx.appointment.findFirst({
+      where: {
+        id: requestedAppointmentId,
         organizationId: user.organizationId,
-        branchId: appointment.branchId,
-        actorUserId: user.id,
-        action: 'appointment.status_changed',
-        entityType: 'Appointment',
-        entityId: appointment.id,
-        beforeData: { status: appointment.status },
-        afterData: { status: 'CHECKED_IN' },
-      });
-      appointmentId = appointment.id;
-    }
-
-    const jobNumber = await allocateDocumentNumber(tx, user.organizationId, branchId, 'JOB_CARD');
-    const jobCard = await tx.jobCard.create({
-      data: {
-        organizationId: user.organizationId,
-        branchId,
-        vehicleId: vehicle.id,
-        // The job belongs to whoever owns the vehicle now, and keeps them if
-        // the vehicle later changes hands.
-        customerId: vehicle.customerId,
-        appointmentId,
-        jobNumber,
-        status: 'ARRIVED',
-        odometerReading: visit.mileage,
-        customerComplaint: visit.complaint,
-        createdByUserId: user.id,
+        status: { in: OPEN_APPOINTMENT_STATUSES },
       },
     });
-
-    // Only a reading that was actually taken updates the vehicle's odometer.
-    if (visit.mileage !== null) {
-      await tx.vehicle.update({ where: { id: vehicle.id }, data: { lastMileage: visit.mileage } });
+    if (!appointment) {
+      throw new DomainError('That appointment is no longer open for check-in.', 'appointmentId');
     }
-
-    await tx.jobStatusHistory.create({
-      data: {
-        organizationId: user.organizationId,
-        jobCardId: jobCard.id,
-        fromStatus: null,
-        toStatus: 'ARRIVED',
-        changedByUserId: user.id,
-      },
+    if (appointment.vehicleId && appointment.vehicleId !== vehicle.id) {
+      throw new DomainError('The appointment was booked for a different vehicle.', 'appointmentId');
+    }
+    await tx.appointment.update({
+      where: { id: appointment.id },
+      data: { status: 'CHECKED_IN' },
     });
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
-      branchId,
+      branchId: appointment.branchId,
       actorUserId: user.id,
-      action: 'job_card.created',
-      entityType: 'JobCard',
-      entityId: jobCard.id,
-      afterData: {
-        jobNumber,
-        status: 'ARRIVED',
-        vehicleId: vehicle.id,
-        customerId: vehicle.customerId,
-        appointmentId,
-        odometerReading: visit.mileage,
-        entry: appointmentId ? 'appointment' : 'walk_in',
-      },
+      action: 'appointment.status_changed',
+      entityType: 'Appointment',
+      entityId: appointment.id,
+      beforeData: { status: appointment.status },
+      afterData: { status: 'CHECKED_IN' },
     });
+    appointmentId = appointment.id;
+  }
 
-    await settleRequestKey(tx, user, input, jobCard.id);
-    return { jobCardId: jobCard.id, jobNumber };
+  const jobNumber = await allocateDocumentNumber(tx, user.organizationId, branchId, 'JOB_CARD');
+  const jobCard = await tx.jobCard.create({
+    data: {
+      organizationId: user.organizationId,
+      branchId,
+      vehicleId: vehicle.id,
+      // The job belongs to whoever owns the vehicle now, and keeps them if
+      // the vehicle later changes hands.
+      customerId: vehicle.customerId,
+      appointmentId,
+      jobNumber,
+      status: 'ARRIVED',
+      odometerReading: visit.mileage,
+      customerComplaint: visit.complaint,
+      createdByUserId: user.id,
+    },
   });
+
+  // Only a reading that was actually taken updates the vehicle's odometer.
+  if (visit.mileage !== null) {
+    await tx.vehicle.update({ where: { id: vehicle.id }, data: { lastMileage: visit.mileage } });
+  }
+
+  await tx.jobStatusHistory.create({
+    data: {
+      organizationId: user.organizationId,
+      jobCardId: jobCard.id,
+      fromStatus: null,
+      toStatus: 'ARRIVED',
+      changedByUserId: user.id,
+    },
+  });
+  await writeAuditLog(tx, {
+    organizationId: user.organizationId,
+    branchId,
+    actorUserId: user.id,
+    action: 'job_card.created',
+    entityType: 'JobCard',
+    entityId: jobCard.id,
+    afterData: {
+      jobNumber,
+      status: 'ARRIVED',
+      vehicleId: vehicle.id,
+      customerId: vehicle.customerId,
+      appointmentId,
+      odometerReading: visit.mileage,
+      entry: appointmentId ? 'appointment' : 'walk_in',
+    },
+  });
+
+  return {
+    jobCardId: jobCard.id,
+    jobNumber,
+    plateNumber: vehicle.plateNumber,
+    customerId: vehicle.customerId,
+  };
 }
