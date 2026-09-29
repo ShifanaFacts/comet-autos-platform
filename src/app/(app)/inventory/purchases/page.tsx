@@ -145,7 +145,7 @@ export default async function PurchasesPage({
                         <TableCell>
                           <Link
                             href={`/inventory/purchases/${purchase.id}`}
-                            className="font-medium after:absolute after:inset-0 hover:underline"
+                            className="font-medium row-link hover:underline"
                           >
                             {purchase.purchaseNumber}
                           </Link>

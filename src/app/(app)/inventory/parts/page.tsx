@@ -223,7 +223,7 @@ export default async function PartsPage({ searchParams }: { searchParams: Promis
                         <TableCell>
                           <Link
                             href={`/inventory/parts/${part.id}`}
-                            className="font-medium after:absolute after:inset-0 hover:underline"
+                            className="font-medium row-link hover:underline"
                           >
                             {part.name}
                           </Link>

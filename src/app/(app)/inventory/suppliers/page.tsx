@@ -120,7 +120,7 @@ export default async function SuppliersPage({
                         <TableCell>
                           <Link
                             href={`/inventory/suppliers/${supplier.id}`}
-                            className="font-medium after:absolute after:inset-0 hover:underline"
+                            className="font-medium row-link hover:underline"
                           >
                             {supplier.name}
                           </Link>

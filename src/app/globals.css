@@ -355,3 +355,12 @@
     break-inside: avoid;
   }
 }
+
+/*
+ * A list row that opens its record when tapped anywhere (components/shell/
+ * row-links.tsx) shows it with the pointer.
+ */
+tr:has(a.row-link),
+li:has(a.row-link) {
+  cursor: pointer;
+}

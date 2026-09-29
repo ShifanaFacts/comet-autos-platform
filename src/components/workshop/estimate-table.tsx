@@ -50,7 +50,7 @@ export function EstimateTable({ estimates, dateLabel }: { estimates: QueueEstima
           {estimates.map((estimate) => (
             <TableRow key={estimate.id} className="relative">
               <TableCell>
-                <Link href={quotationHref(estimate)} className="after:absolute after:inset-0">
+                <Link href={quotationHref(estimate)} className="row-link">
                   {estimate.vehicle ? (
                     <VehiclePlate plateNumber={estimate.vehicle.plateNumber} className="px-2 py-0.5 text-xs" />
                   ) : (

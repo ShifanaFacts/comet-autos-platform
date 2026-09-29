@@ -171,7 +171,7 @@ export default async function InvoicesPage({
                       title={
                         <Link
                           href={`/finance/invoices/${invoice.id}`}
-                          className="after:absolute after:inset-0"
+                          className="row-link"
                         >
                           {invoice.invoiceNumber}
                         </Link>
@@ -227,7 +227,7 @@ export default async function InvoicesPage({
                           <TableCell>
                             <Link
                               href={`/finance/invoices/${invoice.id}`}
-                              className="font-semibold after:absolute after:inset-0 hover:underline"
+                              className="font-semibold row-link hover:underline"
                             >
                               {invoice.invoiceNumber}
                             </Link>
