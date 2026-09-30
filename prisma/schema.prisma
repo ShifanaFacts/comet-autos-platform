@@ -1382,6 +1382,8 @@ model Supplier {
   id             String   @id @default(uuid(7)) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
   name           String
+  /// The supplier's 15-digit TRN, digits only: how a scanned bill finds its supplier.
+  taxNumber      String?  @map("tax_number")
   contactName    String?  @map("contact_name")
   phone          String?
   email          String?
@@ -1397,6 +1399,7 @@ model Supplier {
 
   @@unique([organizationId, id])
   @@index([organizationId])
+  @@index([organizationId, taxNumber])
   @@map("suppliers")
 }
 
@@ -1777,6 +1780,8 @@ model Expense {
   taxCodeId         String?        @map("tax_code_id") @db.Uuid
   expenseDate       DateTime       @map("expense_date") @db.Date
   vendorName        String?        @map("vendor_name")
+  /// The supplier's own bill / invoice number, to spot the same bill entered twice.
+  billNumber        String?        @map("bill_number")
   // If set, the expense was settled immediately (Cr Cash/Bank in the
   // journal posting). If null, it's treated as an accrued/unpaid liability
   // (Cr Accounts Payable) — no further payable-tracking entity in V1.

@@ -15,6 +15,8 @@ import {
   updatePurchase,
 } from '@/lib/inventory/purchases';
 
+import { removeAttachment } from '@/lib/documents/attachments';
+
 function refreshInventory() {
   revalidatePath('/inventory', 'layout');
 }
@@ -104,6 +106,31 @@ export async function createPurchaseAction(
   if (!result.ok || !id) return toClientResult(result);
   refreshInventory();
   redirect(`/inventory/purchases/${id}`);
+}
+
+/**
+ * Creates a purchase filled by Scan bill. Answers with its id instead of
+ * redirecting, so the browser can attach the scanned file first.
+ */
+export async function createScannedPurchaseAction(
+  _prev: ActionResult<{ id: string }>,
+  formData: FormData,
+): Promise<ActionResult<{ id: string }>> {
+  const user = await requireUser();
+  const input = formDataToObject(formData);
+  const result = await runAction(() =>
+    createPurchase(user, input, { receive: input.intent === 'receive' }),
+  );
+  const id = result.data?.id ?? (result.duplicate ? result.duplicateOf : null);
+  if (result.ok || result.duplicate) refreshInventory();
+  return { ...toClientResult(result), data: id ? { id } : undefined };
+}
+
+export async function removePurchaseBillAction(documentId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => removeAttachment(user, 'Purchase', documentId));
+  if (result.ok) refreshInventory();
+  return toClientResult(result);
 }
 
 export async function updatePurchaseAction(

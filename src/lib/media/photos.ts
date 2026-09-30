@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { MediaStage } from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
@@ -10,6 +9,7 @@ import { parseInput } from '@/lib/form-data';
 import { emptyToNull } from '@/lib/normalize';
 import { claimRequestKey } from '@/lib/request-keys';
 import { getStorage, sniffImage } from '@/lib/storage';
+import { storageKey } from '@/lib/storage/keys';
 
 export { MEDIA_STAGES } from '@/lib/media/stages';
 
@@ -59,7 +59,7 @@ export async function uploadJobPhotos(
     if (file.bytes.length > MAX_PHOTO_BYTES) throw new DomainError(`“${file.name}” is larger than 10 MB. Take a smaller photo or reduce its size.`, 'photos');
     const type = sniffImage(file.bytes);
     if (!type) throw new DomainError(`“${file.name}” isn’t a JPEG, PNG or WebP photo.`, 'photos');
-    return { ...file, type, key: `org/${user.organizationId}/jobs/${job.id}/${randomUUID()}.${type.extension}` };
+    return { ...file, type, key: storageKey('job-photos', type.extension) };
   });
 
   const storage = getStorage();

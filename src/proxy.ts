@@ -76,6 +76,6 @@ export function proxy(request: NextRequest) {
 // manifest, icons and service worker before anyone has signed in.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|manifest\\.webmanifest$|icon$|apple-icon$|app-icons/|sw\\.js$|offline\\.html$).*)',
+    '/((?!_next/static|_next/image|manifest\\.webmanifest$|icon$|apple-icon$|app-icons/|tesseract/|sw\\.js$|offline\\.html$).*)',
   ],
 };

@@ -55,6 +55,10 @@ const expenseSchema = z.object({
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the date.'),
   vendorName: z.string().trim().max(160).optional(),
+  /** The supplier's own bill / invoice number. */
+  billNumber: z.string().trim().max(60, 'Keep the bill number under 60 characters.').optional(),
+  /** Set when the form was filled by Scan bill: the fields the reader filled. */
+  scannedFields: z.string().trim().max(200).optional(),
   paymentMethod: z.union([z.literal(''), z.enum(PAYMENT_METHODS)]).optional(),
   /** The cash or bank account it was paid from; blank for the method's default. */
   paidFromAccountId: z.union([z.literal(''), z.uuid()]).optional(),
@@ -124,6 +128,7 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
         taxCodeId,
         expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
         vendorName: emptyToNull(input.vendorName),
+        billNumber: emptyToNull(input.billNumber),
         paymentMethod: emptyToNull(input.paymentMethod) as (typeof PAYMENT_METHODS)[number] | null,
         // Only a paid expense came out of an account.
         paidFromAccountId: input.paymentMethod
@@ -149,6 +154,23 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
         paymentMethod: expense.paymentMethod,
       },
     });
+    if (input.scannedFields) {
+      // The figures came from reading the bill, then the user's review.
+      await writeAuditLog(tx, {
+        organizationId: user.organizationId,
+        branchId: branch.id,
+        actorUserId: user.id,
+        action: 'expense.filled_from_scan',
+        entityType: 'Expense',
+        entityId: expense.id,
+        afterData: {
+          filled: input.scannedFields.split(',').filter(Boolean),
+          billNumber: expense.billNumber,
+          vendorName: expense.vendorName,
+          total: money.total,
+        },
+      });
+    }
     await syncPosting(tx, user.organizationId, 'EXPENSE', expense.id, user.id);
     await settleRequestKey(tx, user, rawInput, expense.id);
     return expense;
@@ -186,6 +208,7 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
       taxCodeId,
       expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
       vendorName: emptyToNull(input.vendorName),
+      billNumber: emptyToNull(input.billNumber),
       paymentMethod: emptyToNull(input.paymentMethod) as (typeof PAYMENT_METHODS)[number] | null,
       paidFromAccountId: input.paymentMethod
         ? await checkMoneyAccount(tx, user.organizationId, input.paidFromAccountId)

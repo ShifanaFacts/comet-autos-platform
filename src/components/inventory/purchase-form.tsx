@@ -94,6 +94,7 @@ export function PurchaseForm({
   canReceive,
   cancelHref,
   taxCodes = [],
+  hidden = {},
 }: {
   action: (prev: ActionResult, formData: FormData) => Promise<ActionResult>;
   parts: PurchasePart[];
@@ -106,6 +107,8 @@ export function PurchaseForm({
   cancelHref: string;
   /** The purchase tax codes. Given, each line picks a code instead of typing a rate. */
   taxCodes?: TaxCodeOption[];
+  /** Extra values sent with the form (Scan bill marks what the reader filled). */
+  hidden?: Record<string, string>;
 }) {
   const nextKey = useRef(initial?.items.length ?? 0);
   const intentRef = useRef<HTMLInputElement>(null);
@@ -181,6 +184,9 @@ export function PurchaseForm({
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-8">
       <input type="hidden" name="items" value={payload} />
+      {Object.entries(hidden).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
       <input ref={intentRef} type="hidden" name="intent" defaultValue="draft" />
 
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">

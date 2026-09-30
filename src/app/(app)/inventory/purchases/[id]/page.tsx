@@ -12,6 +12,9 @@ import { LinkButton } from '@/components/shared/link-button';
 import { StatusPill } from '@/components/shared/status-pill';
 import { PurchaseStatusPill } from '@/components/inventory/purchase-status';
 import { CancelPurchaseButton, ReceivePurchaseForm } from '@/components/inventory/stock-actions';
+import { ExpenseBills } from '@/components/finance/expense-bills';
+import { listAttachments } from '@/lib/documents/attachments';
+import { removePurchaseBillAction } from '../../actions';
 import {
   Table,
   TableBody,
@@ -32,6 +35,7 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
     throw error;
   }
   const { purchase, lines, receivedValue, receipts } = detail;
+  const bills = (await listAttachments(user, 'Purchase', [purchase.id])).get(purchase.id) ?? [];
   const receivable = ['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED'].includes(purchase.status);
   const canReceive =
     receivable && hasPermission(user, 'purchase.approve', { branchId: purchase.branchId });
@@ -126,6 +130,18 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
           ) : null}
         </Panel>
       </Grid>
+
+      <Panel className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <p className="text-sm font-medium">Supplier’s bill</p>
+        <ExpenseBills
+          expenseId={purchase.id}
+          bills={bills}
+          basePath="/inventory/purchases"
+          removeAction={removePurchaseBillAction}
+          canAttach={hasPermission(user, 'purchase.create')}
+          canRemove={hasPermission(user, 'purchase.edit')}
+        />
+      </Panel>
 
       {canReceive ? (
         <Section
