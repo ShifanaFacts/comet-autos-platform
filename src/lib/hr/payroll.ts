@@ -796,11 +796,12 @@ export async function getPayrollRun(user: AuthenticatedUser, payrollId: string) 
       return {
         id: item.id,
         employee: { ...item.employee, name: name(item.employee) },
-        basicSalary: item.basicSalary.toString(),
-        allowances: item.allowances.toString(),
+        // Always two decimals ("3600.00"): a Decimal's own toString drops them.
+        basicSalary: filsToString(fils(item.basicSalary)),
+        allowances: filsToString(fils(item.allowances)),
         gross: filsToString(fils(item.basicSalary) + fils(item.allowances)),
-        deductions: item.deductions.toString(),
-        netPay: item.netPay.toString(),
+        deductions: filsToString(fils(item.deductions)),
+        netPay: filsToString(fils(item.netPay)),
         unpaidLeaveDays: days?.UNPAID ?? 0,
         paidLeaveDays: days ? days.ANNUAL + days.SICK + days.OTHER : 0,
         absentDays: absent.get(item.employeeId) ?? 0,
