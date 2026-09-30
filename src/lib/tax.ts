@@ -1,5 +1,6 @@
 import type { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
+import { txMemo } from '@/lib/tx-memo';
 
 /**
  * VAT configuration — the single place a default rate comes from.
@@ -38,15 +39,20 @@ export async function getVatSettings(
   organizationId: string,
   client: Prisma.TransactionClient = prisma,
 ): Promise<VatSettings> {
-  const organization = await client.organization.findUnique({
-    where: { id: organizationId },
-    select: { isVatRegistered: true, vatRate: true, taxNumber: true },
-  });
-  return {
-    isVatRegistered: organization?.isVatRegistered ?? true,
-    vatRate: organization ? organization.vatRate.toFixed(2) : FALLBACK_VAT_RATE,
-    taxNumber: organization?.taxNumber ?? null,
+  const load = async () => {
+    const organization = await client.organization.findUnique({
+      where: { id: organizationId },
+      select: { isVatRegistered: true, vatRate: true, taxNumber: true },
+    });
+    return {
+      isVatRegistered: organization?.isVatRegistered ?? true,
+      vatRate: organization ? organization.vatRate.toFixed(2) : FALLBACK_VAT_RATE,
+      taxNumber: organization?.taxNumber ?? null,
+    };
   };
+  // Inside a transaction the settings are read once, however many lines are
+  // priced or booked in it; outside one, always fresh.
+  return client === prisma ? load() : txMemo(client, `vat:${organizationId}`, load);
 }
 
 /**

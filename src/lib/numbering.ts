@@ -78,6 +78,26 @@ export async function allocateDocumentNumbers(
   count: number,
 ): Promise<string[]> {
   if (count <= 0) return [];
+  // The usual case — the sequence exists — in a single statement: the UPDATE
+  // takes the row lock, moves the counter and hands back where it stood, so
+  // two transactions can never be given the same number. It holds the lock
+  // until the transaction ends, exactly as SELECT ... FOR UPDATE did.
+  const moved = await tx.$queryRaw<{ prefix: string; padding: number; first: number }[]>`
+    UPDATE document_number_sequences
+    SET next_number = next_number + ${count}, updated_at = now()
+    WHERE organization_id = ${organizationId}::uuid
+      AND document_type = ${documentType}::"DocumentType"
+      AND branch_id IS NOT DISTINCT FROM ${branchId}::uuid
+    RETURNING prefix, padding, next_number - ${count} AS first`;
+  if (moved.length === 1) {
+    const { prefix, padding } = moved[0];
+    const first = Number(moved[0].first);
+    return Array.from(
+      { length: count },
+      (_, index) => `${prefix}${String(first + index).padStart(padding, '0')}`,
+    );
+  }
+  // First use of this sequence: create it, then number from it.
   const locked = await lockSequence(tx, organizationId, branchId, documentType);
   await tx.documentNumberSequence.update({
     where: { id: locked.id },

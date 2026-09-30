@@ -30,7 +30,7 @@ export default async function EditPurchasePage({ params }: { params: Promise<{ i
             href={`/inventory/purchases/${purchase.id}`}
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← {purchase.purchaseNumber}
+            {purchase.purchaseNumber}
           </Link>
         }
         title="Edit draft purchase"

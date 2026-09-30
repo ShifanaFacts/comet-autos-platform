@@ -36,7 +36,7 @@ export default async function NewPartPage() {
             href="/inventory/parts"
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← Parts
+            Parts
           </Link>
         }
         title="New part"

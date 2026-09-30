@@ -24,7 +24,7 @@ export default async function NewSupplierPage() {
             href="/inventory/suppliers"
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← Suppliers
+            Suppliers
           </Link>
         }
         title="New supplier"

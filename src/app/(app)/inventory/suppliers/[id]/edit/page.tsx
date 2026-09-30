@@ -25,7 +25,7 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
             href={`/inventory/suppliers/${supplier.id}`}
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← {supplier.name}
+            {supplier.name}
           </Link>
         }
         title="Edit supplier"

@@ -10,7 +10,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { GlobalSearch } from '@/components/shell/global-search';
-import { BackButton } from '@/components/shell/back-button';
 import { InstallAppButton } from '@/components/shell/install-app';
 import { CONTAINER_X } from '@/components/layout/primitives';
 import { cn } from '@/lib/utils';
@@ -48,7 +47,6 @@ export function Topbar({
         >
           {brand.initial}
         </Link>
-        <BackButton />
         <div className="min-w-0 flex-1">
           <GlobalSearch />
         </div>

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { BackButton } from '@/components/shell/back-button';
 import { cn } from '@/lib/utils';
 
 /*
@@ -95,6 +96,7 @@ export function PageHeader({
           </div>
         ) : null}
         <div className="flex min-w-0 items-start gap-4">
+          <BackButton />
           {leading ? <div className="shrink-0 pt-0.5">{leading}</div> : null}
           <div className="flex min-w-0 flex-col gap-2">
             <h1 className="flex flex-wrap items-center gap-3 text-[28px] leading-[1.15] font-semibold tracking-[-0.022em] text-balance text-foreground sm:text-4xl">

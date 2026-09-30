@@ -10,6 +10,7 @@ import { parseInput } from '@/lib/form-data';
 import { emptyToNull, normalizePhone } from '@/lib/normalize';
 import { syncStandardRate } from '@/lib/accounting/tax-codes';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
+import { txForget } from '@/lib/tx-memo';
 
 /*
  * The workshop's own details: who it is, how to reach it, and how it charges
@@ -225,6 +226,7 @@ export async function updateOrganizationSettings(user: AuthenticatedUser, rawInp
       where: { id: user.organizationId },
       data,
     });
+    txForget(tx, `vat:${user.organizationId}`);
     // The standard-rated tax code (SR) carries the same rate: one standard rate.
     await syncStandardRate(tx, user.organizationId, data.vatRate);
     await writeAuditLog(tx, {

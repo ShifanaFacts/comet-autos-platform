@@ -308,7 +308,7 @@ export async function createPurchase(
     if (options.receive) await receiveInTransaction(tx, user, purchase.id, null);
     await settleRequestKey(tx, user, rawInput, purchase.id);
     return purchase;
-  });
+  }, RECEIPT_TRANSACTION);
 }
 
 /** Replaces a DRAFT purchase's header and lines. Nothing received yet, so nothing in stock changes. */
@@ -363,6 +363,14 @@ export async function updatePurchase(
   });
 }
 
+/**
+ * Receiving books every line into stock and into the ledger in one
+ * transaction — all of the delivery or none of it. A long supplier bill is
+ * many statements against a hosted database, so it gets more time than the
+ * usual transaction (lib/prisma.ts) before it is given up and rolled back.
+ */
+const RECEIPT_TRANSACTION = { timeout: 90_000, maxWait: 10_000 };
+
 async function lockPurchase(
   tx: Prisma.TransactionClient,
   organizationId: string,
@@ -409,7 +417,7 @@ export async function receivePurchase(
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, options, 'purchase.receipt');
     return receiveInTransaction(tx, user, purchaseId, parsed);
-  });
+  }, RECEIPT_TRANSACTION);
 }
 
 async function receiveInTransaction(

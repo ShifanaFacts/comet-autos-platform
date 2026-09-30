@@ -1,8 +1,6 @@
 import { getAccountChoices } from '@/lib/accounting/reports';
 import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { AuthError } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
@@ -40,14 +38,6 @@ export default async function RecordSupplierPaymentPage({
 
   return (
     <Stack gap="xl" className="animate-in fade-in duration-300">
-      <Link
-        href={backHref}
-        className="-ml-2 inline-flex h-11 w-fit items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" />
-        {purchase.supplier.name}
-      </Link>
-
       <PageHeader
         eyebrow="Supplier payment"
         title="Record a payment"

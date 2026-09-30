@@ -39,7 +39,7 @@ export default async function MovementsPage({
             href="/inventory/parts"
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← Parts
+            Parts
           </Link>
         }
         actions={

@@ -55,7 +55,7 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
             href="/inventory/purchases"
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← Purchases
+            Purchases
           </Link>
         }
         title={

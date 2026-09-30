@@ -3,6 +3,7 @@ import type { JournalSource } from '@/generated/prisma/enums';
 import { allocateDocumentNumber } from '@/lib/numbering';
 import { filsToString, toFils } from '@/lib/money';
 import { ensureChart } from '@/lib/accounting/chart';
+import { txMemo } from '@/lib/tx-memo';
 import { assertBooksOpen } from '@/lib/accounting/periods';
 import { POSTING_RULES, type Posting, type PostingLine } from '@/lib/accounting/postings';
 
@@ -188,7 +189,10 @@ export async function syncPosting(
   sourceId: string,
   actorUserId: string,
 ): Promise<boolean> {
-  const accounts = await ensureChart(tx, organizationId);
+  // One delivery books an entry per line: the chart is read once for them all.
+  const accounts = await txMemo(tx, `chart:${organizationId}`, () =>
+    ensureChart(tx, organizationId),
+  );
   const wanted: Posting | null = await POSTING_RULES[source](
     tx,
     organizationId,
