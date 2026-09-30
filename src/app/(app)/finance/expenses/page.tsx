@@ -8,8 +8,6 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { RecordCard, RecordList, TableWrap } from '@/components/shared/record-card';
 import { SearchField } from '@/components/shared/search-field';
 import { StatusPill } from '@/components/shared/status-pill';
-import { InlineForm } from '@/components/shared/inline-form';
-import { ExpenseForm } from '@/components/finance/expense-form';
 import { ScanExpense } from '@/components/finance/scan-expense';
 import { VoidExpenseButton } from '@/components/finance/void-expense';
 import { EditExpenseButton } from '@/components/finance/edit-expense';
@@ -133,26 +131,6 @@ export default async function ExpensesPage({
           people={formOptions.people}
           moneyAccounts={formOptions.moneyAccounts}
         />
-      ) : null}
-
-      {canRecord && formOptions ? (
-        <Panel padding="none" className="overflow-hidden">
-          <InlineForm
-            label="Record an expense"
-            hint="Rent, utilities, supplies — anything not bought for a specific job."
-            icon={<ReceiptText className="size-4" />}
-            defaultOpen={expenses.length === 0}
-          >
-            <ExpenseForm
-              categories={formOptions.categories}
-              defaultVatRate={formOptions.defaultVatRate}
-              taxCodes={formOptions.taxCodes}
-              modes={formOptions.modes}
-              people={formOptions.people}
-              moneyAccounts={formOptions.moneyAccounts}
-            />
-          </InlineForm>
-        </Panel>
       ) : null}
 
       <Section

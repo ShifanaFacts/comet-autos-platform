@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useTransition } from 'react';
+import { NativeSelect } from '@/components/forms/fields';
 import { useRouter } from 'next/navigation';
 import { Loader2, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -47,7 +48,7 @@ export function UserFilters({
     current.q || current.roleId || current.branchId || current.status !== 'active',
   );
   const select =
-    'h-11 rounded-lg border border-input bg-card px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:h-10 md:text-sm';
+    'h-11 w-full sm:w-52 rounded-lg border border-input bg-card px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:h-10 md:text-sm';
 
   return (
     <form
@@ -109,17 +110,17 @@ export function UserFilters({
           ))}
         </div>
 
-        <select name="roleId" defaultValue={current.roleId} aria-label="Filter by role" className={select}>
+        <NativeSelect name="roleId" defaultValue={current.roleId} aria-label="Filter by role" className={select}>
           <option value="">All roles</option>
           {roles.map((role) => (
             <option key={role.id} value={role.id}>
               {role.name}
             </option>
           ))}
-        </select>
+        </NativeSelect>
 
         {branches.length > 1 ? (
-          <select
+          <NativeSelect
             name="branchId"
             defaultValue={current.branchId}
             aria-label="Filter by branch"
@@ -131,7 +132,7 @@ export function UserFilters({
                 {branch.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         ) : (
           <input type="hidden" name="branchId" value={current.branchId} />
         )}

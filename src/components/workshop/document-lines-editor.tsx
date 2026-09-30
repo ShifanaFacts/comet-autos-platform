@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { NativeSelect } from '@/components/forms/fields';
 import { Package, Plus, Trash2, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -598,7 +599,7 @@ function VatSelect({
     const value =
       line.taxCodeId || taxCodes.find((code) => code.treatment === line.vatTreatment)?.id || '';
     return (
-      <select
+      <NativeSelect
         aria-label={label}
         value={value}
         onChange={(event) => {
@@ -621,11 +622,11 @@ function VatSelect({
             {code.treatment === 'STANDARD' ? ` ${trimRate(code.rate)}%` : ''}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     );
   }
   return (
-    <select
+    <NativeSelect
       aria-label={label}
       value={line.vatTreatment}
       onChange={(event) =>
@@ -638,7 +639,7 @@ function VatSelect({
           {treatment.short}
         </option>
       ))}
-    </select>
+    </NativeSelect>
   );
 }
 
@@ -659,7 +660,7 @@ function AccountSelect({
   large?: boolean;
 }) {
   return (
-    <select
+    <NativeSelect
       aria-label={label}
       value={value}
       onChange={(event) => onChange(event.target.value)}
@@ -674,7 +675,7 @@ function AccountSelect({
           {account.code} · {account.name}
         </option>
       ))}
-    </select>
+    </NativeSelect>
   );
 }
 

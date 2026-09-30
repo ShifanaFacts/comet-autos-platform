@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useTransition } from 'react';
+import { NativeSelect } from '@/components/forms/fields';
 import { useRouter } from 'next/navigation';
 import { Loader2, Search, X } from 'lucide-react';
 
@@ -43,7 +44,7 @@ export function PayableFilters({
 
   const hasFilters = Boolean(current.q || current.supplierId || current.olderThanDays);
   const select =
-    'h-12 rounded-lg border border-input bg-card px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:h-11 md:text-sm';
+    'h-12 w-full sm:w-52 rounded-lg border border-input bg-card px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:h-11 md:text-sm';
 
   return (
     <form
@@ -77,7 +78,7 @@ export function PayableFilters({
         ) : null}
       </div>
 
-      <select
+      <NativeSelect
         name="supplierId"
         defaultValue={current.supplierId}
         aria-label="Filter by supplier"
@@ -89,9 +90,9 @@ export function PayableFilters({
             {supplier.name}
           </option>
         ))}
-      </select>
+      </NativeSelect>
 
-      <select
+      <NativeSelect
         name="olderThanDays"
         defaultValue={current.olderThanDays}
         aria-label="Filter by age"
@@ -102,7 +103,7 @@ export function PayableFilters({
             {age.label}
           </option>
         ))}
-      </select>
+      </NativeSelect>
 
       {hasFilters ? (
         <button
