@@ -60,9 +60,11 @@ function toPrefill(draft: BillDraft, codes: TaxCodeOption[]) {
 }
 
 /**
- * "Scan bill" on Expenses & bills: reads a photo or PDF of the supplier's
- * bill and opens the usual expense form on what it found, with the bill
- * beside it. Saving records the expense and keeps the file with it.
+ * Recording an expense: one form, always there with every field. Type it all
+ * by hand — or scan a photo or PDF of the supplier's bill, and whatever the
+ * reader gets right is filled in, with the bill shown beside the form. What
+ * it could not read stays empty to type; every filled value can be changed.
+ * Saving records the expense and keeps the scanned file with it.
  */
 export function ScanExpense({
   categories,
@@ -81,59 +83,65 @@ export function ScanExpense({
 }) {
   const router = useRouter();
   const { phase, scan, reset } = useBillScan('expense');
-
-  if (phase.name !== 'ready') {
-    return <ScanBillButton phase={phase} onFile={scan} />;
-  }
-
-  const { draft, file, previewUrl } = phase;
-  const { prefill, flags } = toPrefill(draft, taxCodes);
+  const scanned = phase.name === 'ready' ? phase : null;
+  const form = { categories, defaultVatRate, moneyAccounts, taxCodes, modes, people };
 
   async function save(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
     const result = await recordScannedExpenseAction({ ok: false }, formData);
-    if (result.ok && result.data?.id) {
-      const problem = await attachScannedBill(`/finance/expenses/${result.data.id}/bill`, file);
+    if (scanned && result.ok && result.data?.id) {
+      const problem = await attachScannedBill(
+        `/finance/expenses/${result.data.id}/bill`,
+        scanned.file,
+      );
       if (problem) toast.warning(`Expense recorded, but the bill wasn’t attached: ${problem}`);
       router.refresh();
     }
     return { ok: result.ok, error: result.error, fieldErrors: result.fieldErrors };
   }
 
+  const filled = scanned ? toPrefill(scanned.draft, taxCodes) : null;
+
   return (
     <Panel className="flex flex-col gap-6">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex flex-col gap-1">
-          <p className="text-sm font-semibold">Scanned bill — check, then record</p>
+          <p className="text-sm font-semibold">
+            {scanned ? 'Record an expense: filled from the bill' : 'Record an expense'}
+          </p>
           <p className="text-sm text-muted-foreground">
-            Filled from the bill where it could be read. Empty fields weren’t found. Nothing is
-            saved until you press Record expense.
+            {scanned
+              ? 'Check each value against the bill and change anything that is wrong. Empty fields could not be read: type them in. Nothing is saved until you press Record expense.'
+              : 'Type the details, or scan the supplier’s bill to fill in what it can read. Rent, utilities, supplies: anything not bought for a specific job.'}
           </p>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={reset}>
-          <X />
-          Discard
-        </Button>
+        {scanned ? (
+          <Button type="button" variant="ghost" size="sm" onClick={reset}>
+            <X />
+            Clear the scan
+          </Button>
+        ) : (
+          <ScanBillButton phase={phase} onFile={scan} size="default" />
+        )}
       </div>
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="flex min-w-0 flex-col gap-6">
-          <BillNotices draft={draft} />
-          <ExpenseForm
-            key={previewUrl}
-            categories={categories}
-            defaultVatRate={defaultVatRate}
-            moneyAccounts={moneyAccounts}
-            taxCodes={taxCodes}
-            modes={modes}
-            people={people}
-            prefill={prefill}
-            flags={flags}
-            hidden={{ scannedFields: draft.filled.join(',') || 'none' }}
-            submit={save}
-            onDone={reset}
-          />
+      {scanned && filled ? (
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="flex min-w-0 flex-col gap-6">
+            <BillNotices draft={scanned.draft} />
+            <ExpenseForm
+              key={scanned.previewUrl}
+              {...form}
+              prefill={filled.prefill}
+              flags={filled.flags}
+              hidden={{ scannedFields: scanned.draft.filled.join(',') || 'none' }}
+              submit={save}
+              onDone={reset}
+            />
+          </div>
+          <BillPreview file={scanned.file} previewUrl={scanned.previewUrl} />
         </div>
-        <BillPreview file={file} previewUrl={previewUrl} />
-      </div>
+      ) : (
+        <ExpenseForm key="manual" {...form} />
+      )}
     </Panel>
   );
 }

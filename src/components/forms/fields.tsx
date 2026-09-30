@@ -2,9 +2,8 @@ import type { ComponentProps, ReactNode } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
-
-const CONTROL =
-  'w-full min-w-0 rounded-lg border border-input bg-card px-3 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20';
+import { CONTROL } from '@/components/forms/control';
+import { SearchableSelect } from '@/components/forms/searchable-select';
 
 /** Label → control (8px) → hint/error (8px). Fields are stacked 24px apart by their parent form. */
 export function Field({
@@ -131,8 +130,12 @@ export function TextareaField({
   );
 }
 
-export function NativeSelect({ className, ...props }: ComponentProps<'select'>) {
-  return <select className={cn(CONTROL, 'h-9 pr-8', className)} {...props} />;
+/**
+ * The app's dropdown. Written like a `<select>` with `<option>`s; shown as a
+ * searchable list — see SearchableSelect.
+ */
+export function NativeSelect(props: ComponentProps<'select'>) {
+  return <SearchableSelect {...props} />;
 }
 
 /** Form-level error banner. */
