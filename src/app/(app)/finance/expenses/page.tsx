@@ -1,6 +1,7 @@
+import Link from 'next/link';
 import { ReceiptText } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
-import { getExpenseFormOptions, listExpenses } from '@/lib/finance/expenses';
+import { getExpenseFormOptions, listExpenses, toExpenseDraft } from '@/lib/finance/expenses';
 import { formatDate, formatMoney } from '@/lib/format';
 import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
@@ -63,21 +64,7 @@ export default async function ExpensesPage({
       canRemove={canEdit && expense.status === 'RECORDED'}
     />
   );
-  const draft = (expense: (typeof expenses)[number]) => ({
-    id: expense.id,
-    description: expense.description,
-    amount: expense.amount.toString(),
-    // "5.00" → "5"; a whole number like "10" is left alone.
-    taxRate: expense.taxRate ? trimDecimal(expense.taxRate.toString()) : '',
-    taxCodeId: expense.taxCodeId ?? '',
-    expenseDate: expense.expenseDate.toISOString().slice(0, 10),
-    vendorName: expense.vendorName ?? '',
-    billNumber: expense.billNumber ?? '',
-    paymentMethod: expense.paymentMethod ?? '',
-    paidFromAccountId: expense.paidFromAccountId ?? '',
-    paidByUserId: expense.paidByUserId ?? '',
-    categoryId: expense.chartOfAccount?.id ?? '',
-  });
+  const draft = (expense: (typeof expenses)[number]) => toExpenseDraft(expense);
   /** How it was paid, in words: an account's method, an owner personally, or not yet. */
   const paidBy = (expense: (typeof expenses)[number]) =>
     expense.paidByUser
@@ -157,7 +144,11 @@ export default async function ExpensesPage({
                   <RecordCard
                     key={expense.id}
                     className={expense.status === 'VOID' ? 'opacity-60' : undefined}
-                    title={expense.description}
+                    title={
+                      <Link href={`/finance/expenses/${expense.id}`} className="hover:underline">
+                        {expense.description}
+                      </Link>
+                    }
                     subtitle={expense.chartOfAccount?.accountName ?? 'Uncategorised'}
                     amount={formatMoney(expense.total)}
                     status={
@@ -228,7 +219,17 @@ export default async function ExpensesPage({
                           {formatDate(expense.expenseDate)}
                         </td>
                         <td className="px-2 py-4">
-                          <span className="font-medium">{expense.description}</span>
+                          <Link
+                            href={`/finance/expenses/${expense.id}`}
+                            className="font-medium hover:underline"
+                          >
+                            {expense.description}
+                          </Link>
+                          {expense.expenseNumber ? (
+                            <span className="ml-2 font-mono text-xs text-muted-foreground">
+                              {expense.expenseNumber}
+                            </span>
+                          ) : null}
                           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                             <span>{expense.chartOfAccount?.accountName ?? 'Uncategorised'}</span>
                             {expense.vendorName ? (
@@ -289,8 +290,4 @@ export default async function ExpensesPage({
       </Section>
     </Stack>
   );
-}
-
-function trimDecimal(value: string) {
-  return value.includes('.') ? value.replace(/\.?0+$/, '') : value;
 }

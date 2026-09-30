@@ -1793,6 +1793,14 @@ model Expense {
   vendorName        String?        @map("vendor_name")
   /// The supplier's own bill / invoice number, to spot the same bill entered twice.
   billNumber        String?        @map("bill_number")
+  /// The supplier's TRN as printed on their tax invoice — what entitles the
+  /// workshop to reclaim the VAT on it.
+  supplierTrn       String?        @map("supplier_trn")
+  /// Not paid yet: when the supplier expects to be paid.
+  dueDate           DateTime?      @map("due_date") @db.Date
+  /// The transfer, cheque or card-slip number it was paid with.
+  paymentReference  String?        @map("payment_reference")
+  notes             String?
   // If set, the expense was settled immediately (Cr Cash/Bank in the
   // journal posting). If null, it's treated as an accrued/unpaid liability
   // (Cr Accounts Payable) — no further payable-tracking entity in V1.

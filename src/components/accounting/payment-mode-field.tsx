@@ -32,6 +32,7 @@ export function PaymentModeField({
   defaultPersonId,
   error,
   onChange,
+  onKindChange,
   className = 'h-12 text-base md:h-11 md:text-sm',
 }: {
   id: string;
@@ -52,6 +53,8 @@ export function PaymentModeField({
   error?: string;
   /** The mode chosen, e.g. to require a reference number. */
   onChange?: (mode: PaymentModeOption | null) => void;
+  /** Paid from an account, paid personally by someone, or not paid yet. */
+  onKindChange?: (kind: 'paid' | 'personal' | 'unpaid') => void;
   className?: string;
 }) {
   const [value, setValue] = useState(
@@ -86,7 +89,11 @@ export function PaymentModeField({
         value={value}
         onChange={(event) => {
           setValue(event.target.value);
-          onChange?.(modes.find((option) => option.id === event.target.value) ?? null);
+          const chosen = modes.find((option) => option.id === event.target.value) ?? null;
+          onChange?.(chosen);
+          onKindChange?.(
+            event.target.value.startsWith(PERSON) ? 'personal' : chosen ? 'paid' : 'unpaid',
+          );
         }}
         className={className}
       >

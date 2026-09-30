@@ -1,14 +1,22 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Save } from 'lucide-react';
 import { toast } from 'sonner';
-import { Field, FormError, NativeSelect, TextField } from '@/components/forms/fields';
+import {
+  Field,
+  FormError,
+  NativeSelect,
+  TextField,
+  TextareaField,
+} from '@/components/forms/fields';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import type { ActionResult } from '@/lib/errors';
 import { recordExpenseAction, updateExpenseAction } from '@/app/(app)/finance/actions';
-import { localDateString } from '@/lib/format';
+import { formatMoney, localDateString } from '@/lib/format';
+import { calculateLine, filsToString, toFils } from '@/lib/money';
 import { MoneyAccountField } from '@/components/accounting/money-account-field';
 import type { AccountChoice } from '@/lib/accounting/reports';
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
@@ -21,6 +29,8 @@ export interface ExpenseDraft {
   description: string;
   amount: string;
   taxRate: string;
+  /** The VAT as recorded — the bill's own figure when it was typed. */
+  taxAmount?: string;
   /** The tax code saved on it; blank for an expense recorded before tax codes. */
   taxCodeId: string;
   /** YYYY-MM-DD */
@@ -28,6 +38,13 @@ export interface ExpenseDraft {
   vendorName: string;
   /** The supplier's own bill / invoice number. */
   billNumber?: string;
+  /** The supplier's TRN from their tax invoice. */
+  supplierTrn?: string;
+  /** Not paid yet: when it is due. YYYY-MM-DD */
+  dueDate?: string;
+  /** The transfer, cheque or card-slip number it was paid with. */
+  paymentReference?: string;
+  notes?: string;
   paymentMethod: string;
   paidFromAccountId: string;
   /** Paid with an owner's own money: who. */
@@ -53,6 +70,25 @@ function startingCode(codes: TaxCodeOption[], expense?: ExpenseDraft) {
       ? codes.find((code) => code.treatment === 'STANDARD' && Number(code.rate) === rate)
       : codes.find((code) => code.treatment === 'OUT_OF_SCOPE');
   return (match ?? codes[0]).id;
+}
+
+const MONEY = /^\d{1,9}(\.\d{1,2})?$/;
+
+/** The VAT the rate gives on an amount, exactly as the server works it out; '' until both are valid. */
+function vatOn(amount: string, rate: string): string {
+  if (!MONEY.test(amount.trim()) || !rate || Number(rate) <= 0)
+    return MONEY.test(amount.trim()) ? '0.00' : '';
+  try {
+    return calculateLine({ quantity: '1', unitPrice: amount.trim(), taxRate: rate }).taxAmount;
+  } catch {
+    return '';
+  }
+}
+
+/** The rate a tax code charges: nothing for zero-rated, exempt or out of scope. */
+function rateOfCode(codes: TaxCodeOption[], id: string) {
+  const code = codes.find((option) => option.id === id);
+  return code && Number(code.rate) > 0 ? code.rate : '';
 }
 
 /** Today in the workshop's own date terms, for the date field's default. */
@@ -121,6 +157,43 @@ export function ExpenseForm({
   const start = expense ?? prefill;
   const amber = (name: string) => (flags[name] ? ` ${AMBER}` : '');
 
+  // Amount, VAT and total, kept in step: the VAT follows the amount and the
+  // tax code until a figure is typed from the bill, which then stands.
+  const [amount, setAmount] = useState(start?.amount ?? '');
+  const [codeId, setCodeId] = useState(
+    taxCodes.length ? prefill?.taxCodeId || startingCode(taxCodes, expense) : '',
+  );
+  const [typedRate, setTypedRate] = useState(
+    expense ? expense.taxRate : defaultVatRate.replace(/\.?0+$/, ''),
+  );
+  const rate = taxCodes.length ? rateOfCode(taxCodes, codeId) : typedRate;
+  const calculated = vatOn(amount, rate);
+  const [ownVat, setOwnVat] = useState<string | null>(() => {
+    // A figure from the bill (or saved earlier) that differs from the rate's stays as it is.
+    const given = start?.taxAmount;
+    if (!given || !MONEY.test(given)) return null;
+    return vatOn(start?.amount ?? '', rate) === filsToString(toFils(given)) ? null : given;
+  });
+  const [totalText, setTotalText] = useState<string | null>(null);
+  // Paid from an account (ask for its reference), by an owner, or not yet (ask when it's due).
+  const [payer, setPayer] = useState<'paid' | 'personal' | 'unpaid'>(
+    start?.paidByUserId ? 'personal' : expense?.paymentMethod ? 'paid' : 'unpaid',
+  );
+  const [referenceNeeded, setReferenceNeeded] = useState(false);
+  const vat = ownVat ?? calculated;
+  const total =
+    MONEY.test(amount.trim()) && MONEY.test(vat.trim())
+      ? filsToString(toFils(amount.trim()) + toFils(vat.trim()))
+      : '';
+
+  function onTotal(value: string) {
+    setTotalText(value);
+    if (MONEY.test(amount.trim()) && MONEY.test(value.trim())) {
+      const difference = toFils(value.trim()) - toFils(amount.trim());
+      if (difference >= 0) setOwnVat(filsToString(difference));
+    }
+  }
+
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-6">
       {Object.entries(hidden).map(([name, value]) => (
@@ -173,7 +246,8 @@ export function ExpenseForm({
           name="amount"
           inputMode="decimal"
           required
-          defaultValue={start?.amount}
+          value={amount}
+          onChange={(event) => setAmount(event.target.value)}
           placeholder="0.00"
           error={errors.amount}
           hint={flags.amount ?? 'In AED.'}
@@ -189,7 +263,12 @@ export function ExpenseForm({
             <NativeSelect
               id={id('taxCodeId')}
               name="taxCodeId"
-              defaultValue={prefill?.taxCodeId || startingCode(taxCodes, expense)}
+              value={codeId}
+              onChange={(event) => {
+                setCodeId(event.target.value);
+                // A new code: the VAT follows it again, unless it carries none.
+                setOwnVat(null);
+              }}
               className="h-11 text-base md:text-sm"
             >
               {taxCodes.map((code) => (
@@ -206,7 +285,11 @@ export function ExpenseForm({
             id={id('taxRate')}
             name="taxRate"
             inputMode="decimal"
-            defaultValue={expense ? expense.taxRate : defaultVatRate.replace(/\.?0+$/, '')}
+            value={typedRate}
+            onChange={(event) => {
+              setTypedRate(event.target.value);
+              setOwnVat(null);
+            }}
             error={errors.taxRate}
             hint="Leave empty if the expense carries no VAT."
             className={`${INPUT} [&_input]:text-right [&_input]:tabular-nums`}
@@ -216,7 +299,63 @@ export function ExpenseForm({
 
       <div className="grid gap-6 sm:grid-cols-2">
         <TextField
-          label="Paid to"
+          label="VAT amount"
+          id={id('taxAmount')}
+          name="taxAmount"
+          inputMode="decimal"
+          value={vat}
+          onChange={(event) => {
+            setOwnVat(event.target.value);
+            setTotalText(null);
+          }}
+          disabled={!rate}
+          error={errors.taxAmount}
+          hint={
+            !rate ? (
+              'No VAT to reclaim on this tax code.'
+            ) : ownVat !== null && calculated && ownVat !== calculated ? (
+              <span>
+                {`As on the bill. Calculated: ${formatMoney(calculated)}. `}
+                <button
+                  type="button"
+                  className="font-medium text-primary hover:underline"
+                  onClick={() => {
+                    setOwnVat(null);
+                    setTotalText(null);
+                  }}
+                >
+                  Use calculated
+                </button>
+              </span>
+            ) : (
+              'Worked out from the amount. Type the bill’s own figure if it differs.'
+            )
+          }
+          className={`${INPUT} [&_input]:text-right [&_input]:tabular-nums${
+            ownVat !== null && calculated && ownVat !== calculated ? ` ${AMBER}` : ''
+          }`}
+        />
+        <TextField
+          label="Total paid"
+          name="totalPaid"
+          id={id('total')}
+          inputMode="decimal"
+          value={totalText ?? total}
+          onChange={(event) => onTotal(event.target.value)}
+          onBlur={() => setTotalText(null)}
+          disabled={!rate}
+          hint={
+            rate
+              ? 'Amount plus VAT. Type the bill’s total and the VAT is worked back from it.'
+              : 'The same as the amount: no VAT.'
+          }
+          className={`${INPUT} [&_input]:text-right [&_input]:tabular-nums [&_input]:font-semibold`}
+        />
+      </div>
+
+      <div className="grid gap-6 sm:grid-cols-2">
+        <TextField
+          label="Supplier (paid to)"
           id={id('vendorName')}
           name="vendorName"
           defaultValue={start?.vendorName}
@@ -224,6 +363,35 @@ export function ExpenseForm({
           error={errors.vendorName}
           className={INPUT}
         />
+        <TextField
+          label="Supplier TRN"
+          id={id('supplierTrn')}
+          name="supplierTrn"
+          inputMode="numeric"
+          defaultValue={start?.supplierTrn}
+          error={errors.supplierTrn}
+          hint={
+            rate
+              ? 'From their tax invoice. Needed to reclaim the VAT.'
+              : 'Optional. From their invoice, if it shows one.'
+          }
+          className={`${INPUT} [&_input]:font-mono`}
+        />
+      </div>
+      <div className="grid gap-6 sm:grid-cols-2">
+        <TextField
+          label="Bill number"
+          id={id('billNumber')}
+          name="billNumber"
+          defaultValue={start?.billNumber}
+          placeholder="The supplier’s invoice or receipt number"
+          error={errors.billNumber}
+          hint="Lets the same bill be spotted if it is entered twice."
+          className={INPUT}
+        />
+      </div>
+
+      <div className="grid gap-6 sm:grid-cols-2">
         {modes.length ? (
           <PaymentModeField
             id={id('paymentMode')}
@@ -238,6 +406,8 @@ export function ExpenseForm({
             people={people}
             defaultPersonId={start?.paidByUserId || undefined}
             error={errors.paymentMethod ?? errors.paidFromAccountId ?? errors.paidByUserId}
+            onKindChange={setPayer}
+            onChange={(mode) => setReferenceNeeded(Boolean(mode?.requiresReference))}
             className="h-11 text-base md:text-sm"
           />
         ) : (
@@ -251,6 +421,7 @@ export function ExpenseForm({
               id={id('paymentMethod')}
               name="paymentMethod"
               defaultValue={expense?.paymentMethod ?? ''}
+              onChange={(event) => setPayer(event.target.value ? 'paid' : 'unpaid')}
               className="h-11 text-base md:text-sm"
             >
               <option value="">Not settled yet</option>
@@ -262,18 +433,32 @@ export function ExpenseForm({
             </NativeSelect>
           </Field>
         )}
-      </div>
-      <div className="grid gap-6 sm:grid-cols-2">
-        <TextField
-          label="Bill number"
-          id={id('billNumber')}
-          name="billNumber"
-          defaultValue={start?.billNumber}
-          placeholder="The supplier’s invoice or receipt number"
-          error={errors.billNumber}
-          hint="Optional. Lets the same bill be spotted if it is entered twice."
-          className={INPUT}
-        />
+        {payer === 'paid' ? (
+          <TextField
+            label="Payment reference"
+            id={id('paymentReference')}
+            name="paymentReference"
+            defaultValue={start?.paymentReference}
+            error={errors.paymentReference}
+            hint={
+              referenceNeeded
+                ? 'Needed for this payment mode: the transfer, cheque or card-slip number.'
+                : 'The transfer, cheque or card-slip number, if there is one.'
+            }
+            className={INPUT}
+          />
+        ) : payer === 'unpaid' ? (
+          <TextField
+            label="Due date"
+            id={id('dueDate')}
+            name="dueDate"
+            type="date"
+            defaultValue={start?.dueDate}
+            error={errors.dueDate}
+            hint="When the supplier expects to be paid."
+            className={INPUT}
+          />
+        ) : null}
       </div>
       {moneyAccounts.length && !modes.length ? (
         <div className="grid gap-6 sm:grid-cols-2">
@@ -288,6 +473,16 @@ export function ExpenseForm({
           />
         </div>
       ) : null}
+
+      <TextareaField
+        label="Notes"
+        id={id('notes')}
+        name="notes"
+        defaultValue={start?.notes}
+        error={errors.notes}
+        placeholder="Anything worth keeping with it — what it covered, who approved it."
+        className="[&_textarea]:min-h-16"
+      />
 
       <FormError message={Object.keys(errors).length ? undefined : state.error} />
       <div className="border-t border-border pt-4">
