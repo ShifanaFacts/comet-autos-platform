@@ -172,6 +172,8 @@ const DOCUMENT_LINK: Partial<
     tx.supplierPayment.update({ where: { id }, data: { journalEntryId } }),
   PAYROLL: (tx, id, journalEntryId) =>
     tx.payroll.update({ where: { id }, data: { journalEntryId } }),
+  OWNER_REIMBURSEMENT: (tx, id, journalEntryId) =>
+    tx.ownerReimbursement.update({ where: { id }, data: { journalEntryId } }),
 };
 
 /**

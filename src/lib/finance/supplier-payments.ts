@@ -13,7 +13,7 @@ import { filsToString, toFils } from '@/lib/money';
 import { parseLocalDateTime } from '@/lib/format';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { syncPosting } from '@/lib/accounting/journal';
-import { checkMoneyAccount } from '@/lib/accounting/chart';
+import { checkMoneyAccount, refuseCardSettlementAccount } from '@/lib/accounting/chart';
 import {
   PURCHASE_BALANCE_SELECT,
   RECEIVED_PURCHASE_STATUSES,
@@ -81,7 +81,8 @@ const reversalSchema = z.object({
 });
 
 /** Whole days since a date, floored at zero. */
-const ageInDays = (date: Date) => Math.max(0, Math.floor((Date.now() - date.getTime()) / 86_400_000));
+const ageInDays = (date: Date) =>
+  Math.max(0, Math.floor((Date.now() - date.getTime()) / 86_400_000));
 
 /** A user tied to one branch only ever sees and pays that branch's purchases. */
 const branchScope = (user: AuthenticatedUser) =>
@@ -161,7 +162,10 @@ export async function getPayables(user: AuthenticatedUser, filters: PayableFilte
     // Oldest first: the bills that need paying are at the top.
     .sort((a, b) => b.ageDays - a.ageDays);
 
-  const bySupplier = new Map<string, { id: string; name: string; balanceFils: number; count: number }>();
+  const bySupplier = new Map<
+    string,
+    { id: string; name: string; balanceFils: number; count: number }
+  >();
   for (const row of rows) {
     const entry = bySupplier.get(row.supplier.id) ?? {
       id: row.supplier.id,
@@ -218,7 +222,15 @@ export async function getSupplierPayables(user: AuthenticatedUser, supplierId: s
   requirePermission(user, 'supplier_payment.view');
   const supplier = await prisma.supplier.findFirst({
     where: { id: supplierId, organizationId: user.organizationId },
-    select: { id: true, name: true, contactName: true, phone: true, email: true, address: true, isActive: true },
+    select: {
+      id: true,
+      name: true,
+      contactName: true,
+      phone: true,
+      email: true,
+      address: true,
+      isActive: true,
+    },
   });
   if (!supplier) throw new NotFoundError('supplier');
 
@@ -435,10 +447,7 @@ export async function recordSupplierPayment(
       );
     }
     if (purchase.receivedAt && paidAt.getTime() < purchase.receivedAt.getTime() - 60_000) {
-      throw new DomainError(
-        'A payment can’t be dated before the goods were received.',
-        'paidAt',
-      );
+      throw new DomainError('A payment can’t be dated before the goods were received.', 'paidAt');
     }
 
     // Serialise concurrent payments on this purchase.
@@ -464,6 +473,13 @@ export async function recordSupplierPayment(
       user.organizationId,
       purchase.branchId,
       'SUPPLIER_PAYMENT',
+    );
+    await refuseCardSettlementAccount(
+      tx,
+      user.organizationId,
+      input.method,
+      input.accountId || null,
+      'method',
     );
     const payment = await tx.supplierPayment.create({
       data: {
@@ -615,7 +631,11 @@ export async function reverseSupplierPayment(
     });
     await settleRequestKey(tx, user, rawInput, reversal.id);
 
-    return { id: reversal.id, reversedPaymentId: payment.id, supplierId: payment.purchase.supplier.id };
+    return {
+      id: reversal.id,
+      reversedPaymentId: payment.id,
+      supplierId: payment.purchase.supplier.id,
+    };
   });
 }
 

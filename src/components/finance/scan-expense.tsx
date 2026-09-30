@@ -70,12 +70,14 @@ export function ScanExpense({
   moneyAccounts,
   taxCodes,
   modes,
+  people = [],
 }: {
   categories: { id: string; accountCode: string; accountName: string }[];
   defaultVatRate: string;
   moneyAccounts: AccountChoice[];
   taxCodes: TaxCodeOption[];
   modes: PaymentModeOption[];
+  people?: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const { phase, scan, reset } = useBillScan('expense');
@@ -122,6 +124,7 @@ export function ScanExpense({
             moneyAccounts={moneyAccounts}
             taxCodes={taxCodes}
             modes={modes}
+            people={people}
             prefill={prefill}
             flags={flags}
             hidden={{ scannedFields: draft.filled.join(',') || 'none' }}

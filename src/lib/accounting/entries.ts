@@ -260,6 +260,7 @@ async function unbooked(organizationId: string) {
     assets,
     depreciations,
     bookedOther,
+    reimbursements,
   ] = await Promise.all([
     prisma.invoice.findMany({
       where: {
@@ -336,6 +337,11 @@ async function unbooked(organizationId: string) {
       where: { organizationId, sourceType: { in: [...LATER_SOURCES] } },
       select: { sourceType: true, sourceId: true },
     }),
+    prisma.ownerReimbursement.findMany({
+      where: { organizationId, journalEntryId: null },
+      orderBy: [{ paidOn: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true },
+    }),
   ]);
   const booked = new Set(bookedMovements.map((entry) => entry.sourceId));
   const paidBooked = new Set(bookedPayrollPayments.map((entry) => entry.sourceId));
@@ -374,6 +380,7 @@ async function unbooked(organizationId: string) {
       assets.filter((asset) => asset.status === 'DISPOSED'),
       'ASSET_DISPOSAL',
     ),
+    OWNER_REIMBURSEMENT: reimbursements.map((row) => row.id),
   } satisfies Record<PostedSource, string[]>;
 }
 
@@ -408,6 +415,7 @@ export async function bookExistingRecords(user: AuthenticatedUser) {
     'ASSET_DISPOSAL',
     'VAT_FILING',
     'VAT_PAYMENT',
+    'OWNER_REIMBURSEMENT',
   ];
   let booked = 0;
   const failed: string[] = [];

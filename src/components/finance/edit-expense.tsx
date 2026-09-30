@@ -24,6 +24,7 @@ export function EditExpenseButton({
   moneyAccounts,
   taxCodes,
   modes,
+  people,
 }: {
   expense: ExpenseDraft;
   categories: { id: string; accountCode: string; accountName: string }[];
@@ -31,6 +32,7 @@ export function EditExpenseButton({
   moneyAccounts?: AccountChoice[];
   taxCodes?: TaxCodeOption[];
   modes?: PaymentModeOption[];
+  people?: { id: string; name: string }[];
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -56,6 +58,7 @@ export function EditExpenseButton({
           moneyAccounts={moneyAccounts}
           taxCodes={taxCodes}
           modes={modes}
+          people={people}
           expense={expense}
           onDone={() => setOpen(false)}
         />

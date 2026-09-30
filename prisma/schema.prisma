@@ -182,6 +182,9 @@ enum AccountRole {
   SALARIES_PAYABLE
   VAT_SETTLEMENT
   ASSET_DISPOSALS
+  /// "Due to owner (current account)": what the business owes an owner or
+  /// partner who paid a business cost with their own money.
+  OWNER_ADVANCES
 }
 
 /// The kind of record a journal entry books.
@@ -216,6 +219,8 @@ enum JournalSource {
   /// earnings. Left out of every profit and loss.
   YEAR_END_CLOSE
   MANUAL
+  /// An owner repaid for business costs they paid personally.
+  OWNER_REIMBURSEMENT
 }
 
 enum ApprovalStatus {
@@ -546,6 +551,8 @@ model Organization {
   fixedAssets         FixedAsset[]
   assetDepreciations  AssetDepreciation[]
 
+  ownerReimbursements OwnerReimbursement[]
+
   @@map("organizations")
 }
 
@@ -641,6 +648,10 @@ model User {
   reconciliationsCreated   BankReconciliation[] @relation("ReconciliationCreatedBy")
   reconciliationsCompleted BankReconciliation[] @relation("ReconciliationCompletedBy")
   fixedAssetsCreated       FixedAsset[]         @relation("FixedAssetCreatedBy")
+
+  expensesPaidPersonally Expense[]            @relation("ExpensePaidPersonallyBy")
+  reimbursementsReceived OwnerReimbursement[] @relation("OwnerReimbursementPerson")
+  reimbursementsRecorded OwnerReimbursement[] @relation("OwnerReimbursementRecordedBy")
 
   @@unique([organizationId, id])
   @@unique([organizationId, email])
@@ -1789,6 +1800,9 @@ model Expense {
   /// The cash or bank account it was paid from, when paid. Null: the default
   /// for its method.
   paidFromAccountId String?        @map("paid_from_account_id") @db.Uuid
+  /// Paid with an owner's or partner's own money: the business owes them it
+  /// (Cr Due to owner). Never set together with paymentMethod.
+  paidByUserId      String?        @map("paid_by_user_id") @db.Uuid
   recordedByUserId  String         @map("recorded_by_user_id") @db.Uuid
   journalEntryId    String?        @map("journal_entry_id") @db.Uuid
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz
@@ -1801,6 +1815,8 @@ model Expense {
   recordedBy     User            @relation(fields: [organizationId, recordedByUserId], references: [organizationId, id], onDelete: Restrict)
   journalEntry   JournalEntry?   @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
   taxCode        TaxCode?        @relation(fields: [organizationId, taxCodeId], references: [organizationId, id], onDelete: Restrict)
+
+  paidByUser User? @relation("ExpensePaidPersonallyBy", fields: [organizationId, paidByUserId], references: [organizationId, id], onDelete: Restrict)
 
   @@unique([organizationId, id])
   @@unique([organizationId, expenseNumber])
@@ -1847,6 +1863,8 @@ model ChartOfAccount {
   fixedAssetsProceeds    FixedAsset[]         @relation("FixedAssetProceeds")
   paymentModes           PaymentMode[]
 
+  ownerReimbursements OwnerReimbursement[] @relation("OwnerReimbursementPaidFrom")
+
   @@unique([organizationId, id])
   @@unique([organizationId, accountCode])
   @@unique([organizationId, role])
@@ -1892,6 +1910,8 @@ model JournalEntry {
   payrolls         Payroll[]
   purchases        Purchase[]
   invoices         Invoice[]
+
+  ownerReimbursements OwnerReimbursement[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, entryNumber])
@@ -2626,4 +2646,40 @@ model PaymentMode {
   @@unique([organizationId], map: "payment_modes_one_default", where: raw("is_default"))
   @@index([organizationId])
   @@map("payment_modes")
+}
+
+/// Money paid back to an owner or partner for business costs they paid
+/// personally: Dr Due to owner, Cr the cash or bank account. Reversed like a
+/// supplier payment — the original is kept and marked REVERSED, and a linked
+/// reversal row is written; both drop out of what is owed.
+model OwnerReimbursement {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  organizationId    String        @map("organization_id") @db.Uuid
+  personUserId      String        @map("person_user_id") @db.Uuid
+  amount            Decimal       @db.Decimal(14, 2)
+  method            PaymentMethod
+  status            PaymentStatus @default(COMPLETED)
+  paidFromAccountId String?       @map("paid_from_account_id") @db.Uuid
+  /// The transfer or cheque reference.
+  reference         String?
+  note              String?
+  reversalOfId      String?       @map("reversal_of_id") @db.Uuid
+  paidOn            DateTime      @map("paid_on") @db.Date
+  recordedByUserId  String        @map("recorded_by_user_id") @db.Uuid
+  journalEntryId    String?       @map("journal_entry_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  person       User                 @relation("OwnerReimbursementPerson", fields: [organizationId, personUserId], references: [organizationId, id], onDelete: Restrict)
+  recordedBy   User                 @relation("OwnerReimbursementRecordedBy", fields: [organizationId, recordedByUserId], references: [organizationId, id], onDelete: Restrict)
+  paidFrom     ChartOfAccount?      @relation("OwnerReimbursementPaidFrom", fields: [organizationId, paidFromAccountId], references: [organizationId, id], onDelete: Restrict)
+  reversalOf   OwnerReimbursement?  @relation("OwnerReimbursementReversal", fields: [organizationId, reversalOfId], references: [organizationId, id], onDelete: Restrict)
+  reversals    OwnerReimbursement[] @relation("OwnerReimbursementReversal")
+  journalEntry JournalEntry?        @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([reversalOfId])
+  @@index([organizationId, personUserId])
+  @@map("owner_reimbursements")
 }

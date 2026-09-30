@@ -225,7 +225,7 @@ export function BillNotices({ draft }: { draft: BillDraft }) {
         <dd
           className={cn(
             'rounded px-1.5 py-0.5 text-sm font-medium tabular-nums',
-            flagged && 'outline outline-2 outline-warning',
+            flagged && 'outline-2 outline-warning',
           )}
         >
           {draft[field] ? formatMoney(draft[field]) : '—'}
@@ -280,10 +280,14 @@ export function BillNotices({ draft }: { draft: BillDraft }) {
 }
 
 /** Keeps the scanned file with the record just saved. */
-export async function attachScannedBill(url: string, file: File): Promise<string | null> {
+export async function attachScannedBill(
+  url: string,
+  file: File,
+  note = 'Scanned bill',
+): Promise<string | null> {
   const form = new FormData();
   form.set('bill', file);
-  form.set('note', 'Scanned bill');
+  form.set('note', note);
   const response = await fetch(url, { method: 'POST', body: form });
   const result = (await response.json().catch(() => null)) as {
     ok: boolean;

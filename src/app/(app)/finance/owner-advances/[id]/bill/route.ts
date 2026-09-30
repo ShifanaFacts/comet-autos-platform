@@ -1,0 +1,59 @@
+import { NextResponse, type NextRequest } from 'next/server';
+import { revalidatePath } from 'next/cache';
+import { getCurrentUser } from '@/lib/auth/session';
+import { toActionError } from '@/lib/errors';
+import { attachFile } from '@/lib/documents/attachments';
+
+/**
+ * Attaches the receipt for a repayment to an owner (multipart, one file). A
+ * route handler rather than a Server Action because a PDF or photo can pass
+ * the Server Action body limit; same rules otherwise: signed-in user,
+ * same-site request, permission and ownership checked in the service.
+ */
+export async function POST(
+  request: NextRequest,
+  ctx: RouteContext<'/finance/owner-advances/[id]/bill'>,
+) {
+  const origin = request.headers.get('origin');
+  if (origin && new URL(origin).host !== request.headers.get('host')) {
+    return NextResponse.json(
+      { ok: false, error: 'This request came from another site and was refused.' },
+      { status: 403 },
+    );
+  }
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json(
+      { ok: false, error: 'Your session has ended. Sign in again, then attach the file.' },
+      { status: 401 },
+    );
+  }
+  const { id } = await ctx.params;
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return NextResponse.json(
+      { ok: false, error: 'The upload was interrupted. Check the connection and try again.' },
+      { status: 400 },
+    );
+  }
+  const file = form.get('bill');
+  if (!file || typeof file === 'string') {
+    return NextResponse.json({ ok: false, error: 'Choose the file to attach.' }, { status: 400 });
+  }
+  try {
+    await attachFile(
+      user,
+      'OwnerReimbursement',
+      id,
+      { name: file.name, bytes: Buffer.from(await file.arrayBuffer()) },
+      { note: typeof form.get('note') === 'string' ? String(form.get('note')) : null },
+    );
+    revalidatePath('/finance/owner-advances');
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    const result = toActionError(error);
+    return NextResponse.json({ ok: false, error: result.error }, { status: 400 });
+  }
+}

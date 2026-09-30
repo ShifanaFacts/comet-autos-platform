@@ -62,7 +62,7 @@ export default async function RecordSupplierPaymentPage({
         ) : (
           <SupplierPaymentForm
             moneyAccounts={(await getAccountChoices(user)).money}
-            modes={await getPaymentModeOptions(user.organizationId, 'payments')}
+            modes={await getPaymentModeOptions(user.organizationId, 'spending')}
             purchase={{
               id: purchase.id,
               number: purchase.number,

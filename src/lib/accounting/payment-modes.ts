@@ -93,14 +93,31 @@ export async function ensurePaymentModes(organizationId: string) {
  */
 export async function getPaymentModeOptions(
   organizationId: string,
-  usage: 'receipts' | 'payments',
+  /**
+   * `spending`: payments for the workshop's own costs (expenses, suppliers)
+   * — as `payments`, without modes on "Card settlements receivable", which
+   * only customer card receipts belong in.
+   * `reimburse`: repaying an owner — cash or bank only: modes on the Cash or
+   * Bank account, or on Petty cash (1005).
+   */
+  usage: 'receipts' | 'payments' | 'spending' | 'reimburse',
 ): Promise<PaymentModeOption[]> {
   await ensurePaymentModes(organizationId);
   const modes = await prisma.paymentMode.findMany({
     where: {
       organizationId,
       isActive: true,
-      account: { isActive: true, isPaymentAccount: true },
+      account: {
+        isActive: true,
+        isPaymentAccount: true,
+        ...(usage === 'spending'
+          ? { OR: [{ role: null }, { role: { not: 'CARD_CLEARING' as const } }] }
+          : usage === 'reimburse'
+            ? {
+                OR: [{ role: { in: ['CASH' as const, 'BANK' as const] } }, { accountCode: '1005' }],
+              }
+            : {}),
+      },
       ...(usage === 'receipts' ? { forReceipts: true } : { forPayments: true }),
     },
     orderBy: [{ isDefault: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],

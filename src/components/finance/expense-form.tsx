@@ -30,6 +30,8 @@ export interface ExpenseDraft {
   billNumber?: string;
   paymentMethod: string;
   paidFromAccountId: string;
+  /** Paid with an owner's own money: who. */
+  paidByUserId?: string;
   categoryId: string;
 }
 
@@ -64,6 +66,7 @@ export function ExpenseForm({
   moneyAccounts = [],
   taxCodes = [],
   modes = [],
+  people = [],
   expense,
   prefill,
   flags = {},
@@ -79,6 +82,8 @@ export function ExpenseForm({
   taxCodes?: TaxCodeOption[];
   /** The payment modes (payment mode master). Given, one choice sets method and account. */
   modes?: PaymentModeOption[];
+  /** Owners who can pay a cost with their own money: "Paid personally by…". */
+  people?: { id: string; name: string }[];
   /** Set to correct an existing expense instead of recording a new one. */
   expense?: ExpenseDraft;
   /** Starting values for a new expense (Scan bill). Anything left out starts empty. */
@@ -230,7 +235,9 @@ export function ExpenseForm({
             defaultModeId={
               expense ? modeFor(modes, expense.paymentMethod, expense.paidFromAccountId) : undefined
             }
-            error={errors.paymentMethod ?? errors.paidFromAccountId}
+            people={people}
+            defaultPersonId={start?.paidByUserId || undefined}
+            error={errors.paymentMethod ?? errors.paidFromAccountId ?? errors.paidByUserId}
             className="h-11 text-base md:text-sm"
           />
         ) : (

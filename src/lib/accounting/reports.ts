@@ -272,7 +272,7 @@ async function sourceLinks(
             : null
           : source === 'EXPENSE'
             ? '/finance/expenses'
-            : source === 'SUPPLIER_PAYMENT'
+            : source === 'SUPPLIER_PAYMENT' || source === 'OWNER_REIMBURSEMENT'
               ? '/finance/payables'
               : source === 'STOCK_MOVEMENT'
                 ? '/inventory/movements'
