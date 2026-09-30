@@ -51,6 +51,7 @@ const PREFIX_MODULE: Record<string, string> = {
   inventory: 'inventory',
   purchase: 'purchase',
   supplier_payment: 'supplier_payment',
+  owner_reimbursement: 'supplier_payment',
   invoice: 'invoice',
   payment: 'payment',
   credit_note: 'credit_note',
@@ -474,6 +475,7 @@ const NOUNS: Record<string, string> = {
   Expense: 'expense',
   JournalEntry: 'journal entry',
   SupplierPayment: 'supplier payment',
+  OwnerReimbursement: 'repayment to',
   Customer: 'customer',
   Vehicle: 'vehicle',
   Part: 'part',
@@ -659,8 +661,12 @@ function sentence(entry: {
     return `Changed the roles of ${ref ?? 'a user'}${was !== null && now !== null ? `: ${was || 'none'} → ${now || 'none'}` : ''}`;
   }
 
+  // An expense an owner paid with their own money says so.
+  const personally = pick([after], ['paidPersonallyBy']);
+  const paidBy = personally ? ` — paid personally by ${personally}` : '';
+
   const verb = VERBS[suffix];
-  if (verb) return `${verb} ${noun}${ref ? ` ${ref}` : ''}${money}${tail}`;
+  if (verb) return `${verb} ${noun}${ref ? ` ${ref}` : ''}${money}${paidBy}${tail}`;
   // Anything not described above: "Job card JC-000012: technician assigned".
   const label = noun.charAt(0).toUpperCase() + noun.slice(1);
   return `${label}${ref ? ` ${ref}` : ''}: ${suffix.replace(/_/g, ' ')}${money}${tail}`;

@@ -56,6 +56,12 @@ export const SYSTEM_ACCOUNTS: SystemAccount[] = [
   { role: 'VAT_OUTPUT', code: '2100', name: 'Output VAT payable', type: 'LIABILITY' },
   { role: 'VAT_SETTLEMENT', code: '2105', name: 'VAT due to FTA', type: 'LIABILITY' },
   { role: 'SALARIES_PAYABLE', code: '2200', name: 'Salaries & wages payable', type: 'LIABILITY' },
+  {
+    role: 'OWNER_ADVANCES',
+    code: '2520',
+    name: 'Due to owner (current account)',
+    type: 'LIABILITY',
+  },
   { role: 'OPENING_BALANCE', code: '3200', name: 'Opening balance equity', type: 'EQUITY' },
   { role: 'RETAINED_EARNINGS', code: '3900', name: 'Retained earnings', type: 'EQUITY' },
   { role: 'SALES_PARTS', code: '4000', name: 'Sales — spare parts', type: 'REVENUE' },
@@ -95,7 +101,6 @@ export const STANDARD_ACCOUNTS: ChartAccount[] = [
   { code: '2110', name: 'Corporate tax payable', type: 'LIABILITY' },
   { code: '2500', name: 'Provision for end-of-service benefits', type: 'LIABILITY' },
   { code: '2510', name: 'Bank loans', type: 'LIABILITY' },
-  { code: '2520', name: 'Due to owner (current account)', type: 'LIABILITY' },
   // Equity
   { code: '3000', name: "Owner's capital", type: 'EQUITY' },
   { code: '3100', name: "Owner's drawings", type: 'EQUITY' },
@@ -177,6 +182,36 @@ export async function checkMoneyAccount(
     throw new DomainError('Choose a cash, bank or card account that is in use.', 'accountId');
   }
   return accountId;
+}
+
+/**
+ * Money the workshop pays out can't come from "Card settlements receivable":
+ * that account holds what the card company owes the garage for customers who
+ * paid by card. The workshop's own card is paid from the bank account it is
+ * on (add a payment mode for it), or it was an owner's own card — "Paid
+ * personally by…". `accountId` is the account chosen; blank means the
+ * method's default, which for Card is that very account.
+ */
+export async function refuseCardSettlementAccount(
+  tx: Tx,
+  organizationId: string,
+  method: PaymentMethod | null | undefined,
+  accountId: string | null | undefined,
+  field = 'paymentMethod',
+) {
+  if (!method) return;
+  const account = accountId
+    ? await tx.chartOfAccount.findFirst({
+        where: { id: accountId, organizationId },
+        select: { role: true },
+      })
+    : { role: METHOD_ACCOUNT_ROLE[method] };
+  if (account?.role === 'CARD_CLEARING') {
+    throw new DomainError(
+      'Card settlements are for customers paying the garage by card. Choose the bank account the card is on, or “Paid personally by…” if it was an owner’s own card.',
+      field,
+    );
+  }
 }
 
 const simplify = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '');

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Suspense, cache } from 'react';
+import { OwedToOwnerLine } from '@/components/finance/owed-to-owner-line';
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowRight,
@@ -125,6 +126,12 @@ export default async function DashboardPage() {
           payments={show.payments}
         />
       </Suspense>
+
+      {hasPermission(user, 'accounting.view') ? (
+        <Suspense fallback={null}>
+          <OwedToOwnerLine organizationId={org} />
+        </Suspense>
+      ) : null}
 
       <Section
         title="Today"

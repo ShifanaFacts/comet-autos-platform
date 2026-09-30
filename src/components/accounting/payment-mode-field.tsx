@@ -10,7 +10,15 @@ import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
  * method and the ledger account — so they go as hidden fields under the
  * names each form has always used. Nothing on the server has to know modes
  * exist, and every rule it checks still applies.
+ *
+ * A form for the workshop's own costs can also offer "Paid personally by…":
+ * an owner who paid with their own money. Choosing one sends no method or
+ * account, only the person — the server books it as owed to them.
  */
+
+/** The value a person takes in the list, kept apart from mode ids. */
+const PERSON = 'person:';
+
 export function PaymentModeField({
   id,
   modes,
@@ -19,6 +27,9 @@ export function PaymentModeField({
   accountName = 'accountId',
   defaultModeId,
   unsettledLabel,
+  people = [],
+  personName = 'paidByUserId',
+  defaultPersonId,
   error,
   onChange,
   className = 'h-12 text-base md:h-11 md:text-sm',
@@ -33,41 +44,77 @@ export function PaymentModeField({
   defaultModeId?: string;
   /** Offer "not paid yet" (an expense on credit): method and account go blank. */
   unsettledLabel?: string;
+  /** Offer "Paid personally by…" these people. */
+  people?: { id: string; name: string }[];
+  /** The form field the person goes in. */
+  personName?: string;
+  defaultPersonId?: string;
   error?: string;
   /** The mode chosen, e.g. to require a reference number. */
   onChange?: (mode: PaymentModeOption | null) => void;
   className?: string;
 }) {
-  const [modeId, setModeId] = useState(
-    defaultModeId ??
-      (unsettledLabel ? '' : ((modes.find((mode) => mode.isDefault) ?? modes[0])?.id ?? '')),
+  const [value, setValue] = useState(
+    defaultPersonId
+      ? `${PERSON}${defaultPersonId}`
+      : (defaultModeId ??
+          (unsettledLabel ? '' : ((modes.find((mode) => mode.isDefault) ?? modes[0])?.id ?? ''))),
   );
-  const mode = modes.find((option) => option.id === modeId) ?? null;
+  const mode = modes.find((option) => option.id === value) ?? null;
+  const person = value.startsWith(PERSON)
+    ? (people.find((option) => `${PERSON}${option.id}` === value) ?? null)
+    : null;
 
   return (
     <Field
       label={label}
       htmlFor={id}
       error={error}
-      hint={mode ? `Posted to ${mode.accountName}.` : undefined}
+      hint={
+        mode
+          ? `Posted to ${mode.accountName}.`
+          : person
+            ? `Owed to ${person.name} until repaid (Payables → Owed to owners).`
+            : undefined
+      }
     >
       <input type="hidden" name={methodName} value={mode?.method ?? ''} />
       <input type="hidden" name={accountName} value={mode?.accountId ?? ''} />
+      {people.length ? <input type="hidden" name={personName} value={person?.id ?? ''} /> : null}
       <NativeSelect
         id={id}
-        value={modeId}
+        value={value}
         onChange={(event) => {
-          setModeId(event.target.value);
+          setValue(event.target.value);
           onChange?.(modes.find((option) => option.id === event.target.value) ?? null);
         }}
         className={className}
       >
         {unsettledLabel ? <option value="">{unsettledLabel}</option> : null}
-        {modes.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.name}
-          </option>
-        ))}
+        {people.length ? (
+          <>
+            <optgroup label="Paid by the workshop">
+              {modes.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Paid personally by…">
+              {people.map((option) => (
+                <option key={option.id} value={`${PERSON}${option.id}`}>
+                  {option.name}
+                </option>
+              ))}
+            </optgroup>
+          </>
+        ) : (
+          modes.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.name}
+            </option>
+          ))
+        )}
       </NativeSelect>
     </Field>
   );

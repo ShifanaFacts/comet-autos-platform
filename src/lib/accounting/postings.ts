@@ -39,7 +39,13 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  *   Dr VAT recoverable                the VAT (a business not registered
  *                                     for VAT can't recover it: it stays in
  *                                     the category)
- *   Cr the account it was paid from, or Accounts payable while unpaid
+ *   Cr the account it was paid from, Accounts payable while unpaid, or
+ *      Due to owner when an owner paid it with their own money (the line
+ *      names them)
+ *
+ * OWNER REIMBURSEMENT                 Dr Due to owner
+ *                                     Cr the cash or bank account
+ *   its reversal                      the same, the other way round
  *
  * STOCK MOVEMENT
  *   delivery from a supplier          Dr Parts inventory, Dr VAT recoverable
@@ -95,7 +101,7 @@ export interface PostingLine {
   /** Fils. One of debit and credit is zero. */
   debit: number;
   credit: number;
-  /** A note on the line — manual entries only. */
+  /** A note on the line: a manual entry's own, or who paid an expense personally. */
   memo?: string | null;
 }
 
@@ -118,6 +124,13 @@ export function accountingDay(moment: Date): Date {
  */
 class Lines {
   private readonly net = new Map<string, number>();
+  private readonly memos = new Map<string, string>();
+
+  /** A note on the account's line in the journal (who paid, for instance). */
+  memo(accountId: string, text: string) {
+    this.memos.set(accountId, text);
+    return this;
+  }
 
   add(accountId: string, fils: number) {
     if (fils !== 0) this.net.set(accountId, (this.net.get(accountId) ?? 0) + fils);
@@ -139,6 +152,7 @@ class Lines {
         accountId,
         debit: Math.max(fils, 0),
         credit: Math.max(-fils, 0),
+        ...(this.memos.has(accountId) ? { memo: this.memos.get(accountId) } : {}),
       }));
     const debits = lines.reduce((sum, line) => sum + line.debit, 0);
     const credits = lines.reduce((sum, line) => sum + line.credit, 0);
@@ -306,6 +320,7 @@ const postExpense: Poster = async (tx, organizationId, expenseId, accounts) => {
       chartOfAccountId: true,
       paymentMethod: true,
       paidFromAccountId: true,
+      paidByUser: { select: { fullName: true } },
     },
   });
   if (!expense || expense.status !== 'RECORDED') return null;
@@ -314,13 +329,18 @@ const postExpense: Poster = async (tx, organizationId, expenseId, accounts) => {
   const vat = fils(expense.taxAmount);
   const recoverable = await isVatRegistered(tx, organizationId);
   const category = expense.chartOfAccountId ?? accounts.OTHER_EXPENSES;
-  const paidFrom = expense.paymentMethod
-    ? (expense.paidFromAccountId ?? accounts[METHOD_ACCOUNT_ROLE[expense.paymentMethod]])
-    : accounts.ACCOUNTS_PAYABLE;
+  const paidFrom = expense.paidByUser
+    ? accounts.OWNER_ADVANCES
+    : expense.paymentMethod
+      ? (expense.paidFromAccountId ?? accounts[METHOD_ACCOUNT_ROLE[expense.paymentMethod]])
+      : accounts.ACCOUNTS_PAYABLE;
   const lines = new Lines()
     .debit(category, recoverable ? net : net + vat)
     .debit(accounts.VAT_INPUT, recoverable ? vat : 0)
     .credit(paidFrom, net + vat);
+  if (expense.paidByUser) {
+    lines.memo(paidFrom, `Paid personally by ${expense.paidByUser.fullName}`);
+  }
 
   return {
     date: expense.expenseDate,
@@ -444,6 +464,38 @@ const postSupplierPayment: Poster = async (tx, organizationId, paymentId, accoun
     description: payment.reversalOf
       ? `Supplier payment ${payment.reversalOf.supplierPaymentNumber ?? ''} reversed — ${to}`
       : `Supplier payment ${payment.supplierPaymentNumber ?? ''} — ${to}`,
+    lines: lines.build(),
+  };
+};
+
+// ─── Owners repaid ──────────────────────────────────────────────────────────
+
+const postOwnerReimbursement: Poster = async (tx, organizationId, id, accounts) => {
+  const row = await tx.ownerReimbursement.findFirst({
+    where: { id, organizationId },
+    select: {
+      amount: true,
+      method: true,
+      paidFromAccountId: true,
+      paidOn: true,
+      person: { select: { fullName: true } },
+      reversalOf: { select: { method: true, paidFromAccountId: true } },
+    },
+  });
+  if (!row) return null;
+  const original = row.reversalOf ?? row;
+  const moneyAccount = original.paidFromAccountId ?? accounts[METHOD_ACCOUNT_ROLE[original.method]];
+  const amount = fils(row.amount);
+  const lines = row.reversalOf
+    ? new Lines().debit(moneyAccount, amount).credit(accounts.OWNER_ADVANCES, amount)
+    : new Lines().debit(accounts.OWNER_ADVANCES, amount).credit(moneyAccount, amount);
+  lines.memo(accounts.OWNER_ADVANCES, row.person.fullName);
+  return {
+    date: row.paidOn,
+    branchId: null,
+    description: row.reversalOf
+      ? `Repayment to ${row.person.fullName} reversed`
+      : `Repaid ${row.person.fullName} for business costs paid personally`,
     lines: lines.build(),
   };
 };
@@ -734,4 +786,5 @@ export const POSTING_RULES: Record<
   FIXED_ASSET: postFixedAsset,
   DEPRECIATION: postDepreciation,
   ASSET_DISPOSAL: postAssetDisposal,
+  OWNER_REIMBURSEMENT: postOwnerReimbursement,
 };

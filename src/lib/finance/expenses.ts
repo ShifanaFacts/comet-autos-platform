@@ -12,7 +12,8 @@ import { calculateLine, filsToString, toFils } from '@/lib/money';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { resolveInventoryBranch } from '@/lib/inventory/stock';
 import { syncPosting } from '@/lib/accounting/journal';
-import { checkMoneyAccount } from '@/lib/accounting/chart';
+import { checkMoneyAccount, refuseCardSettlementAccount } from '@/lib/accounting/chart';
+import { listPersonalPayers, resolvePersonalPayer } from '@/lib/finance/owner-payments';
 import { getTaxCodeOptions, resolveTaxCode } from '@/lib/accounting/tax-codes';
 import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { getAccountChoices } from '@/lib/accounting/reports';
@@ -62,6 +63,8 @@ const expenseSchema = z.object({
   paymentMethod: z.union([z.literal(''), z.enum(PAYMENT_METHODS)]).optional(),
   /** The cash or bank account it was paid from; blank for the method's default. */
   paidFromAccountId: z.union([z.literal(''), z.uuid()]).optional(),
+  /** Paid with an owner's own money; never together with paymentMethod. */
+  paidByUserId: z.union([z.literal(''), z.uuid()]).optional(),
   categoryId: z.string().trim().optional(),
   requestKey: z.string().optional(),
 });
@@ -91,6 +94,45 @@ function split(amount: string, taxRate: string | null) {
   };
 }
 
+/**
+ * Who or what paid: a cash or bank account (paymentMethod), an owner with
+ * their own money (paidByUserId), or nobody yet — never two of them.
+ * Returns the fields to store.
+ */
+async function readPayer(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  input: { paymentMethod?: string; paidFromAccountId?: string; paidByUserId?: string },
+) {
+  const method = emptyToNull(input.paymentMethod) as (typeof PAYMENT_METHODS)[number] | null;
+  const personId = emptyToNull(input.paidByUserId);
+  if (method && personId) {
+    throw new DomainError(
+      'Choose how it was paid, or who paid it personally — not both.',
+      'paymentMethod',
+    );
+  }
+  if (personId) {
+    const payer = await resolvePersonalPayer(tx, organizationId, personId);
+    return {
+      paymentMethod: null,
+      paidFromAccountId: null,
+      paidByUserId: payer.id,
+      paidPersonallyBy: payer.fullName,
+    };
+  }
+  const paidFromAccountId = method
+    ? await checkMoneyAccount(tx, organizationId, input.paidFromAccountId)
+    : null;
+  await refuseCardSettlementAccount(tx, organizationId, method, paidFromAccountId);
+  return {
+    paymentMethod: method,
+    paidFromAccountId,
+    paidByUserId: null,
+    paidPersonallyBy: null,
+  };
+}
+
 async function assertCategory(organizationId: string, categoryId: string | null) {
   if (!categoryId) return;
   const account = await prisma.chartOfAccount.findFirst({
@@ -114,6 +156,7 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'expense.record');
+    const { paidPersonallyBy, ...payer } = await readPayer(tx, user.organizationId, input);
     const expense = await tx.expense.create({
       data: {
         organizationId: user.organizationId,
@@ -129,11 +172,8 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
         expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
         vendorName: emptyToNull(input.vendorName),
         billNumber: emptyToNull(input.billNumber),
-        paymentMethod: emptyToNull(input.paymentMethod) as (typeof PAYMENT_METHODS)[number] | null,
-        // Only a paid expense came out of an account.
-        paidFromAccountId: input.paymentMethod
-          ? await checkMoneyAccount(tx, user.organizationId, input.paidFromAccountId)
-          : null,
+        // Paid from an account, by an owner personally, or not yet.
+        ...payer,
         recordedByUserId: user.id,
       },
     });
@@ -152,6 +192,7 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
         expenseDate: input.expenseDate,
         vendorName: expense.vendorName,
         paymentMethod: expense.paymentMethod,
+        paidPersonallyBy,
       },
     });
     if (input.scannedFields) {
@@ -198,6 +239,7 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
     });
     if (!before) throw new NotFoundError('expense');
     if (before.status === 'VOID') throw new DomainError('A voided expense cannot be changed.');
+    const { paidPersonallyBy, ...payer } = await readPayer(tx, user.organizationId, input);
 
     const data = {
       chartOfAccountId: categoryId,
@@ -209,10 +251,7 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
       expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
       vendorName: emptyToNull(input.vendorName),
       billNumber: emptyToNull(input.billNumber),
-      paymentMethod: emptyToNull(input.paymentMethod) as (typeof PAYMENT_METHODS)[number] | null,
-      paidFromAccountId: input.paymentMethod
-        ? await checkMoneyAccount(tx, user.organizationId, input.paidFromAccountId)
-        : null,
+      ...payer,
     };
     const expense = await tx.expense.update({ where: { id: before.id }, data });
     await writeAuditLog(tx, {
@@ -230,9 +269,10 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
         expenseDate: before.expenseDate.toISOString().slice(0, 10),
         vendorName: before.vendorName,
         paymentMethod: before.paymentMethod,
+        paidByUserId: before.paidByUserId,
         chartOfAccountId: before.chartOfAccountId,
       },
-      afterData: { ...data, expenseDate: input.expenseDate, total: money.total },
+      afterData: { ...data, paidPersonallyBy, expenseDate: input.expenseDate, total: money.total },
     });
     await syncPosting(tx, user.organizationId, 'EXPENSE', expense.id, user.id);
     return expense;
@@ -329,6 +369,7 @@ export async function listExpenses(user: AuthenticatedUser, filters: ExpenseFilt
         chartOfAccount: { select: { id: true, accountName: true } },
         recordedBy: { select: { fullName: true } },
         branch: { select: { name: true } },
+        paidByUser: { select: { id: true, fullName: true } },
       },
     }),
     listExpenseCategories(user),
@@ -385,6 +426,12 @@ export async function getExpenseFormOptions(user: AuthenticatedUser) {
     defaultVatRate: await resolveDefaultVatRate(user.organizationId),
     moneyAccounts: accounts.money,
     taxCodes: await getTaxCodeOptions(user.organizationId, 'purchases'),
-    modes: await getPaymentModeOptions(user.organizationId, 'payments'),
+    // Card settlements are for customers paying the garage; not offered here.
+    modes: await getPaymentModeOptions(user.organizationId, 'spending'),
+    /** Who can pay a cost with their own money: "Paid personally by…". */
+    people: (await listPersonalPayers(user.organizationId)).map((person) => ({
+      id: person.id,
+      name: person.fullName,
+    })),
   };
 }

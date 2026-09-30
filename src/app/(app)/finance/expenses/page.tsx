@@ -77,8 +77,16 @@ export default async function ExpensesPage({
     billNumber: expense.billNumber ?? '',
     paymentMethod: expense.paymentMethod ?? '',
     paidFromAccountId: expense.paidFromAccountId ?? '',
+    paidByUserId: expense.paidByUserId ?? '',
     categoryId: expense.chartOfAccount?.id ?? '',
   });
+  /** How it was paid, in words: an account's method, an owner personally, or not yet. */
+  const paidBy = (expense: (typeof expenses)[number]) =>
+    expense.paidByUser
+      ? `Paid personally by ${expense.paidByUser.fullName}`
+      : expense.paymentMethod
+        ? METHOD_LABEL[expense.paymentMethod]
+        : 'Not settled';
   const filtered = Boolean(filters.query || filters.categoryId || filters.from || filters.to);
 
   return (
@@ -122,6 +130,7 @@ export default async function ExpensesPage({
           defaultVatRate={formOptions.defaultVatRate}
           taxCodes={formOptions.taxCodes}
           modes={formOptions.modes}
+          people={formOptions.people}
           moneyAccounts={formOptions.moneyAccounts}
         />
       ) : null}
@@ -139,6 +148,7 @@ export default async function ExpensesPage({
               defaultVatRate={formOptions.defaultVatRate}
               taxCodes={formOptions.taxCodes}
               modes={formOptions.modes}
+              people={formOptions.people}
               moneyAccounts={formOptions.moneyAccounts}
             />
           </InlineForm>
@@ -185,9 +195,7 @@ export default async function ExpensesPage({
                       },
                       {
                         label: 'Paid by',
-                        value: expense.paymentMethod
-                          ? METHOD_LABEL[expense.paymentMethod]
-                          : 'Not settled',
+                        value: paidBy(expense),
                       },
                     ]}
                     footer={`${expense.vendorName ? `${expense.vendorName} · ` : ''}Recorded by ${expense.recordedBy.fullName}`}
@@ -202,6 +210,7 @@ export default async function ExpensesPage({
                             defaultVatRate={formOptions.defaultVatRate}
                             taxCodes={formOptions.taxCodes}
                             modes={formOptions.modes}
+                            people={formOptions.people}
                             moneyAccounts={formOptions.moneyAccounts}
                           />
                         ) : null}
@@ -255,11 +264,7 @@ export default async function ExpensesPage({
                             ) : null}
                           </span>
                         </td>
-                        <td className="px-2 py-4 text-muted-foreground">
-                          {expense.paymentMethod
-                            ? METHOD_LABEL[expense.paymentMethod]
-                            : 'Not settled'}
-                        </td>
+                        <td className="px-2 py-4 text-muted-foreground">{paidBy(expense)}</td>
                         <td className="px-2 py-4 text-right tabular-nums whitespace-nowrap">
                           {formatMoney(expense.amount)}
                         </td>
@@ -281,6 +286,7 @@ export default async function ExpensesPage({
                                     defaultVatRate={formOptions.defaultVatRate}
                                     taxCodes={formOptions.taxCodes}
                                     modes={formOptions.modes}
+                                    people={formOptions.people}
                                     moneyAccounts={formOptions.moneyAccounts}
                                   />
                                 ) : null}

@@ -13,8 +13,9 @@ import {
   Wallet,
   Wrench,
 } from 'lucide-react';
-import { requireUser } from '@/lib/auth/authorize';
+import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { AuthError } from '@/lib/auth/authorize';
+import { OwedToOwnerLine } from '@/components/finance/owed-to-owner-line';
 import { getFinanceDashboard, type FinanceDashboard } from '@/lib/finance/dashboard';
 import { getWorkshopFlow } from '@/lib/data/dashboard';
 import { formatDate, formatMoney } from '@/lib/format';
@@ -131,6 +132,10 @@ export default async function FinanceOverviewPage({
       />
 
       <FinancePeriodPicker period={period} />
+
+      {hasPermission(user, 'accounting.view') ? (
+        <OwedToOwnerLine organizationId={user.organizationId} />
+      ) : null}
 
       {/* Money summary — the first thing on any screen size. */}
       {revenue || expenses ? (

@@ -23,7 +23,7 @@ import { storageKey, type StorageFolder } from '@/lib/storage/keys';
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
-export type AttachmentEntity = 'Expense' | 'Purchase';
+export type AttachmentEntity = 'Expense' | 'Purchase' | 'OwnerReimbursement';
 
 interface EntityRules {
   /** What the record is called in messages. */
@@ -35,7 +35,7 @@ interface EntityRules {
   remove: string;
   /** The audit action prefix: `expense.bill_attached`. */
   audit: string;
-  load(organizationId: string, id: string): Promise<{ id: string; branchId: string } | null>;
+  load(organizationId: string, id: string): Promise<{ id: string; branchId: string | null } | null>;
 }
 
 const RULES: Record<AttachmentEntity, EntityRules> = {
@@ -66,6 +66,23 @@ const RULES: Record<AttachmentEntity, EntityRules> = {
         where: { id, organizationId },
         select: { id: true, branchId: true },
       }),
+  },
+  OwnerReimbursement: {
+    noun: 'repayment',
+    folder: 'receipts',
+    category: 'OTHER',
+    // "Owed to owner" is an accounting screen; repaying is an accounting entry.
+    view: 'accounting.view',
+    attach: 'accounting.create',
+    remove: 'accounting.edit',
+    audit: 'owner_reimbursement',
+    load: async (organizationId, id) => {
+      const row = await prisma.ownerReimbursement.findFirst({
+        where: { id, organizationId },
+        select: { id: true },
+      });
+      return row ? { id: row.id, branchId: null } : null;
+    },
   },
 };
 

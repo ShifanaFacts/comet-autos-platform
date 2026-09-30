@@ -41,6 +41,7 @@ import {
   Sheet,
   TrendingUp,
   WalletCards,
+  UserRoundCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -162,6 +163,12 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/finance/payables',
         icon: Banknote,
         permission: 'supplier_payment.view',
+      },
+      {
+        label: 'Owed to owner',
+        href: '/finance/owner-advances',
+        icon: UserRoundCheck,
+        permission: 'accounting.view',
       },
       {
         label: 'Expenses & bills',
