@@ -60,10 +60,12 @@ export default async function VehiclesPage({
               canImport={canImport}
               columns={importColumns('vehicles')}
             />
-            <LinkButton href="/customers/new" size="lg" variant="outline">
-              <UserPlus />
-              New customer &amp; vehicle
-            </LinkButton>
+            {hasPermission(user, 'customer.create') && canImport ? (
+              <LinkButton href="/customers/new" size="lg" variant="outline">
+                <UserPlus />
+                New customer &amp; vehicle
+              </LinkButton>
+            ) : null}
           </>
         }
       />

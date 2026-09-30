@@ -28,6 +28,7 @@ export function NextActionPanel({
   canHold,
   canCancel,
   canComplete = false,
+  canAct = true,
 }: {
   jobCardId: string;
   status: JobCardStatus;
@@ -36,6 +37,8 @@ export function NextActionPanel({
   canCancel: boolean;
   /** Offer "Mark completed": the work is done, whatever step it was at. */
   canComplete?: boolean;
+  /** Whether this user may do the next step. Without it the panel only tells. */
+  canAct?: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -100,13 +103,13 @@ export function NextActionPanel({
               onConfirm={async () => apply('CANCELLED')}
             />
           ) : null}
-          {next.href && next.label ? (
+          {canAct && next.href && next.label ? (
             <Button size="lg" nativeButton={false} render={<Link href={next.href} />}>
               {next.label}
               <ArrowRight />
             </Button>
           ) : null}
-          {next.workflowAction === 'START_REPAIR' && next.label ? (
+          {canAct && next.workflowAction === 'START_REPAIR' && next.label ? (
             <ConfirmAction
               tone="default"
               trigger={
@@ -121,7 +124,7 @@ export function NextActionPanel({
               onConfirm={async () => startRepair()}
             />
           ) : null}
-          {next.manualStatus && next.label ? (
+          {canAct && next.manualStatus && next.label ? (
             <Button size="lg" disabled={isPending} onClick={() => apply(next.manualStatus!)}>
               {isPending ? 'Updating…' : next.label}
               <ArrowRight />

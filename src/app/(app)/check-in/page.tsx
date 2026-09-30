@@ -1,5 +1,6 @@
 import { CalendarDays } from 'lucide-react';
-import { requireUser } from '@/lib/auth/authorize';
+import { hasPermission, requireUser } from '@/lib/auth/authorize';
+import { AccessDenied } from '@/components/shared/access-denied';
 import { getVehicleSummaries, type VehicleSummary } from '@/lib/vehicles/summary';
 import { getOpenAppointment } from '@/lib/appointments/service';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -14,6 +15,16 @@ export default async function CheckInPage({
   searchParams: Promise<{ vehicle?: string; appointment?: string }>;
 }) {
   const user = await requireUser();
+  // Opening a job card is a right of its own: seeing job cards is not enough.
+  if (
+    !hasPermission(
+      user,
+      'job_card.create',
+      user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
+    )
+  ) {
+    return <AccessDenied what="new job cards" />;
+  }
   const params = await searchParams;
 
   let appointment: AppointmentContext | null = null;

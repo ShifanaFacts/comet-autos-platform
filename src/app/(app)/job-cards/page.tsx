@@ -53,6 +53,11 @@ export default async function JobCardsPage({
     usesDetailedJobCards(user),
   ]);
 
+  const canCreate = hasPermission(
+    user,
+    'job_card.create',
+    user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
+  );
   const canRemove = hasPermission(
     user,
     REMOVAL['job-cards'].permission,
@@ -100,15 +105,17 @@ export default async function JobCardsPage({
                 ...(status ? { status } : {}),
               }).toString()}
             />
-            <Button
-              size="lg"
-              className="w-full sm:w-auto"
-              nativeButton={false}
-              render={<Link href="/check-in" />}
-            >
-              <Plus />
-              New job card
-            </Button>
+            {canCreate ? (
+              <Button
+                size="lg"
+                className="w-full sm:w-auto"
+                nativeButton={false}
+                render={<Link href="/check-in" />}
+              >
+                <Plus />
+                New job card
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -129,10 +136,12 @@ export default async function JobCardsPage({
               title="No job cards yet"
               description="Open one for a customer's vehicle — just who, which car, and what needs doing."
               action={
-                <Button nativeButton={false} render={<Link href="/check-in" />}>
-                  <Plus />
-                  New job card
-                </Button>
+                canCreate ? (
+                  <Button nativeButton={false} render={<Link href="/check-in" />}>
+                    <Plus />
+                    New job card
+                  </Button>
+                ) : undefined
               }
             />
           )

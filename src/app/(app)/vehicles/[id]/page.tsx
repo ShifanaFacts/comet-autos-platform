@@ -99,24 +99,26 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
                   Change owner
                 </LinkButton>
               ) : null}
-              <LinkButton
-                href={`/appointments/new?vehicle=${vehicle.id}`}
-                variant="outline"
-                size="lg"
-              >
-                <CalendarDays />
-                Book appointment
-              </LinkButton>
+              {hasPermission(user, 'appointment.create') ? (
+                <LinkButton
+                  href={`/appointments/new?vehicle=${vehicle.id}`}
+                  variant="outline"
+                  size="lg"
+                >
+                  <CalendarDays />
+                  Book appointment
+                </LinkButton>
+              ) : null}
               {openJob ? (
                 <LinkButton href={`/job-cards/${openJob.id}`} size="lg">
                   Open {openJob.jobNumber}
                 </LinkButton>
-              ) : (
+              ) : hasPermission(user, 'job_card.create') ? (
                 <LinkButton href={`/check-in?vehicle=${vehicle.id}`} size="lg">
                   <LogIn />
                   Check in
                 </LinkButton>
-              )}
+              ) : null}
             </>
           )
         }
