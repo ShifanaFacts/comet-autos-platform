@@ -54,6 +54,9 @@ export default async function QuotationsPage({
   const canCreate = hasPermission(user, 'quotation.create', {
     branchId: user.primaryBranchId ?? undefined,
   });
+  const canEdit = hasPermission(user, 'quotation.edit', {
+    branchId: user.primaryBranchId ?? undefined,
+  });
   const canRemove = hasPermission(user, REMOVAL.quotations.permission, {
     branchId: user.primaryBranchId ?? undefined,
   });
@@ -63,8 +66,8 @@ export default async function QuotationsPage({
   // What the ⋯ menu offers on a row. Every one is checked again on the server.
   const actionsFor = (q: QuotationListItem): QuotationAction[] => {
     const actions: QuotationAction[] = [];
-    if (q.status === 'DRAFT' && canCreate) actions.push('edit');
-    if ((q.status === 'SENT' || q.status === 'REJECTED') && canCreate) actions.push('revise');
+    if (q.status === 'DRAFT' && canEdit) actions.push('edit');
+    if ((q.status === 'SENT' || q.status === 'REJECTED') && canEdit) actions.push('revise');
     if (canCreate) actions.push('duplicate');
     if (q.status !== 'DRAFT') actions.push('pdf');
     if (canRemove && removable(q)) actions.push('delete');

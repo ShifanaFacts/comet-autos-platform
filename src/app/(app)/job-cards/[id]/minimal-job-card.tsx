@@ -80,6 +80,7 @@ export async function MinimalJobCard({
   const canInvoice = hasPermission(user, 'invoice.create', branch);
   const canPay = hasPermission(user, 'payment.create', branch);
   const canDeliver = hasPermission(user, 'job_card.approve', branch);
+  const canQuote = hasPermission(user, 'quotation.create', branch);
   const isFinished = status === 'DELIVERED' || status === 'CANCELLED';
 
   const [invoice, documents, photos, moneyAccounts, modes] = await Promise.all([
@@ -239,7 +240,7 @@ export async function MinimalJobCard({
               <FileText className="size-4" />
               Open quotation
             </Link>
-          ) : canEdit && QUOTABLE.includes(status) ? (
+          ) : canQuote && QUOTABLE.includes(status) ? (
             <div className="sm:w-48">
               <CreateEstimateButton jobCardId={jobCard.id} compact />
             </div>

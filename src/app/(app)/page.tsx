@@ -85,6 +85,7 @@ export default async function DashboardPage() {
   const canFinance = hasPermission(user, 'invoice.view', scope);
   const canInventory = hasPermission(user, 'inventory.view', scope);
   const canCheckIn = hasPermission(user, 'job_card.create', scope);
+  const canBook = hasPermission(user, 'appointment.create', scope);
   const canQuote = hasPermission(user, 'quotation.create', scope);
   const canInvoice = hasPermission(user, 'invoice.create', scope);
   const preferences = await getWorkshopPreferences(user.organizationId);
@@ -163,7 +164,7 @@ export default async function DashboardPage() {
           description="Job cards that are going through inspection, repair and quality check."
           action={
             <span className="flex flex-wrap gap-2">
-              {canCheckIn && show.appointments ? (
+              {canBook && show.appointments ? (
                 <QuickAction href="/appointments/new" icon={CalendarPlus} label="New appointment" />
               ) : null}
             </span>
@@ -191,7 +192,11 @@ export default async function DashboardPage() {
           className={sideColumn ? 'xl:col-span-8' : 'xl:col-span-12'}
         >
           <Suspense fallback={<Skeleton className="h-80 rounded-xl" />}>
-            <WorkshopActivity organizationId={org} detailed={standardJobCards} />
+            <WorkshopActivity
+              organizationId={org}
+              detailed={standardJobCards}
+              canCheckIn={canCheckIn}
+            />
           </Suspense>
         </Section>
 
@@ -211,7 +216,11 @@ export default async function DashboardPage() {
                 }
               >
                 <Suspense fallback={<Skeleton className="h-40 rounded-xl" />}>
-                  <TodaysAppointments organizationId={org} canCheckIn={canCheckIn} />
+                  <TodaysAppointments
+                    organizationId={org}
+                    canCheckIn={canCheckIn}
+                    canBook={canBook}
+                  />
                 </Suspense>
               </Section>
             ) : null}
@@ -658,10 +667,12 @@ async function ActionBoard({ organizationId }: { organizationId: string }) {
 async function WorkshopActivity({
   organizationId,
   detailed,
+  canCheckIn,
 }: {
   organizationId: string;
   /** Whether the workshop uses the standard job card, with every step. */
   detailed: boolean;
+  canCheckIn: boolean;
 }) {
   const [flow, recent] = await Promise.all([
     getWorkshopFlow(organizationId),
@@ -684,7 +695,11 @@ async function WorkshopActivity({
               icon={ClipboardList}
               title="No open job cards"
               description="A job card appears here as soon as it is created."
-              action={<QuickAction href="/check-in" icon={LogIn} label="New job card" />}
+              action={
+                canCheckIn ? (
+                  <QuickAction href="/check-in" icon={LogIn} label="New job card" />
+                ) : undefined
+              }
             />
           </div>
         ) : (
@@ -722,9 +737,11 @@ async function WorkshopActivity({
 async function TodaysAppointments({
   organizationId,
   canCheckIn,
+  canBook,
 }: {
   organizationId: string;
   canCheckIn: boolean;
+  canBook: boolean;
 }) {
   const appointments = await getTodaysAppointments(organizationId);
   if (appointments.length === 0) {
@@ -736,7 +753,7 @@ async function TodaysAppointments({
           title="No appointments today"
           description="Walk-ins can have a job card opened any time."
           action={
-            canCheckIn ? (
+            canBook ? (
               <QuickAction href="/appointments/new" icon={CalendarPlus} label="Book one" />
             ) : undefined
           }

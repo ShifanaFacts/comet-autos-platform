@@ -65,6 +65,8 @@ export default async function CustomerDetailPage({
   const canDelete = hasPermission(user, 'customer.delete');
   const canAddVehicle = hasPermission(user, 'vehicle.create');
   const canStatement = hasPermission(user, 'invoice.view');
+  const canCheckIn = hasPermission(user, 'job_card.create');
+  const canBook = hasPermission(user, 'appointment.create');
   const mergePreview =
     canDelete && customer.isActive ? await getMergePreview(user, customer.id) : null;
 
@@ -215,12 +217,13 @@ export default async function CustomerDetailPage({
                       <LinkButton href={`/job-cards/${open.id}`} size="sm">
                         Open {open.jobNumber}
                       </LinkButton>
-                    ) : (
+                    ) : canCheckIn ? (
                       <LinkButton href={`/check-in?vehicle=${vehicle.id}`} size="sm">
                         <LogIn />
                         Check in
                       </LinkButton>
-                    )}
+                    ) : null}
+                    {canBook ? (
                     <LinkButton
                       href={`/appointments/new?vehicle=${vehicle.id}`}
                       size="sm"
@@ -229,6 +232,7 @@ export default async function CustomerDetailPage({
                       <CalendarDays />
                       Book
                     </LinkButton>
+                    ) : null}
                     <LinkButton href={`/vehicles/${vehicle.id}`} size="sm" variant="ghost">
                       History
                     </LinkButton>

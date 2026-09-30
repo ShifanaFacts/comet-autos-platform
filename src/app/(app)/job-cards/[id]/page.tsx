@@ -142,7 +142,9 @@ export default async function JobCardWorkspacePage({
         status={status}
         estimate={estimate}
         invoice={documents.invoice}
-        canQuote={canEdit && !isFinished}
+        canQuote={
+          !isFinished && hasPermission(user, 'quotation.create', { branchId: jobCard.branchId })
+        }
         canInvoice={
           !isFinished && hasPermission(user, 'invoice.create', { branchId: jobCard.branchId })
         }
@@ -166,6 +168,7 @@ export default async function JobCardWorkspacePage({
             canHold={canEdit && secondary.includes('ON_HOLD')}
             canCancel={canEdit && secondary.includes('CANCELLED')}
             canComplete={canEdit && canMarkCompleted(jobCard.status)}
+            canAct={canEdit}
           />
           <Panel>
             <WorkflowProgress effectiveStatus={effectiveStatus} />

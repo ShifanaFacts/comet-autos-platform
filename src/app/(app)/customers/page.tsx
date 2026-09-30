@@ -60,10 +60,12 @@ export default async function CustomersPage({
               canImport={canImport}
               columns={importColumns('customers')}
             />
-            <LinkButton href="/customers/new" size="lg">
-              <UserPlus />
-              New customer
-            </LinkButton>
+            {canImport ? (
+              <LinkButton href="/customers/new" size="lg">
+                <UserPlus />
+                New customer
+              </LinkButton>
+            ) : null}
           </>
         }
       />
@@ -94,10 +96,12 @@ export default async function CustomersPage({
                 : 'Customers are added here or during Quick Check-In.'
             }
             action={
+              !canImport ? undefined : (
               <LinkButton href="/customers/new">
                 <UserPlus />
                 New customer
               </LinkButton>
+              )
             }
           />
         ) : (
