@@ -9,6 +9,10 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { DomainError } from '@/lib/errors';
 import { PERMISSION_CODES } from '@/lib/auth/permission-catalog';
 
+// Test files never go to the real storage account: always the local disk,
+// whatever the .env says. The driver reads this the first time it is used.
+process.env.STORAGE_DRIVER = 'local';
+
 export const RUN = Date.now().toString(36).toUpperCase();
 
 /** Every code the system enforces — a test owner holds the lot. */

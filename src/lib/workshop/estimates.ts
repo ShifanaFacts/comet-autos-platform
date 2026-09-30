@@ -874,7 +874,7 @@ export async function recordCustomerDecision(
   // image has nowhere to live.
   const signature =
     target?.jobCardId && input.decision === 'APPROVED' && input.method === 'IN_PERSON'
-      ? await prepareSignature(input.signature, user.organizationId, target.jobCardId)
+      ? await prepareSignature(input.signature)
       : null;
   return prisma.$transaction(async (tx) => {
     const estimate = await loadEstimate(tx, user.organizationId, estimateId);

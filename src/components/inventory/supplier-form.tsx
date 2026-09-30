@@ -26,6 +26,7 @@ export function SupplierForm({
     phone: string | null;
     email: string | null;
     address: string | null;
+    taxNumber?: string | null;
     isActive: boolean;
   };
   cancelHref: string;
@@ -67,6 +68,16 @@ export function SupplierForm({
           type="email"
           defaultValue={initial?.email ?? ''}
           error={errors.email}
+          className={INPUT}
+        />
+        <TextField
+          label="TRN"
+          name="taxNumber"
+          inputMode="numeric"
+          defaultValue={initial?.taxNumber ?? ''}
+          error={errors.taxNumber}
+          placeholder="15 digits"
+          hint="Their tax registration number. Scan bill uses it to recognise their bills."
           className={INPUT}
         />
         {initial ? (

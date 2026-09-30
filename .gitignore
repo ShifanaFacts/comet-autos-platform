@@ -53,3 +53,7 @@ next-env.d.ts
 /.check.ts
 /resp*.json
 /.responsive*.json
+
+# The OCR engine and language data for Scan bill: copied from node_modules by
+# `npm install` (scripts/copy-tesseract.mjs), never committed.
+public/tesseract/

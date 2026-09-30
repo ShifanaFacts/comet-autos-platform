@@ -22,6 +22,21 @@ export async function recordExpenseAction(
   return toClientResult(result);
 }
 
+/**
+ * Records an expense filled by Scan bill. Answers with the new expense's id
+ * so the browser can attach the scanned file to it.
+ */
+export async function recordScannedExpenseAction(
+  _prev: ActionResult<{ id: string }>,
+  formData: FormData,
+): Promise<ActionResult<{ id: string }>> {
+  const user = await requireUser();
+  const result = await runAction(() => recordExpense(user, formDataToObject(formData)));
+  if (result.ok || result.duplicate) refreshFinance();
+  const id = result.data?.id ?? (result.duplicate ? result.duplicateOf : null);
+  return { ...toClientResult(result), data: id ? { id } : undefined };
+}
+
 export async function voidExpenseAction(
   expenseId: string,
   _prev: ActionResult,

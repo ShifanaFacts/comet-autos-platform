@@ -802,7 +802,7 @@ export async function deliverVehicle(
   rawInput: unknown,
 ) {
   const input = parseInput(deliverySchema, rawInput);
-  const signature = await prepareSignature(input.signature, user.organizationId, jobCardId);
+  const signature = await prepareSignature(input.signature);
   return prisma.$transaction(async (tx) => {
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
     requirePermission(user, 'job_card.approve', { branchId: jobCard.branchId });

@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@/generated/prisma/client';
 import type { SignatureContext, SignerType } from '@/generated/prisma/enums';
 import { writeAuditLog } from '@/lib/audit';
 import { DomainError } from '@/lib/errors';
 import { getStorage, sniffImage } from '@/lib/storage';
+import { storageKey } from '@/lib/storage/keys';
 
 /*
  * Optional signatures confirming a customer decision or a vehicle handover.
@@ -27,7 +27,7 @@ export interface PreparedSignature {
  * the transaction that records it (storage isn't transactional; an unused
  * stored image is harmless and never referenced).
  */
-export async function prepareSignature(dataUrl: unknown, organizationId: string, jobCardId: string): Promise<PreparedSignature | null> {
+export async function prepareSignature(dataUrl: unknown): Promise<PreparedSignature | null> {
   if (typeof dataUrl !== 'string' || dataUrl.trim() === '') return null;
   if (!dataUrl.startsWith(PREFIX)) throw new DomainError('The signature could not be read. Clear it and sign again.', 'signature');
   const bytes = Buffer.from(dataUrl.slice(PREFIX.length), 'base64');
@@ -35,7 +35,7 @@ export async function prepareSignature(dataUrl: unknown, organizationId: string,
   if (bytes.length < 100 || sniffImage(bytes)?.mimeType !== 'image/png') {
     throw new DomainError('The signature could not be read. Clear it and sign again.', 'signature');
   }
-  const key = `org/${organizationId}/jobs/${jobCardId}/signatures/${randomUUID()}.png`;
+  const key = storageKey('signatures', 'png');
   await getStorage().put(key, bytes, 'image/png');
   return { key, bytes };
 }

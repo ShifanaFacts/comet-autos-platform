@@ -26,12 +26,16 @@ export interface ExpenseDraft {
   /** YYYY-MM-DD */
   expenseDate: string;
   vendorName: string;
+  /** The supplier's own bill / invoice number. */
+  billNumber?: string;
   paymentMethod: string;
   paidFromAccountId: string;
   categoryId: string;
 }
 
 const INPUT = '[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm';
+/** A value read from a scanned bill that needs checking. */
+const AMBER = '[&_input]:border-warning [&_input]:ring-2 [&_input]:ring-warning/40';
 
 /**
  * The code the form opens on: the expense's own; for one recorded before tax
@@ -61,6 +65,10 @@ export function ExpenseForm({
   taxCodes = [],
   modes = [],
   expense,
+  prefill,
+  flags = {},
+  hidden = {},
+  submit,
   onDone,
 }: {
   categories: { id: string; accountCode: string; accountName: string }[];
@@ -73,6 +81,14 @@ export function ExpenseForm({
   modes?: PaymentModeOption[];
   /** Set to correct an existing expense instead of recording a new one. */
   expense?: ExpenseDraft;
+  /** Starting values for a new expense (Scan bill). Anything left out starts empty. */
+  prefill?: Partial<Omit<ExpenseDraft, 'id'>>;
+  /** Fields to outline in amber, with the reason — a scanned value to check. */
+  flags?: Record<string, string>;
+  /** Extra values sent with the form. */
+  hidden?: Record<string, string>;
+  /** Saves a new expense in place of the usual action (Scan bill attaches the file too). */
+  submit?: (prev: ActionResult, formData: FormData) => Promise<ActionResult>;
   onDone?: () => void;
 }) {
   const router = useRouter();
@@ -80,7 +96,9 @@ export function ExpenseForm({
     async (prev, formData) => {
       const result = expense
         ? await updateExpenseAction(expense.id, prev, formData)
-        : await recordExpenseAction(prev, formData);
+        : submit
+          ? await submit(prev, formData)
+          : await recordExpenseAction(prev, formData);
       if (result.ok) {
         toast.success(expense ? 'Expense updated' : 'Expense recorded');
         router.refresh();
@@ -92,16 +110,23 @@ export function ExpenseForm({
   );
   const errors = state.fieldErrors ?? {};
   // Unique ids, so an edit dialog can sit on the same page as the record form.
-  const id = (name: string) => (expense ? name + '-' + expense.id : name);
+  const id = (name: string) =>
+    expense ? name + '-' + expense.id : prefill ? name + '-scan' : name;
+  /** What the form opens on: the expense being corrected, or a scanned bill's values. */
+  const start = expense ?? prefill;
+  const amber = (name: string) => (flags[name] ? ` ${AMBER}` : '');
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-6">
+      {Object.entries(hidden).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
       <TextField
         label="What was it for?"
         id={id('description')}
         name="description"
         required
-        defaultValue={expense?.description}
+        defaultValue={start?.description}
         placeholder="e.g. Monthly workshop rent — October"
         error={errors.description}
         className={INPUT}
@@ -112,7 +137,7 @@ export function ExpenseForm({
           <NativeSelect
             id={id('categoryId')}
             name="categoryId"
-            defaultValue={expense?.categoryId ?? ''}
+            defaultValue={start?.categoryId ?? ''}
             className="h-11 text-base md:text-sm"
           >
             <option value="">Uncategorised</option>
@@ -129,9 +154,10 @@ export function ExpenseForm({
           name="expenseDate"
           type="date"
           required
-          defaultValue={expense?.expenseDate ?? today()}
+          defaultValue={start?.expenseDate ?? today()}
           error={errors.expenseDate}
-          className={INPUT}
+          hint={flags.expenseDate}
+          className={INPUT + amber('expenseDate')}
         />
       </div>
 
@@ -142,11 +168,11 @@ export function ExpenseForm({
           name="amount"
           inputMode="decimal"
           required
-          defaultValue={expense?.amount}
+          defaultValue={start?.amount}
           placeholder="0.00"
           error={errors.amount}
-          hint="In AED."
-          className={`${INPUT} [&_input]:text-right [&_input]:tabular-nums`}
+          hint={flags.amount ?? 'In AED.'}
+          className={`${INPUT} [&_input]:text-right [&_input]:tabular-nums${amber('amount')}`}
         />
         {taxCodes.length ? (
           <Field
@@ -158,7 +184,7 @@ export function ExpenseForm({
             <NativeSelect
               id={id('taxCodeId')}
               name="taxCodeId"
-              defaultValue={startingCode(taxCodes, expense)}
+              defaultValue={prefill?.taxCodeId || startingCode(taxCodes, expense)}
               className="h-11 text-base md:text-sm"
             >
               {taxCodes.map((code) => (
@@ -188,7 +214,7 @@ export function ExpenseForm({
           label="Paid to"
           id={id('vendorName')}
           name="vendorName"
-          defaultValue={expense?.vendorName}
+          defaultValue={start?.vendorName}
           placeholder="e.g. the landlord or utility company"
           error={errors.vendorName}
           className={INPUT}
@@ -229,6 +255,18 @@ export function ExpenseForm({
             </NativeSelect>
           </Field>
         )}
+      </div>
+      <div className="grid gap-6 sm:grid-cols-2">
+        <TextField
+          label="Bill number"
+          id={id('billNumber')}
+          name="billNumber"
+          defaultValue={start?.billNumber}
+          placeholder="The supplier’s invoice or receipt number"
+          error={errors.billNumber}
+          hint="Optional. Lets the same bill be spotted if it is entered twice."
+          className={INPUT}
+        />
       </div>
       {moneyAccounts.length && !modes.length ? (
         <div className="grid gap-6 sm:grid-cols-2">

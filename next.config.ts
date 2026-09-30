@@ -23,6 +23,9 @@ const SECURITY_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  // The PDF text reader (Scan bill) is loaded by Node as it is, not bundled:
+  // its pdf.js build reads import.meta, which the bundler cannot follow.
+  serverExternalPackages: ['unpdf'],
   poweredByHeader: false,
   experimental: {
     serverActions: {

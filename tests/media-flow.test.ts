@@ -106,7 +106,7 @@ describe('job photos', () => {
     assert.equal(photos[0].uploadedBy?.fullName, a.owner.fullName);
     assert.equal(photos[0].description, 'Condition on arrival');
     // The list a screen renders never carries the storage key.
-    assert.ok(!JSON.stringify(photos).includes('org/'), 'no storage key reaches the screen');
+    assert.ok(!JSON.stringify(photos).includes('job-photos/'), 'no storage key reaches the screen');
 
     const audit = await prisma.auditLog.findFirst({
       where: { entityId: jobCardId, action: 'job_photo.uploaded' },
@@ -280,17 +280,13 @@ describe('job photos', () => {
 
 describe('signatures', () => {
   test('a signature must be a real PNG, and stays optional', async () => {
-    assert.equal(await prepareSignature(null, a.organizationId, jobCardId), null);
-    assert.equal(await prepareSignature('', a.organizationId, jobCardId), null);
+    assert.equal(await prepareSignature(null), null);
+    assert.equal(await prepareSignature(''), null);
     await expectDomainError(
-      prepareSignature('data:image/png;base64,bm90LWEtcG5n', a.organizationId, jobCardId),
+      prepareSignature('data:image/png;base64,bm90LWEtcG5n'),
       /signature/i,
     );
-    const prepared = await prepareSignature(
-      `data:image/png;base64,${PNG.toString('base64')}`,
-      a.organizationId,
-      jobCardId,
-    );
+    const prepared = await prepareSignature(`data:image/png;base64,${PNG.toString('base64')}`);
     assert.ok(prepared, 'a real PNG data URL is accepted');
   });
 

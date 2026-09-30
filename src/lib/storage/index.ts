@@ -88,7 +88,12 @@ class CloudinaryStorage implements FileStorage {
 
   async put(key: string, bytes: Buffer, contentType: string) {
     const { publicId } = this.split(key);
-    const params = { public_id: publicId, timestamp: String(Math.floor(Date.now() / 1000)), type: 'authenticated' };
+    const params: Record<string, string> = { public_id: publicId, timestamp: String(Math.floor(Date.now() / 1000)), type: 'authenticated' };
+    // The folder the file shows under in Cloudinary's Media Library. On an
+    // account in dynamic-folder mode the public id alone does not place it —
+    // without this every file sits loose at the top level.
+    const folder = publicId.includes('/') ? publicId.slice(0, publicId.lastIndexOf('/')) : '';
+    if (folder) params.asset_folder = folder;
     const form = new FormData();
     for (const [name, value] of Object.entries(params)) form.set(name, value);
     form.set('api_key', this.apiKey);

@@ -6,6 +6,7 @@ import { Paperclip, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { removeExpenseBillAction } from '@/app/(app)/finance/actions';
+import type { ActionResult } from '@/lib/errors';
 
 /**
  * The supplier's bills kept with an expense: each opens in a new tab; one
@@ -16,11 +17,17 @@ export function ExpenseBills({
   bills,
   canAttach,
   canRemove,
+  basePath = '/finance/expenses',
+  removeAction = removeExpenseBillAction,
 }: {
+  /** The record the bills belong to — an expense, or a purchase with `basePath` set. */
   expenseId: string;
   bills: { id: string; fileName: string }[];
   canAttach: boolean;
   canRemove: boolean;
+  /** Where the record's bill routes live: `<basePath>/<id>/bill` and `<basePath>/bills/<id>`. */
+  basePath?: string;
+  removeAction?: (documentId: string) => Promise<ActionResult>;
 }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
@@ -32,7 +39,7 @@ export function ExpenseBills({
     try {
       const form = new FormData();
       form.set('bill', file);
-      const response = await fetch(`/finance/expenses/${expenseId}/bill`, {
+      const response = await fetch(`${basePath}/${expenseId}/bill`, {
         method: 'POST',
         body: form,
       });
@@ -57,7 +64,7 @@ export function ExpenseBills({
       {bills.map((bill) => (
         <span key={bill.id} className="inline-flex items-center gap-0.5">
           <a
-            href={`/finance/expenses/bills/${bill.id}`}
+            href={`${basePath}/bills/${bill.id}`}
             target="_blank"
             rel="noreferrer"
             className="inline-flex max-w-[10rem] items-center gap-1 truncate text-xs text-primary hover:underline"
@@ -73,7 +80,7 @@ export function ExpenseBills({
               disabled={isPending}
               onClick={() =>
                 startTransition(async () => {
-                  const result = await removeExpenseBillAction(bill.id);
+                  const result = await removeAction(bill.id);
                   if (result.ok) router.refresh();
                   else toast.error(result.error ?? 'Could not remove it.');
                 })

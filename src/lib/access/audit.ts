@@ -132,6 +132,7 @@ const CREATE_SUFFIXES = [
   'marked',
   'set',
   'bill_attached',
+  'filled_from_scan',
   'link_shared',
   'sent',
 ];
@@ -537,6 +538,7 @@ const VERBS: Record<string, string> = {
   uploaded: 'Uploaded a photo to',
   removed: 'Removed a photo from',
   bill_attached: 'Attached a bill to',
+  filled_from_scan: 'Filled from a scanned bill:',
   bill_removed: 'Removed a bill from',
   merged_in: 'Merged a duplicate into',
   merged_away: 'Merged away duplicate',

@@ -81,6 +81,8 @@ const purchaseSchema = z.object({
       "The purchase date can't be in the future.",
     ),
   notes: z.string().trim().max(500).optional(),
+  /** Set when the form was filled by Scan bill: the fields the reader filled. */
+  scannedFields: z.string().trim().max(200).optional(),
   items: z
     .array(lineSchema, { error: 'Add at least one part.' })
     .min(1, 'Add at least one part.')
@@ -286,6 +288,23 @@ export async function createPurchase(
         total: header.totalAmount,
       },
     });
+    if (input.scannedFields) {
+      // The figures came from reading the bill, then the user's review.
+      await writeAuditLog(tx, {
+        organizationId: user.organizationId,
+        branchId: branch.id,
+        actorUserId: user.id,
+        action: 'purchase.filled_from_scan',
+        entityType: 'Purchase',
+        entityId: purchase.id,
+        afterData: {
+          filled: input.scannedFields.split(',').filter(Boolean),
+          purchaseNumber,
+          supplierInvoiceNumber: header.supplierInvoiceNumber,
+          total: header.totalAmount,
+        },
+      });
+    }
     if (options.receive) await receiveInTransaction(tx, user, purchase.id, null);
     await settleRequestKey(tx, user, rawInput, purchase.id);
     return purchase;

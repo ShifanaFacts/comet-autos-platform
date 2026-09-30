@@ -3,7 +3,7 @@ import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { getPurchaseFormOptions } from '@/lib/inventory/purchases';
 import { localDateString } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
-import { PurchaseForm } from '@/components/inventory/purchase-form';
+import { ScanPurchase } from '@/components/inventory/scan-purchase';
 import { createPurchaseAction } from '../../actions';
 
 export default async function NewPurchasePage({
@@ -28,10 +28,10 @@ export default async function NewPurchasePage({
           </Link>
         }
         title="New purchase"
-        description="Enter the supplier invoice. Receive it now if the parts arrived with it, or save a draft and receive later."
+        description="Enter the supplier invoice, or scan it. Receive it now if the parts arrived with it, or save a draft and receive later."
       />
       <Panel className="w-full sm:p-8">
-        <PurchaseForm
+        <ScanPurchase
           action={createPurchaseAction}
           parts={options.parts}
           suppliers={options.suppliers}
@@ -49,7 +49,6 @@ export default async function NewPurchasePage({
                 }
               : undefined
           }
-          isNew
           canReceive={hasPermission(user, 'purchase.approve')}
           cancelHref="/inventory/purchases"
         />

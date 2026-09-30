@@ -132,7 +132,7 @@ export async function decideQuoteAsCustomer(
   // signature image has nowhere to be filed.
   const signature =
     decision === 'APPROVED' && estimateJob?.jobCardId
-      ? await prepareSignature(signatureDataUrl, token.organizationId, estimateJob.jobCardId)
+      ? await prepareSignature(signatureDataUrl)
       : null;
 
   return prisma.$transaction(async (tx) => {

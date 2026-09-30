@@ -66,7 +66,7 @@ let a: TestOrg;
 let partner: AuthenticatedUser;
 let customerId: string;
 
-const now = () => toLocalDateTimeInput(new Date(Date.now() - 60_000));
+const now = () => toLocalDateTimeInput(new Date(Date.now() + 60_000));
 const today = () => localDateString();
 const isAuthError = (error: unknown) => error instanceof AuthError;
 
@@ -308,7 +308,7 @@ describe('a view-only Partner', () => {
         () =>
           createDirectInvoice(partner, {
             customerId,
-            items: [{ itemType: 'LABOUR', description: 'x', quantity: '1', unitPrice: '10' }],
+            items: [{ itemType: 'LABOUR', description: 'Not allowed', quantity: '1', unitPrice: '10' }],
           }),
       ],
       [
@@ -328,7 +328,7 @@ describe('a view-only Partner', () => {
         'recordExpense',
         () =>
           recordExpense(partner, {
-            description: 'x',
+            description: 'Not allowed',
             amount: '1',
             taxRate: '0',
             expenseDate: today(),

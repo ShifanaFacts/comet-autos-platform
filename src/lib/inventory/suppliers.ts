@@ -39,6 +39,15 @@ const supplierSchema = z.object({
     .refine((value) => !value || /^[+\d][\d\s()-]{5,}$/.test(value), 'Enter a valid phone number.'),
   email: z.union([z.literal(''), z.email('Enter a valid email address.')]).optional(),
   address: z.string().trim().max(300).optional(),
+  /** The supplier's TRN: fifteen digits, spaces and dashes allowed. */
+  taxNumber: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || value.replace(/[\s-]/g, '').match(/^\d{15}$/) !== null,
+      'A TRN is 15 digits.',
+    ),
   isActive: z.enum(['true', 'false']).optional(),
 });
 
@@ -49,6 +58,7 @@ function supplierData(input: z.infer<typeof supplierSchema>) {
     phone: input.phone ? normalizePhone(input.phone) : null,
     email: emptyToNull(input.email)?.toLowerCase() ?? null,
     address: emptyToNull(input.address),
+    taxNumber: emptyToNull(input.taxNumber)?.replace(/[\s-]/g, '') ?? null,
   };
 }
 

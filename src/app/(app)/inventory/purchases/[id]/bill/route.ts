@@ -2,15 +2,18 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getCurrentUser } from '@/lib/auth/session';
 import { toActionError } from '@/lib/errors';
-import { attachExpenseBill } from '@/lib/finance/expense-bills';
+import { attachFile } from '@/lib/documents/attachments';
 
 /**
- * Attaches the supplier's bill to an expense (multipart, one file). A route
+ * Attaches the supplier's bill to a purchase (multipart, one file). A route
  * handler rather than a Server Action because a PDF or photo can pass the
  * Server Action body limit; same rules otherwise: signed-in user, same-site
  * request, permission and ownership checked in the service.
  */
-export async function POST(request: NextRequest, ctx: RouteContext<'/finance/expenses/[id]/bill'>) {
+export async function POST(
+  request: NextRequest,
+  ctx: RouteContext<'/inventory/purchases/[id]/bill'>,
+) {
   const origin = request.headers.get('origin');
   if (origin && new URL(origin).host !== request.headers.get('host')) {
     return NextResponse.json(
@@ -40,8 +43,9 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/finance/exp
     return NextResponse.json({ ok: false, error: 'Choose the bill to attach.' }, { status: 400 });
   }
   try {
-    await attachExpenseBill(
+    await attachFile(
       user,
+      'Purchase',
       id,
       {
         name: file.name,
@@ -49,7 +53,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/finance/exp
       },
       { note: typeof form.get('note') === 'string' ? String(form.get('note')) : null },
     );
-    revalidatePath('/finance/expenses');
+    revalidatePath('/inventory/purchases', 'layout');
     return NextResponse.json({ ok: true });
   } catch (error) {
     const result = toActionError(error);
