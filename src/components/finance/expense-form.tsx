@@ -186,11 +186,22 @@ export function ExpenseForm({
       ? filsToString(toFils(amount.trim()) + toFils(vat.trim()))
       : '';
 
+  /** A VAT figure entered by hand. On a code without VAT, the standard VAT code is chosen. */
+  function typeVat(value: string) {
+    setOwnVat(value);
+    if (!rate && Number(value) > 0 && taxCodes.length) {
+      const standard =
+        taxCodes.find((code) => code.isDefault && Number(code.rate) > 0) ??
+        taxCodes.find((code) => code.treatment === 'STANDARD' && Number(code.rate) > 0);
+      if (standard) setCodeId(standard.id);
+    }
+  }
+
   function onTotal(value: string) {
     setTotalText(value);
     if (MONEY.test(amount.trim()) && MONEY.test(value.trim())) {
       const difference = toFils(value.trim()) - toFils(amount.trim());
-      if (difference >= 0) setOwnVat(filsToString(difference));
+      if (difference >= 0) typeVat(filsToString(difference));
     }
   }
 
@@ -244,7 +255,7 @@ export function ExpenseForm({
           label="Amount excluding VAT"
           id={id('amount')}
           name="amount"
-          inputMode="decimal"
+          numeric="money"
           required
           value={amount}
           onChange={(event) => setAmount(event.target.value)}
@@ -284,7 +295,7 @@ export function ExpenseForm({
             label="VAT rate"
             id={id('taxRate')}
             name="taxRate"
-            inputMode="decimal"
+            numeric="rate"
             value={typedRate}
             onChange={(event) => {
               setTypedRate(event.target.value);
@@ -302,17 +313,16 @@ export function ExpenseForm({
           label="VAT amount"
           id={id('taxAmount')}
           name="taxAmount"
-          inputMode="decimal"
+          numeric="money"
           value={vat}
           onChange={(event) => {
-            setOwnVat(event.target.value);
+            typeVat(event.target.value);
             setTotalText(null);
           }}
-          disabled={!rate}
           error={errors.taxAmount}
           hint={
             !rate ? (
-              'No VAT to reclaim on this tax code.'
+              'No VAT on this tax code. Type the bill’s VAT to switch to a VAT code.'
             ) : ownVat !== null && calculated && ownVat !== calculated ? (
               <span>
                 {`As on the bill. Calculated: ${formatMoney(calculated)}. `}
@@ -339,16 +349,11 @@ export function ExpenseForm({
           label="Total paid"
           name="totalPaid"
           id={id('total')}
-          inputMode="decimal"
+          numeric="money"
           value={totalText ?? total}
           onChange={(event) => onTotal(event.target.value)}
           onBlur={() => setTotalText(null)}
-          disabled={!rate}
-          hint={
-            rate
-              ? 'Amount plus VAT. Type the bill’s total and the VAT is worked back from it.'
-              : 'The same as the amount: no VAT.'
-          }
+          hint="Amount plus VAT. Type the bill’s total and the VAT is worked back from it."
           className={`${INPUT} [&_input]:text-right [&_input]:tabular-nums [&_input]:font-semibold`}
         />
       </div>

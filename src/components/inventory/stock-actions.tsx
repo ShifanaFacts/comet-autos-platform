@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState, useTransition } from 'react';
+import { NumberInput } from '@/components/forms/number-input';
 import { useRouter } from 'next/navigation';
 import { Ban, Minus, PackageCheck, Plus, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -92,7 +93,7 @@ export function AdjustStockForm({
         <TextField
           label={`Quantity (${unit})`}
           name="quantity"
-          inputMode="decimal"
+          numeric="quantity"
           required
           error={errors.quantity}
           hint={direction === 'OUT' ? `${formatMilli(onHandMilli)} on hand` : undefined}
@@ -257,9 +258,8 @@ export function ReceivePurchaseForm({
             </div>
             <label className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">Receiving</span>
-              <Input
+              <NumberInput kind="quantity"
                 name={`line:${line.id}`}
-                inputMode="decimal"
                 defaultValue={formatMilli(line.outstandingMilli)}
                 aria-label={`Quantity of ${line.sku} received`}
                 aria-invalid={errors[`line:${line.id}`] ? true : undefined}

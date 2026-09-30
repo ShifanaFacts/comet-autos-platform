@@ -257,7 +257,7 @@ function ReimburseButton({
           <TextField
             label="Amount"
             name="amount"
-            inputMode="decimal"
+            numeric="money"
             required
             defaultValue={owed}
             error={errors.amount}

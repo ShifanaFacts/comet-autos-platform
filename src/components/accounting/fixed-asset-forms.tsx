@@ -123,7 +123,7 @@ export function FixedAssetForm({
           label="Cost (AED, excluding recoverable VAT)"
           name="cost"
           required
-          inputMode="decimal"
+          numeric="money"
           error={errors.cost}
           hint="Include delivery and installation."
           className={NUMBER}
@@ -131,7 +131,7 @@ export function FixedAssetForm({
         <TextField
           label="Residual value (AED)"
           name="residualValue"
-          inputMode="decimal"
+          numeric="money"
           defaultValue="0"
           error={errors.residualValue}
           hint="What it should fetch at the end of its life. Usually 0."
@@ -201,7 +201,7 @@ export function FixedAssetForm({
             <TextField
               label="Depreciation charged up to then (AED)"
               name="openingDepreciation"
-              inputMode="decimal"
+              numeric="money"
               defaultValue="0"
               error={errors.openingDepreciation}
               hint="From the previous accounts or fixed asset register."
@@ -335,7 +335,7 @@ export function DisposeAssetForm({
         <TextField
           label="Sale proceeds (AED, excl. VAT)"
           name="proceeds"
-          inputMode="decimal"
+          numeric="money"
           defaultValue="0"
           error={errors.proceeds}
           hint="0 if scrapped. Invoice the buyer separately if VAT is due on the sale."

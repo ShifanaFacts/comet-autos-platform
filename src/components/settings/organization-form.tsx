@@ -122,7 +122,7 @@ export function OrganizationForm({ settings }: { settings: OrganizationSettings 
           <TextField
             label="VAT rate"
             name="vatRate"
-            inputMode="decimal"
+            numeric="rate"
             required
             defaultValue={settings.vatRate}
             error={errors.vatRate}

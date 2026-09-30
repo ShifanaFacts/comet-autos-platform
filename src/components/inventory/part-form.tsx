@@ -126,7 +126,7 @@ export function PartForm({
             label="Cost price (AED)"
             name="costPrice"
             required
-            inputMode="decimal"
+            numeric="money"
             defaultValue={initial?.costPrice}
             error={errors.costPrice}
             className={INPUT}
@@ -135,7 +135,7 @@ export function PartForm({
             label="Selling price (AED)"
             name="sellingPrice"
             required
-            inputMode="decimal"
+            numeric="money"
             defaultValue={initial?.sellingPrice}
             error={errors.sellingPrice}
             className={INPUT}
@@ -143,7 +143,7 @@ export function PartForm({
           <TextField
             label="VAT %"
             name="taxRate"
-            inputMode="decimal"
+            numeric="rate"
             defaultValue={initial?.taxRate || defaultVat}
             error={errors.taxRate}
             className={INPUT}
@@ -171,7 +171,7 @@ export function PartForm({
           <TextField
             label="Minimum stock"
             name="reorderLevel"
-            inputMode="decimal"
+            numeric="quantity"
             defaultValue={initial?.reorderLevel}
             error={errors.reorderLevel}
             hint="Shown as low stock at or below this."
@@ -181,7 +181,7 @@ export function PartForm({
             <TextField
               label="Opening stock"
               name="openingStock"
-              inputMode="decimal"
+              numeric="quantity"
               error={errors.openingStock}
               hint="Quantity on the shelf today. Leave empty if none."
               className={INPUT}
