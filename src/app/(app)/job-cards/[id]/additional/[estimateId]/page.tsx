@@ -1,7 +1,5 @@
-import Link from 'next/link';
 import { getTaxCodeOptions } from '@/lib/accounting/tax-codes';
 import { notFound } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
 import type { ApprovalMethod } from '@/generated/prisma/enums';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
@@ -57,14 +55,6 @@ export default async function AdditionalWorkPage({
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <JobContextHeader jobCard={jobCard} section="Additional work" />
-
-      <Link
-        href={`/job-cards/${jobCard.id}`}
-        className="inline-flex w-fit items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" />
-        Back to the repair
-      </Link>
 
       <Grid gap="xl" className="items-start xl:grid-cols-12">
         <Section

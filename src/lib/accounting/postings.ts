@@ -4,7 +4,7 @@ import { localDateString, parseCalendarDate } from '@/lib/format';
 import { milliToString, multiplyQuantity, signedToMilli, toFils } from '@/lib/money';
 import { withNetQuantities } from '@/lib/inventory/stock';
 import { purchaseLineAmounts } from '@/lib/inventory/purchases';
-import { resolveDefaultVatRate } from '@/lib/tax';
+import { getVatSettings, resolveDefaultVatRate } from '@/lib/tax';
 import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
 
 /*
@@ -184,11 +184,7 @@ type Poster = (
 ) => Promise<Posting | null>;
 
 async function isVatRegistered(tx: Tx, organizationId: string) {
-  const organization = await tx.organization.findUniqueOrThrow({
-    where: { id: organizationId },
-    select: { isVatRegistered: true },
-  });
-  return organization.isVatRegistered;
+  return (await getVatSettings(organizationId, tx)).isVatRegistered;
 }
 
 // ─── Invoices ───────────────────────────────────────────────────────────────

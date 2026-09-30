@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, CheckCircle2, Mail, MapPin, Phone, Wallet } from 'lucide-react';
+import { CheckCircle2, Mail, MapPin, Phone, Wallet } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { AuthError } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
@@ -43,14 +43,6 @@ export default async function SupplierPayablesPage({
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
-      <Link
-        href="/finance/payables"
-        className="-ml-2 inline-flex h-11 w-fit items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" />
-        Payables
-      </Link>
-
       <PageHeader
         eyebrow="Supplier account"
         title={supplier.name}

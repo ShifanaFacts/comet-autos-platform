@@ -43,7 +43,7 @@ export default async function SupplierDetailPage({ params }: { params: Promise<{
             href="/inventory/suppliers"
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← Suppliers
+            Suppliers
           </Link>
         }
         title={

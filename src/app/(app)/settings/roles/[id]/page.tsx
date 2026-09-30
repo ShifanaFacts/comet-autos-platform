@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Info, ShieldCheck, Users2 } from 'lucide-react';
+import { Info, ShieldCheck, Users2 } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getRoleDetail } from '@/lib/access/roles';
@@ -29,14 +29,6 @@ export default async function RoleDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
-      <Link
-        href="/settings/roles"
-        className="-ml-2 inline-flex h-11 w-fit items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" />
-        Roles & permissions
-      </Link>
-
       <PageHeader
         eyebrow="Role"
         title={role.name}

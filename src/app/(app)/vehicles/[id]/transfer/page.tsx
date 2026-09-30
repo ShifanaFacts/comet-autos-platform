@@ -60,7 +60,7 @@ export default async function TransferVehiclePage({
             href={`/vehicles/${vehicle.id}`}
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← {vehicle.make} {vehicle.model}
+            {vehicle.make} {vehicle.model}
           </Link>
         }
         leading={

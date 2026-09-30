@@ -19,7 +19,8 @@ function sectionOf(pathname: string) {
 }
 
 /**
- * Back — on every page below the menu: a job card, an invoice, a form. Goes
+ * The back icon beside a page's title — on every page below the menu: a job
+ * card, an invoice, a form. One per page, in the page header. Goes
  * to the page the user came from; opened directly (a shared link, a new
  * tab), it goes up to the page's menu section instead.
  */
@@ -35,11 +36,11 @@ export function BackButton() {
         if (window.history.length > 1) router.back();
         else router.push(sectionOf(pathname));
       }}
-      className="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none sm:px-3"
+      className="-ml-1.5 flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none print:hidden"
       aria-label="Back"
+      title="Back"
     >
-      <ArrowLeft className="size-4" />
-      <span className="hidden sm:inline">Back</span>
+      <ArrowLeft className="size-5" />
     </button>
   );
 }

@@ -1,6 +1,5 @@
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Clock, IdCard, Mail, MapPin, Phone, Pencil, ShieldCheck } from 'lucide-react';
+import { Clock, IdCard, Mail, MapPin, Phone, Pencil, ShieldCheck } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getUserDetail } from '@/lib/access/users';
@@ -75,14 +74,6 @@ export default async function UserDetailPage({
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
-      <Link
-        href="/settings/users"
-        className="-ml-2 inline-flex h-11 w-fit items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" />
-        Users & roles
-      </Link>
-
       <PageHeader
         eyebrow="User"
         title={detail.fullName}

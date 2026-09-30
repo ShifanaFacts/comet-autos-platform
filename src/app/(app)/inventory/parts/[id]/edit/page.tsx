@@ -39,7 +39,7 @@ export default async function EditPartPage({ params }: { params: Promise<{ id: s
             href={`/inventory/parts/${part.id}`}
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← {part.name}
+            {part.name}
           </Link>
         }
         title="Edit part"

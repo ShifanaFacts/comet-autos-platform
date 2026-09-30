@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { BackButton } from '@/components/shell/back-button';
 import { ChevronRight, Gauge, Phone, UserRound, Wrench } from 'lucide-react';
 import type { JobCardStatus } from '@/generated/prisma/enums';
 import { JobStatusBadge } from '@/components/shared/job-status-badge';
@@ -42,6 +43,7 @@ export function JobHero({
         aria-label="Breadcrumb"
         className="flex items-center gap-1.5 text-xs text-muted-foreground"
       >
+        <BackButton />
         <Link
           href="/job-cards"
           className="inline-flex min-h-9 items-center hover:text-foreground md:min-h-0"

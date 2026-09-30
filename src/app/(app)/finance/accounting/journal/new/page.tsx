@@ -22,7 +22,7 @@ export default async function NewJournalEntryPage() {
             href="/finance/accounting?view=journal"
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← Journal
+            Journal
           </Link>
         }
         title="New journal entry"

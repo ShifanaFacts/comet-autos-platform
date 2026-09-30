@@ -51,7 +51,7 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
       <PageHeader
         eyebrow={
           <Link href="/vehicles" className="tracking-normal normal-case hover:text-foreground">
-            ← Vehicles
+            Vehicles
           </Link>
         }
         leading={

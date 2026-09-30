@@ -24,7 +24,7 @@ export default async function NewPurchasePage({
             href="/inventory/purchases"
             className="tracking-normal normal-case hover:text-foreground"
           >
-            ← Purchases
+            Purchases
           </Link>
         }
         title="New purchase"

@@ -73,7 +73,7 @@ export default async function CustomerDetailPage({
       <PageHeader
         eyebrow={
           <Link href="/customers" className="tracking-normal normal-case hover:text-foreground">
-            ← Customers
+            Customers
           </Link>
         }
         title={customer.name}
