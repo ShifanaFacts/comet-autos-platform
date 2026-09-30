@@ -238,7 +238,7 @@ function quotationModel(
 export async function getQuotationDocument(user: AuthenticatedUser, estimateId: string) {
   const estimate = await fetchQuotation(user.organizationId, estimateId);
   if (!estimate) throw new NotFoundError('quotation');
-  requirePermission(user, 'job_card.view', { branchId: estimate.branchId });
+  requirePermission(user, 'quotation.view', { branchId: estimate.branchId });
   return quotationModel(estimate, await loadSeller(user.organizationId));
 }
 
@@ -666,7 +666,7 @@ async function creditNoteModel(
 
 export async function getCreditNoteDocument(user: AuthenticatedUser, creditNoteId: string) {
   const { branchId, model } = await creditNoteModel(user.organizationId, creditNoteId);
-  requirePermission(user, 'invoice.view', { branchId });
+  requirePermission(user, 'credit_note.view', { branchId });
   return model;
 }
 
@@ -680,7 +680,7 @@ export async function getInvoiceDocument(user: AuthenticatedUser, invoiceId: str
 export async function getReceiptDocument(user: AuthenticatedUser, paymentId: string) {
   const invoice = await fetchInvoice(user.organizationId, { paymentId });
   if (!invoice) throw new NotFoundError('receipt');
-  requirePermission(user, 'invoice.view', { branchId: invoice.branchId });
+  requirePermission(user, 'payment.view', { branchId: invoice.branchId });
   return receiptModel(invoice, paymentId, await invoiceSeller(invoice));
 }
 

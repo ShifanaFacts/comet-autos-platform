@@ -102,7 +102,7 @@ export interface PayableFilters {
  * lately. Three independent reads run together; nothing is fetched per row.
  */
 export async function getPayables(user: AuthenticatedUser, filters: PayableFilters = {}) {
-  requirePermission(user, 'inventory.view');
+  requirePermission(user, 'supplier_payment.view');
   const q = filters.q?.trim();
   const olderThan = Number(filters.olderThanDays) || 0;
 
@@ -215,7 +215,7 @@ export type PayableRow = Payables['rows'][number];
  * and what is still owed — with the purchases making up that balance.
  */
 export async function getSupplierPayables(user: AuthenticatedUser, supplierId: string) {
-  requirePermission(user, 'inventory.view');
+  requirePermission(user, 'supplier_payment.view');
   const supplier = await prisma.supplier.findFirst({
     where: { id: supplierId, organizationId: user.organizationId },
     select: { id: true, name: true, contactName: true, phone: true, email: true, address: true, isActive: true },
@@ -286,7 +286,7 @@ export async function listSupplierPayments(
   user: AuthenticatedUser,
   filters: { supplierId?: string; purchaseId?: string; q?: string; limit?: number } = {},
 ) {
-  requirePermission(user, 'inventory.view');
+  requirePermission(user, 'supplier_payment.view');
   const q = filters.q?.trim();
   const payments = await prisma.supplierPayment.findMany({
     where: {
@@ -347,7 +347,7 @@ export type SupplierPaymentRow = Awaited<ReturnType<typeof listSupplierPayments>
  * checks against, so the number on the screen is the number enforced.
  */
 export async function getPurchaseForPayment(user: AuthenticatedUser, purchaseId: string) {
-  requirePermission(user, 'inventory.view');
+  requirePermission(user, 'supplier_payment.view');
   const defaultVat = await resolveDefaultVatRate(user.organizationId);
   const purchase = await prisma.purchase.findFirst({
     where: {
@@ -397,7 +397,7 @@ export async function recordSupplierPayment(
   rawInput: unknown,
 ) {
   const input = parseInput(paymentSchema, rawInput);
-  requirePermission(user, 'accounting.create');
+  requirePermission(user, 'supplier_payment.create');
 
   const paidAt = parseLocalDateTime(input.paidAt);
   if (!paidAt) throw new DomainError('Enter a valid date and time.', 'paidAt');
@@ -530,10 +530,10 @@ export async function reverseSupplierPayment(
   rawInput: unknown,
 ) {
   const input = parseInput(reversalSchema, rawInput);
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'supplier_payment.delete');
 
   return prisma.$transaction(async (tx) => {
-    await claimRequestKey(tx, user, rawInput, 'supplier_payment.reverse');
+    await claimRequestKey(tx, user, rawInput, 'supplier_payment.reversal');
 
     const payment = await tx.supplierPayment.findFirst({
       where: { id: paymentId, organizationId: user.organizationId },

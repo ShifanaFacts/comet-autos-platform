@@ -305,7 +305,7 @@ export async function getSupplierStatement(
   supplierId: string,
   input: StatementPeriod = {},
 ) {
-  requirePermission(user, 'inventory.view');
+  requirePermission(user, 'supplier_payment.view');
   const organizationId = user.organizationId;
   const period = resolveStatementPeriod(input);
   const supplier = await prisma.supplier.findFirst({

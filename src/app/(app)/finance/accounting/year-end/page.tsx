@@ -28,7 +28,7 @@ export default async function YearEndPage({
   if (!hasPermission(user, 'accounting.view')) return <AccessDenied what="the accounts" />;
   const params = await searchParams;
   const data = await getYearEnd(user, { yearEnd: params.yearEnd });
-  const canEdit = hasPermission(user, 'accounting.edit');
+  const canEdit = hasPermission(user, 'accounting.approve');
   const { preview } = data;
   const ended = data.yearEnd < localDateString();
 

@@ -132,7 +132,7 @@ export async function recordPartUsage(user: AuthenticatedUser, jobCardId: string
     await claimRequestKey(tx, user, rawInput, 'part_usage.record');
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
     requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
-    requirePermission(user, 'inventory.issue', { branchId: jobCard.branchId });
+    requirePermission(user, 'inventory.edit', { branchId: jobCard.branchId });
     if (normalizeStatus(jobCard.status) !== 'REPAIR') {
       throw new DomainError('Parts can only be recorded while the job is in repair.');
     }
@@ -444,7 +444,7 @@ export async function returnPartFromJob(user: AuthenticatedUser, jobCardId: stri
     await claimRequestKey(tx, user, rawInput, 'part_usage.return');
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
     requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
-    requirePermission(user, 'inventory.issue', { branchId: jobCard.branchId });
+    requirePermission(user, 'inventory.edit', { branchId: jobCard.branchId });
     if (normalizeStatus(jobCard.status) !== 'REPAIR') {
       throw new DomainError('Parts can only be taken back while the job is in repair.');
     }

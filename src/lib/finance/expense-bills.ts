@@ -48,7 +48,7 @@ export async function attachExpenseBill(
   file: { name: string; bytes: Buffer },
 ) {
   const expense = await loadExpense(user.organizationId, expenseId);
-  requirePermission(user, 'accounting.create');
+  requirePermission(user, 'expense.create');
   if (file.bytes.length === 0) throw new DomainError(`“${file.name}” is empty.`, 'bill');
   if (file.bytes.length > MAX_BILL_BYTES) {
     throw new DomainError(`“${file.name}” is larger than 10 MB.`, 'bill');
@@ -91,7 +91,7 @@ export async function attachExpenseBill(
 
 /** The bills kept against each of these expenses, oldest first. */
 export async function listExpenseBills(user: AuthenticatedUser, expenseIds: string[]) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'expense.view');
   if (expenseIds.length === 0) return new Map<string, { id: string; fileName: string }[]>();
   const documents = await prisma.document.findMany({
     where: {
@@ -115,7 +115,7 @@ export async function listExpenseBills(user: AuthenticatedUser, expenseIds: stri
 
 /** A bill the user may open, with its bytes. */
 export async function readExpenseBill(user: AuthenticatedUser, documentId: string) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'expense.view');
   const document = await prisma.document.findFirst({
     where: {
       id: documentId,
@@ -134,7 +134,7 @@ export async function readExpenseBill(user: AuthenticatedUser, documentId: strin
 
 /** Removes a bill attached in error (soft delete: the record and file are kept). */
 export async function removeExpenseBill(user: AuthenticatedUser, documentId: string) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'expense.edit');
   return prisma.$transaction(async (tx) => {
     const document = await tx.document.findFirst({
       where: {

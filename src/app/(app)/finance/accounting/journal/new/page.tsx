@@ -11,7 +11,7 @@ export const metadata = { title: 'New journal entry' };
 /** A journal entry made by hand — for the accountant. */
 export default async function NewJournalEntryPage() {
   const user = await requireUser();
-  if (!hasPermission(user, 'accounting.edit')) return <AccessDenied what="the accounts" />;
+  if (!hasPermission(user, 'accounting.create')) return <AccessDenied what="the accounts" />;
   const accounts = await getAccountChoices(user);
 
   return (

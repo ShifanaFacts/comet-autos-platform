@@ -21,7 +21,7 @@ export default async function RecordSupplierPaymentPage({
 }) {
   const user = await requireUser();
   const { supplierId, purchaseId } = await params;
-  if (!hasPermission(user, 'accounting.create')) {
+  if (!hasPermission(user, 'supplier_payment.create')) {
     return <AccessDenied what="recording supplier payments" />;
   }
 

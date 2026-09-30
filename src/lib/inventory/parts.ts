@@ -156,7 +156,7 @@ export async function createPart(
   client?: Prisma.TransactionClient,
 ) {
   const input = parseInput(createPartSchema, rawInput);
-  requirePermission(user, 'inventory.manage');
+  requirePermission(user, 'inventory.create');
 
   const run = async (tx: Prisma.TransactionClient) => {
     await claimRequestKey(tx, user, rawInput, 'part.create');
@@ -211,7 +211,7 @@ export async function createPart(
 /** Edits catalogue details. Stock is never edited here — only through ledger movements. */
 export async function updatePart(user: AuthenticatedUser, partId: string, rawInput: unknown) {
   const input = parseInput(updatePartSchema, rawInput);
-  requirePermission(user, 'inventory.manage');
+  requirePermission(user, 'inventory.create');
 
   return prisma.$transaction(async (tx) => {
     await lockPart(tx, user.organizationId, partId);
@@ -273,7 +273,7 @@ export async function deletePart(
   user: AuthenticatedUser,
   partId: string,
 ): Promise<{ outcome: 'deleted' | 'archived' }> {
-  requirePermission(user, 'inventory.manage');
+  requirePermission(user, 'inventory.delete');
 
   return prisma.$transaction(async (tx) => {
     await lockPart(tx, user.organizationId, partId);
@@ -373,9 +373,9 @@ export async function adjustStock(user: AuthenticatedUser, partId: string, rawIn
   const input = parseInput(adjustmentSchema, rawInput);
 
   return prisma.$transaction(async (tx) => {
-    await claimRequestKey(tx, user, rawInput, 'inventory.adjust');
+    await claimRequestKey(tx, user, rawInput, 'inventory.adjustment');
     const branch = await resolveInventoryBranch(user, tx);
-    requirePermission(user, 'inventory.adjust', { branchId: branch.id });
+    requirePermission(user, 'inventory.approve', { branchId: branch.id });
     const part = await tx.part.findFirst({
       where: { id: partId, organizationId: user.organizationId },
     });
@@ -439,7 +439,7 @@ export async function reverseMovement(
       include: { part: { select: { sku: true } } },
     });
     if (!original) throw new NotFoundError('stock movement');
-    requirePermission(user, 'inventory.adjust', { branchId: original.branchId });
+    requirePermission(user, 'inventory.approve', { branchId: original.branchId });
     if (!REVERSIBLE_TYPES.includes(original.transactionType)) {
       throw new DomainError(
         original.transactionType === 'JOB_CONSUMPTION'
@@ -665,7 +665,7 @@ export async function getPartDetail(user: AuthenticatedUser, partId: string) {
 export type PartDetail = Awaited<ReturnType<typeof getPartDetail>>;
 
 export async function getPartForEdit(user: AuthenticatedUser, partId: string) {
-  requirePermission(user, 'inventory.manage');
+  requirePermission(user, 'inventory.create');
   const part = await prisma.part.findFirst({
     where: { id: partId, organizationId: user.organizationId },
   });

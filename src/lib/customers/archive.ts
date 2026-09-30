@@ -58,7 +58,7 @@ export async function archiveCustomer(
   rawInput: unknown,
 ) {
   const input = parseInput(reasonSchema, rawInput);
-  requirePermission(user, 'customer.edit');
+  requirePermission(user, 'customer.delete');
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'customer.archive');
     const customer = await tx.customer.findFirst({
@@ -118,7 +118,7 @@ export async function archiveCustomer(
 }
 
 export async function restoreCustomer(user: AuthenticatedUser, customerId: string) {
-  requirePermission(user, 'customer.edit');
+  requirePermission(user, 'customer.delete');
   return prisma.$transaction(async (tx) => {
     const customer = await tx.customer.findFirst({
       where: { id: customerId, organizationId: user.organizationId },
@@ -171,7 +171,7 @@ export async function archiveVehicle(
   rawInput: unknown,
 ) {
   const input = parseInput(reasonSchema, rawInput);
-  requirePermission(user, 'vehicle.edit');
+  requirePermission(user, 'vehicle.delete');
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'vehicle.archive');
     const vehicle = await tx.vehicle.findFirst({
@@ -205,7 +205,7 @@ export async function archiveVehicle(
 }
 
 export async function restoreVehicle(user: AuthenticatedUser, vehicleId: string) {
-  requirePermission(user, 'vehicle.edit');
+  requirePermission(user, 'vehicle.delete');
   return prisma.$transaction(async (tx) => {
     const vehicle = await tx.vehicle.findFirst({
       where: { id: vehicleId, organizationId: user.organizationId },

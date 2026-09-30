@@ -35,9 +35,9 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
   const branch = { branchId: note.branchId };
   const isVoid = note.status === 'VOID';
   const refund = toFils(note.refundAmount.toString());
-  const canVoid = hasPermission(user, 'invoice.cancel', branch) && !creditNoteVoidBlocker(note);
+  const canVoid = hasPermission(user, 'credit_note.delete', branch) && !creditNoteVoidBlocker(note);
   const canRefund =
-    !isVoid && refund > 0 && !note.refundedOn && hasPermission(user, 'payment.reverse', branch);
+    !isVoid && refund > 0 && !note.refundedOn && hasPermission(user, 'payment.delete', branch);
   const share = toFils(note.discountAmount.toString());
   const moneyAccounts = canRefund ? (await getAccountChoices(user)).money : [];
 

@@ -246,7 +246,7 @@ describe('chart of accounts', () => {
     assert.equal(found?.isActive, false);
   });
 
-  test('changing the chart needs accounting.edit', async () => {
+  test('changing the chart needs more than accounting.view', async () => {
     const reader = { ...a.owner, orgWidePermissions: new Set(['accounting.view']) };
     await assert.rejects(
       createAccount(reader, { accountCode: 'X1', accountName: 'Nope', accountType: 'EXPENSE' }),

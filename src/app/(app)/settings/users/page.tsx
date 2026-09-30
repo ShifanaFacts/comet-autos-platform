@@ -68,7 +68,7 @@ export default async function UsersPage({
     listUsers(user, { ...params, status }),
     getAccessOptions(user),
   ]);
-  const canManage = hasPermission(user, 'user.manage');
+  const canManage = hasPermission(user, 'user.create');
   const filtered = Boolean(params.q || params.roleId || params.branchId || params.status);
 
   return (

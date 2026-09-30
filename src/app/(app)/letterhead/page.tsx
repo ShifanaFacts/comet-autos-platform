@@ -22,7 +22,7 @@ export default async function LetterheadPage() {
       <LetterheadEditor
         details={details}
         storageKey={`org:${user.organizationId}`}
-        canEditSettings={hasPermission(user, 'accounting.edit')}
+        canEditSettings={hasPermission(user, 'settings.edit')}
       />
     </Stack>
   );

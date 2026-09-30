@@ -30,6 +30,7 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
   }
   const openJob = vehicle.jobCards.find((job) => OPEN_JOB_STATUSES.includes(job.status));
   const canEdit = hasPermission(user, 'vehicle.edit');
+  const canDelete = hasPermission(user, 'vehicle.delete');
 
   const specs: [string, React.ReactNode][] = [
     ['Registration', vehicle.plateNumber],
@@ -78,7 +79,7 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
         }
         actions={
           !vehicle.isActive ? (
-            canEdit ? (
+            canDelete ? (
               <RestoreVehicleButton vehicleId={vehicle.id} plate={vehicle.plateNumber} />
             ) : undefined
           ) : (
@@ -89,7 +90,7 @@ export default async function VehicleDetailPage({ params }: { params: Promise<{ 
                   Edit
                 </LinkButton>
               ) : null}
-              {canEdit && !openJob ? (
+              {canDelete && !openJob ? (
                 <DeleteVehicleButton vehicleId={vehicle.id} plate={vehicle.plateNumber} />
               ) : null}
               {canEdit ? (

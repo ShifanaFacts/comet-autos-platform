@@ -60,7 +60,7 @@ export async function getQuotation(user: AuthenticatedUser, estimateId: string) 
     },
   });
   if (!estimate) throw new NotFoundError('quotation');
-  requirePermission(user, 'job_card.view', { branchId: estimate.branchId });
+  requirePermission(user, 'quotation.view', { branchId: estimate.branchId });
 
   // Every version of this quotation, newest first. A quotation on a work
   // order groups its chain by that job card; a standalone one walks back
@@ -145,7 +145,7 @@ export async function listQuotations(
   /** Rows to return. The screen shows a page; an export asks for everything. */
   limit = 200,
 ) {
-  requirePermission(user, 'job_card.view');
+  requirePermission(user, 'quotation.view');
   const q = filters.q?.trim();
   const status = (
     ['draft', 'awaiting', 'approved'].includes(filters.status ?? '') ? filters.status : ''

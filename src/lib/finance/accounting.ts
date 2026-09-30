@@ -77,7 +77,7 @@ function scope(user: AuthenticatedUser) {
 // ─── Profit & loss ──────────────────────────────────────────────────────────
 
 export async function getProfitAndLoss(user: AuthenticatedUser, input: PeriodInput = {}) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'reports.view');
   const period: ResolvedPeriod = resolvePeriod(input);
   const organizationId = user.organizationId;
   const branch = scope(user);
@@ -200,7 +200,7 @@ export type ProfitAndLoss = Awaited<ReturnType<typeof getProfitAndLoss>>;
 // ─── Cash ───────────────────────────────────────────────────────────────────
 
 export async function getCashSummary(user: AuthenticatedUser, input: PeriodInput = {}) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'reports.view');
   const period: ResolvedPeriod = resolvePeriod(input);
   const organizationId = user.organizationId;
   const branch = scope(user);
@@ -388,7 +388,7 @@ async function assertCodeFree(organizationId: string, code: string, exceptId?: s
 
 export async function createAccount(user: AuthenticatedUser, rawInput: unknown) {
   const input = parseInput(accountSchema, rawInput);
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.create');
   if (!input.accountType) throw new DomainError('Choose the kind of account.', 'accountType');
   const code = input.accountCode.toUpperCase();
   await assertCodeFree(user.organizationId, code);

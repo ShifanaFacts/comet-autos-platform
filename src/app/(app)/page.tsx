@@ -84,7 +84,7 @@ export default async function DashboardPage() {
   const canFinance = hasPermission(user, 'invoice.view', scope);
   const canInventory = hasPermission(user, 'inventory.view', scope);
   const canCheckIn = hasPermission(user, 'job_card.create', scope);
-  const canQuote = hasPermission(user, 'job_card.edit', scope);
+  const canQuote = hasPermission(user, 'quotation.create', scope);
   const canInvoice = hasPermission(user, 'invoice.create', scope);
   const preferences = await getWorkshopPreferences(user.organizationId);
   const standardJobCards = preferences.detailedJobCards;

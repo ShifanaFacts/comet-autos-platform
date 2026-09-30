@@ -62,10 +62,11 @@ export default async function CustomerDetailPage({
   const { customer, jobCards } = detail;
   const openJobs = jobCards.filter((job) => OPEN_JOB_STATUSES.includes(job.status));
   const canEdit = hasPermission(user, 'customer.edit');
+  const canDelete = hasPermission(user, 'customer.delete');
   const canAddVehicle = hasPermission(user, 'vehicle.create');
   const canStatement = hasPermission(user, 'invoice.view');
   const mergePreview =
-    canEdit && customer.isActive ? await getMergePreview(user, customer.id) : null;
+    canDelete && customer.isActive ? await getMergePreview(user, customer.id) : null;
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -86,7 +87,7 @@ export default async function CustomerDetailPage({
         }
         actions={
           !customer.isActive ? (
-            canEdit ? (
+            canDelete ? (
               <RestoreCustomerButton customerId={customer.id} name={customer.name} />
             ) : undefined
           ) : (
@@ -115,7 +116,7 @@ export default async function CustomerDetailPage({
                   preview={mergePreview}
                 />
               ) : null}
-              {canEdit ? (
+              {canDelete ? (
                 <DeleteCustomerButton customerId={customer.id} name={customer.name} />
               ) : null}
               {canAddVehicle ? (

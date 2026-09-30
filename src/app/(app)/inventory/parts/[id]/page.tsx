@@ -43,8 +43,8 @@ export default async function PartDetailPage({ params }: { params: Promise<{ id:
     lastPurchaseCost,
     usedOnJobsMilli,
   } = detail;
-  const canManage = hasPermission(user, 'inventory.manage');
-  const canAdjust = hasPermission(user, 'inventory.adjust', { branchId: branch.id });
+  const canManage = hasPermission(user, 'inventory.create');
+  const canAdjust = hasPermission(user, 'inventory.approve', { branchId: branch.id });
   const canPurchase = hasPermission(user, 'purchase.create', { branchId: branch.id });
   const unit = part.unitOfMeasure;
 

@@ -79,7 +79,7 @@ export async function MinimalJobCard({
   const canSeeInvoice = hasPermission(user, 'invoice.view', branch);
   const canInvoice = hasPermission(user, 'invoice.create', branch);
   const canPay = hasPermission(user, 'payment.create', branch);
-  const canDeliver = hasPermission(user, 'job_card.close', branch);
+  const canDeliver = hasPermission(user, 'job_card.approve', branch);
   const isFinished = status === 'DELIVERED' || status === 'CANCELLED';
 
   const [invoice, documents, photos, moneyAccounts, modes] = await Promise.all([

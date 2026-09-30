@@ -214,7 +214,7 @@ describe('workshop settings', () => {
       (error: unknown) => error instanceof AuthError,
     );
     // Seeing the settings does not imply being able to change them.
-    const readOnly = { ...a.owner, orgWidePermissions: new Set(['accounting.view']) };
+    const readOnly = { ...a.owner, orgWidePermissions: new Set(['settings.view']) };
     assert.ok(await getOrganizationSettings(readOnly));
     await assert.rejects(
       updateOrganizationSettings(readOnly, valid()),
@@ -304,8 +304,8 @@ describe('job card style and menus', () => {
     assert.deepEqual((await getWorkshopPreferences(a.organizationId)).hiddenMenus, []);
   });
 
-  test('changing either needs accounting.edit, and stays inside the workshop', async () => {
-    const readOnly = { ...a.owner, orgWidePermissions: new Set(['accounting.view']) };
+  test('changing either needs settings.edit, and stays inside the workshop', async () => {
+    const readOnly = { ...a.owner, orgWidePermissions: new Set(['settings.view']) };
     await assert.rejects(
       setDetailedJobCards(readOnly, true),
       (error: unknown) => error instanceof AuthError,

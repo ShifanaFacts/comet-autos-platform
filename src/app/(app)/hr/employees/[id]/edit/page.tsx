@@ -11,7 +11,7 @@ const isoDate = (value: Date | null) => (value ? value.toISOString().slice(0, 10
 
 export default async function EditEmployeePage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
-  if (!hasPermission(user, 'payroll.create')) return <AccessDenied what="editing employees" />;
+  if (!hasPermission(user, 'employee.edit')) return <AccessDenied what="editing employees" />;
   const { id } = await params;
 
   let employee;

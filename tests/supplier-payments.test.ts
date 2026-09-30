@@ -463,7 +463,7 @@ describe('history', () => {
 });
 
 describe('security', () => {
-  test('reading needs inventory.view; recording needs accounting.create', async () => {
+  test('reading needs supplier_payment.view; recording needs supplier_payment.create', async () => {
     // Someone with no stock rights at all cannot even look.
     const outsider = { ...a.owner, orgWidePermissions: new Set(['job_card.view']) };
     await assert.rejects(getPayables(outsider), (e: unknown) => e instanceof AuthError);
@@ -490,7 +490,10 @@ describe('security', () => {
     );
 
     // Someone who can see stock but not move money.
-    const stockOnly = { ...a.owner, orgWidePermissions: new Set(['inventory.view']) };
+    const stockOnly = {
+      ...a.owner,
+      orgWidePermissions: new Set(['inventory.view', 'supplier_payment.view']),
+    };
     assert.ok(await getPayables(stockOnly), 'they can look');
     await assert.rejects(
       recordSupplierPayment(stockOnly, purchaseId, {
@@ -511,7 +514,10 @@ describe('security', () => {
     );
 
     // Recording is not reversing.
-    const recorder = { ...a.owner, orgWidePermissions: new Set(['accounting.create']) };
+    const recorder = {
+      ...a.owner,
+      orgWidePermissions: new Set(['expense.create', 'supplier_payment.create']),
+    };
     await assert.rejects(
       reverseSupplierPayment(recorder, firstPaymentId, {
         reason: 'Still no',

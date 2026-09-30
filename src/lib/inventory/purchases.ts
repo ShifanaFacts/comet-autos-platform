@@ -240,7 +240,7 @@ export async function createPurchase(
     await claimRequestKey(tx, user, rawInput, 'purchase.create');
     const branch = await resolveInventoryBranch(user, tx);
     requirePermission(user, 'purchase.create', { branchId: branch.id });
-    if (options.receive) requirePermission(user, 'purchase.receive', { branchId: branch.id });
+    if (options.receive) requirePermission(user, 'purchase.approve', { branchId: branch.id });
     const supplierId = await requireActiveSupplier(tx, user.organizationId, input.supplierId);
     const lines = await prepareLines(tx, user.organizationId, input.items);
     const header = headerData(input, lines);
@@ -302,7 +302,7 @@ export async function updatePurchase(
 
   return prisma.$transaction(async (tx) => {
     const purchase = await lockPurchase(tx, user.organizationId, purchaseId);
-    requirePermission(user, 'purchase.create', { branchId: purchase.branchId });
+    requirePermission(user, 'purchase.edit', { branchId: purchase.branchId });
     if (purchase.status !== 'DRAFT') throw new DomainError('Only a draft purchase can be edited.');
     const supplierId = await requireActiveSupplier(tx, user.organizationId, input.supplierId);
     const lines = await prepareLines(tx, user.organizationId, input.items);
@@ -388,7 +388,7 @@ export async function receivePurchase(
 ) {
   const parsed = quantities ? parseInput(receiveSchema, quantities) : null;
   return prisma.$transaction(async (tx) => {
-    await claimRequestKey(tx, user, options, 'purchase.receive');
+    await claimRequestKey(tx, user, options, 'purchase.receipt');
     return receiveInTransaction(tx, user, purchaseId, parsed);
   });
 }
@@ -400,7 +400,7 @@ async function receiveInTransaction(
   quantities: Record<string, string> | null,
 ) {
   const purchase = await lockPurchase(tx, user.organizationId, purchaseId);
-  requirePermission(user, 'purchase.receive', { branchId: purchase.branchId });
+  requirePermission(user, 'purchase.approve', { branchId: purchase.branchId });
   if (!(['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED'] as PurchaseStatus[]).includes(purchase.status)) {
     throw new DomainError(
       purchase.status === 'RECEIVED'
@@ -469,7 +469,7 @@ async function receiveInTransaction(
 export async function cancelPurchase(user: AuthenticatedUser, purchaseId: string) {
   return prisma.$transaction(async (tx) => {
     const purchase = await lockPurchase(tx, user.organizationId, purchaseId);
-    requirePermission(user, 'purchase.create', { branchId: purchase.branchId });
+    requirePermission(user, 'purchase.delete', { branchId: purchase.branchId });
     if (purchase.status !== 'DRAFT' && purchase.status !== 'ORDERED') {
       throw new DomainError('Only a purchase with nothing received can be cancelled.');
     }
@@ -518,7 +518,7 @@ export async function listPurchases(
   /** Rows to return. The screen shows a page; an export asks for everything. */
   limit = 200,
 ) {
-  requirePermission(user, 'inventory.view');
+  requirePermission(user, 'purchase.view');
   const q = filters.q?.trim();
   const status =
     filters.status && PURCHASE_STATUS_LABEL[filters.status as PurchaseStatus]
@@ -569,7 +569,7 @@ export async function listPurchases(
 }
 
 export async function getPurchaseDetail(user: AuthenticatedUser, purchaseId: string) {
-  requirePermission(user, 'inventory.view');
+  requirePermission(user, 'purchase.view');
   const purchase = await prisma.purchase.findFirst({
     where: { id: purchaseId, organizationId: user.organizationId },
     include: {
@@ -628,7 +628,7 @@ export type PurchaseDetail = Awaited<ReturnType<typeof getPurchaseDetail>>;
 
 /** Draft purchase in the shape the purchase form edits. */
 export async function getPurchaseForEdit(user: AuthenticatedUser, purchaseId: string) {
-  requirePermission(user, 'purchase.create');
+  requirePermission(user, 'purchase.edit');
   const purchase = await prisma.purchase.findFirst({
     where: { id: purchaseId, organizationId: user.organizationId },
     include: { items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },

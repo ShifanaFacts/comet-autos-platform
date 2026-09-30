@@ -73,7 +73,7 @@ export default async function OutstandingPage({
 }) {
   const user = await requireUser();
   const canSeeCustomers = hasPermission(user, 'invoice.view');
-  const canSeeSuppliers = hasPermission(user, 'inventory.view');
+  const canSeeSuppliers = hasPermission(user, 'supplier_payment.view');
   if (!canSeeCustomers && !canSeeSuppliers) return <AccessDenied what="outstanding balances" />;
 
   const params = await searchParams;

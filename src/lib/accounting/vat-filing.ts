@@ -55,7 +55,7 @@ const fileSchema = z.object({
  * the VAT screen worked them out, booked into what is due to the FTA.
  */
 export async function fileVatReturn(user: AuthenticatedUser, rawInput: unknown) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'vat.create');
   const input = parseInput(fileSchema, rawInput);
   const from = parseCalendarDate(input.from);
   const to = parseCalendarDate(input.to);
@@ -160,7 +160,7 @@ export async function settleVatReturn(
   filingId: string,
   rawInput: unknown,
 ) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'vat.create');
   const input = parseInput(settleSchema, rawInput);
   const settledOn = parseCalendarDate(input.settledOn);
   if (!settledOn) throw new DomainError('Enter a valid date.', 'settledOn');
@@ -218,7 +218,7 @@ export async function settleVatReturn(
 
 /** The returns filed, newest first, with when each is due and where it stands. */
 export async function listVatFilings(user: AuthenticatedUser) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'vat.view');
   const filings = await prisma.vatFiling.findMany({
     where: { organizationId: user.organizationId },
     orderBy: { periodTo: 'desc' },

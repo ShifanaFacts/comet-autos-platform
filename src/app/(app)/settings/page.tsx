@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Building2, ChevronRight, Info, ShieldCheck } from 'lucide-react';
+import { Building2, ChevronRight, History, Info, ShieldCheck } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { getOrganizationSettings } from '@/lib/organization/settings';
 import { listBranches } from '@/lib/organization/branches';
@@ -14,14 +14,14 @@ import { EMIRATES } from '@/lib/vat-treatment';
 
 export default async function SettingsPage() {
   const user = await requireUser();
-  if (!hasPermission(user, 'accounting.view')) {
+  if (!hasPermission(user, 'settings.view')) {
     return <AccessDenied what="the workshop's settings" />;
   }
   const [settings, branches] = await Promise.all([
     getOrganizationSettings(user),
     listBranches(user),
   ]);
-  const canEdit = hasPermission(user, 'accounting.edit');
+  const canEdit = hasPermission(user, 'settings.edit');
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -88,6 +88,26 @@ export default async function SettingsPage() {
           />
         </div>
       </Section>
+
+      {hasPermission(user, 'audit.view') ? (
+        <Section title="Audit log" description="Every change anyone has made, read-only.">
+          <Link
+            href="/settings/audit"
+            className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-4 transition-colors hover:bg-muted/50 active:bg-muted sm:px-6"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <History className="size-5" />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium">Audit log</span>
+              <span className="text-sm text-muted-foreground">
+                Who did what and when — reversals, voids and access changes highlighted.
+              </span>
+            </span>
+            <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
+          </Link>
+        </Section>
+      ) : null}
 
       {hasPermission(user, 'user.view') ? (
         <Section title="Access" description="Who can sign in, and what they are allowed to do.">

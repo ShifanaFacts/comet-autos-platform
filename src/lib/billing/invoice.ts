@@ -805,7 +805,7 @@ export async function deliverVehicle(
   const signature = await prepareSignature(input.signature, user.organizationId, jobCardId);
   return prisma.$transaction(async (tx) => {
     const jobCard = await lockJob(tx, user.organizationId, jobCardId);
-    requirePermission(user, 'job_card.close', { branchId: jobCard.branchId });
+    requirePermission(user, 'job_card.approve', { branchId: jobCard.branchId });
     const invoice = await tx.invoice.findFirst({
       where: {
         organizationId: user.organizationId,

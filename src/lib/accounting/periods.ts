@@ -60,7 +60,7 @@ const closeSchema = z.object({
  * what follows). Moving it earlier needs a reason, kept in the audit log.
  */
 export async function closeBooks(user: AuthenticatedUser, rawInput: unknown) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.approve');
   const input = parseInput(closeSchema, rawInput);
   const through = parseCalendarDate(input.through);
   if (!through) throw new DomainError('Choose a valid date.', 'through');
@@ -94,7 +94,7 @@ export async function closeBooks(user: AuthenticatedUser, rawInput: unknown) {
 
 /** Opens every period again. Needs a reason, kept in the audit log. */
 export async function reopenAllBooks(user: AuthenticatedUser, rawInput: unknown) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.approve');
   const { reason } = parseInput(
     z.object({
       reason: z.string().trim().min(3, 'Say why the books are being reopened.').max(500),

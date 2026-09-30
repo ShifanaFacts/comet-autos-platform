@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { History } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
+import { canExport } from '@/lib/data-transfer/exports';
 import { listMovements, REVERSIBLE_TYPES } from '@/lib/inventory/parts';
 import { MOVEMENT_LABEL } from '@/lib/inventory/labels';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -44,6 +45,7 @@ export default async function MovementsPage({
         actions={
           <ListDataActions
             entity="stock-movements"
+            canExport={canExport(user, 'stock-movements')}
             label="stock movements"
             search={new URLSearchParams(
               Object.entries(params).filter(([, value]) => Boolean(value)) as [string, string][],

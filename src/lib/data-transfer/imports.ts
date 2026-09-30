@@ -163,7 +163,7 @@ export const IMPORTS: Record<string, ImportDefinition> = {
   parts: {
     label: 'Parts',
     noun: 'part',
-    permission: 'inventory.manage',
+    permission: 'inventory.create',
     columns: [
       { header: 'SKU', required: true, example: 'BRK-PAD-001' },
       { header: 'Name', required: true, example: 'Front brake pad set' },
@@ -214,7 +214,7 @@ export const IMPORTS: Record<string, ImportDefinition> = {
   suppliers: {
     label: 'Suppliers',
     noun: 'supplier',
-    permission: 'inventory.manage',
+    permission: 'inventory.create',
     columns: [
       { header: 'Name', required: true, example: 'Gulf Auto Parts LLC' },
       { header: 'Contact name', example: 'Rashid' },

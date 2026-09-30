@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Plus, Truck } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
+import { canExport } from '@/lib/data-transfer/exports';
 import { listSuppliers } from '@/lib/inventory/suppliers';
 import { formatDate, formatMoney } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -36,7 +37,7 @@ export default async function SuppliersPage({
   const user = await requireUser();
   const query = ((await searchParams).q ?? '').trim();
   const suppliers = await listSuppliers(user, query);
-  const canManage = hasPermission(user, 'inventory.manage');
+  const canManage = hasPermission(user, 'inventory.create');
   const canRemove = hasPermission(user, REMOVAL.suppliers.permission);
   // Money still owed would drop out of Payables, so only an active supplier
   // owed nothing is offered. The server also checks open purchases.
@@ -56,6 +57,7 @@ export default async function SuppliersPage({
           <>
             <ListDataActions
               entity="suppliers"
+              canExport={canExport(user, 'suppliers')}
               label="suppliers"
               search={query ? new URLSearchParams({ q: query }).toString() : ''}
               canImport={canManage}

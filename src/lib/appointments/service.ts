@@ -13,13 +13,6 @@ import { APPOINTMENT_STATUS_LABEL } from '@/lib/workshop/labels';
 
 export { APPOINTMENT_STATUS_LABEL };
 
-/*
- * Appointments use the front-desk permission `job_card.create`: the V1
- * permission catalog has no dedicated appointment.* codes, and booking a
- * vehicle in is the same role as checking it in.
- */
-const PERMISSION = 'job_card.create';
-
 /** Statuses from which a booking can still turn into a check-in. */
 export const OPEN_APPOINTMENT_STATUSES: AppointmentStatus[] = ['SCHEDULED', 'CONFIRMED'];
 
@@ -48,7 +41,7 @@ export async function createAppointment(user: AuthenticatedUser, rawInput: unkno
     throw new DomainError('Your account has no branch assigned. Contact an administrator.');
   }
   const branchId = user.primaryBranchId;
-  requirePermission(user, PERMISSION, { branchId });
+  requirePermission(user, 'appointment.create', { branchId });
   const input = parseInput(appointmentSchema, rawInput);
 
   const scheduledAt = parseLocalDateTime(input.scheduledAt);
@@ -101,7 +94,10 @@ export async function changeAppointmentStatus(
       where: { id: appointmentId, organizationId: user.organizationId },
     });
     if (!appointment) throw new NotFoundError('appointment');
-    requirePermission(user, PERMISSION, { branchId: appointment.branchId });
+    // Cancelling is the appointment's delete; confirming or a no-show is an edit.
+    requirePermission(user, toStatus === 'CANCELLED' ? 'appointment.delete' : 'appointment.edit', {
+      branchId: appointment.branchId,
+    });
 
     if (!MANUAL_TRANSITIONS[appointment.status]?.includes(toStatus)) {
       throw new DomainError(
@@ -130,7 +126,7 @@ const appointmentInclude = {
 
 /** Today's board (every status, so the desk sees who came and who didn't) plus the next 14 days of open bookings. */
 export async function getAppointmentBoard(user: AuthenticatedUser) {
-  requirePermission(user, PERMISSION);
+  requirePermission(user, 'appointment.view');
   const { start, end } = localDayRange();
   const horizon = new Date(end.getTime() + 14 * 24 * 60 * 60 * 1000);
 
@@ -164,7 +160,7 @@ export async function getAppointmentBoard(user: AuthenticatedUser) {
 }
 
 export async function getOpenAppointment(user: AuthenticatedUser, appointmentId: string) {
-  requirePermission(user, PERMISSION);
+  requirePermission(user, 'appointment.view');
   return prisma.appointment.findFirst({
     where: {
       id: appointmentId,
@@ -199,7 +195,7 @@ export async function rescheduleAppointment(
       where: { id: appointmentId, organizationId: user.organizationId },
     });
     if (!appointment) throw new NotFoundError('appointment');
-    requirePermission(user, PERMISSION, { branchId: appointment.branchId });
+    requirePermission(user, 'appointment.edit', { branchId: appointment.branchId });
     if (!OPEN_APPOINTMENT_STATUSES.includes(appointment.status)) {
       throw new DomainError(
         `A ${APPOINTMENT_STATUS_LABEL[appointment.status].toLowerCase()} appointment can't be moved.`,

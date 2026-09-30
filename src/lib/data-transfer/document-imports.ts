@@ -690,7 +690,7 @@ export const DOCUMENT_IMPORTS: Record<string, ImportDefinition> = {
   quotations: {
     label: 'Quotations',
     noun: 'quotation',
-    permission: 'job_card.edit',
+    permission: 'quotation.create',
     note: LINES_NOTE,
     columns: [
       { header: 'Quotation no.', example: 'EST-000045', hint: 'Blank to number it here' },

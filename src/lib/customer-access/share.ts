@@ -77,7 +77,7 @@ async function shareQuotation(
       },
     });
     if (!estimate) throw new NotFoundError('quotation');
-    requirePermission(user, 'job_card.edit', { branchId: estimate.branchId });
+    requirePermission(user, 'quotation.edit', { branchId: estimate.branchId });
     if (estimate.status === 'DRAFT')
       throw new DomainError('Send the quotation first — a draft can’t be shared.');
     if (estimate._count.nextVersions > 0)

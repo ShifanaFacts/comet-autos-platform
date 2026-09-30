@@ -69,7 +69,7 @@ export interface VatReturnInput {
 }
 
 export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInput = {}) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'vat.view');
   const period: ResolvedPeriod = resolvePeriod({ ...input, period: input.period ?? 'quarter' });
   const organizationId = user.organizationId;
   const branch = user.primaryBranchId ? { branchId: user.primaryBranchId } : {};

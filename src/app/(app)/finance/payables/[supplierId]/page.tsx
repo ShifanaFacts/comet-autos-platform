@@ -38,8 +38,8 @@ export default async function SupplierPayablesPage({
     throw error;
   }
   const { supplier, totals, owing, purchases, payments } = data;
-  const canPay = hasPermission(user, 'accounting.create');
-  const canReverse = hasPermission(user, 'accounting.edit');
+  const canPay = hasPermission(user, 'supplier_payment.create');
+  const canReverse = hasPermission(user, 'supplier_payment.delete');
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">

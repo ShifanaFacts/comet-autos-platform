@@ -45,7 +45,7 @@ export default async function AdditionalWorkPage({
     throw error;
   }
   const { jobCard, status } = workspace;
-  const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
+  const canEdit = hasPermission(user, 'quotation.edit', { branchId: jobCard.branchId });
   const customer = jobCard.customer;
   const decision = estimate.approvals[0];
   const expired =

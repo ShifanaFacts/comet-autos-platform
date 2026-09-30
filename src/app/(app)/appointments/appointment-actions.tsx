@@ -24,9 +24,13 @@ import { changeAppointmentStatusAction, rescheduleAppointmentAction } from './ac
 export function AppointmentStatusButtons({
   appointmentId,
   canConfirm,
+  canMarkNoShow,
+  canCancel,
 }: {
   appointmentId: string;
   canConfirm: boolean;
+  canMarkNoShow: boolean;
+  canCancel: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -53,25 +57,29 @@ export function AppointmentStatusButtons({
             Confirm
           </Button>
         ) : null}
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={isPending}
-          onClick={() => apply('NO_SHOW', 'Marked as no-show')}
-        >
-          No-show
-        </Button>
-        <ConfirmAction
-          trigger={
-            <Button size="sm" variant="ghost" disabled={isPending}>
-              Cancel
-            </Button>
-          }
-          title="Cancel this appointment?"
-          description="The booking is kept in the history as cancelled."
-          confirmLabel="Cancel appointment"
-          onConfirm={async () => apply('CANCELLED', 'Appointment cancelled')}
-        />
+        {canMarkNoShow ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={isPending}
+            onClick={() => apply('NO_SHOW', 'Marked as no-show')}
+          >
+            No-show
+          </Button>
+        ) : null}
+        {canCancel ? (
+          <ConfirmAction
+            trigger={
+              <Button size="sm" variant="ghost" disabled={isPending}>
+                Cancel
+              </Button>
+            }
+            title="Cancel this appointment?"
+            description="The booking is kept in the history as cancelled."
+            confirmLabel="Cancel appointment"
+            onConfirm={async () => apply('CANCELLED', 'Appointment cancelled')}
+          />
+        ) : null}
       </div>
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </div>

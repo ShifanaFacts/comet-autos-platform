@@ -66,6 +66,8 @@ const TABS: { key: View; label: string; icon: typeof Scale }[] = [
 const VIEWS = TABS.map((tab) => tab.key);
 /** Views that cover a period; the others show a position on one date. */
 const PERIOD_VIEWS: View[] = ['profit', 'ledger', 'journal', 'cash'];
+/** The financial statements: Reports → View. The rest is Accounts → View. */
+const STATEMENT_VIEWS: View[] = ['profit', 'balance', 'trial', 'cash'];
 
 /** Picks the date a balance is shown on — a plain GET form, no script needed. */
 function AsOfPicker({ view, asOf }: { view: View; asOf: string }) {
@@ -216,10 +218,24 @@ export default async function AccountingPage({
   }>;
 }) {
   const user = await requireUser();
-  if (!hasPermission(user, 'accounting.view')) return <AccessDenied what="the accounts" />;
+  // The statements are Reports; the ledger, journal and chart are Accounts.
+  const canSeeAccounts = hasPermission(user, 'accounting.view');
+  const canSeeReports = hasPermission(user, 'reports.view');
+  if (!canSeeAccounts && !canSeeReports) return <AccessDenied what="the accounts" />;
+  const canPost = hasPermission(user, 'accounting.create');
   const canEdit = hasPermission(user, 'accounting.edit');
+  const canReverse = hasPermission(user, 'accounting.delete');
+  const canApprove = hasPermission(user, 'accounting.approve');
   const params = await searchParams;
-  const view: View = VIEWS.find((key) => key === params.view) ?? 'profit';
+  const view: View =
+    VIEWS.find((key) => key === params.view) ?? (canSeeReports ? 'profit' : 'journal');
+  if (!(STATEMENT_VIEWS.includes(view) ? canSeeReports : canSeeAccounts)) {
+    return (
+      <AccessDenied
+        what={STATEMENT_VIEWS.includes(view) ? 'the financial statements' : 'the ledger'}
+      />
+    );
+  }
   const periodInput = { period: params.period, from: params.from, to: params.to };
   // Switching tab keeps the period chosen.
   const search = new URLSearchParams(
@@ -228,7 +244,7 @@ export default async function AccountingPage({
   const tail = search ? `&${search}` : '';
 
   const [unbooked, closedThrough] = await Promise.all([
-    countUnbooked(user),
+    canSeeAccounts ? countUnbooked(user) : 0,
     booksClosedThrough(prisma, user.organizationId),
   ]);
   const choices = view === 'ledger' ? await getAccountChoices(user) : null;
@@ -260,7 +276,7 @@ export default async function AccountingPage({
               : 'The accounts every amount is booked to.'
         }
         actions={
-          canEdit ? (
+          canPost ? (
             <LinkButton href="/finance/accounting/journal/new" size="lg">
               <Plus />
               Journal entry
@@ -281,7 +297,7 @@ export default async function AccountingPage({
               records themselves don&apos;t change.
             </span>
           </p>
-          {canEdit ? <BookExistingButton count={unbooked} /> : null}
+          {canApprove ? <BookExistingButton count={unbooked} /> : null}
         </Panel>
       ) : null}
 
@@ -307,7 +323,7 @@ export default async function AccountingPage({
       ) : null}
       {journal ? (
         <Stack gap="xl">
-          <JournalView data={journal} canEdit={canEdit} />
+          <JournalView data={journal} canEdit={canReverse} />
           <Section
             title="Closing the books"
             description={
@@ -317,7 +333,7 @@ export default async function AccountingPage({
             }
           >
             <Panel>
-              {canEdit ? (
+              {canApprove ? (
                 <CloseBooksPanel
                   closedThrough={closedThrough ? closedThrough.toISOString().slice(0, 10) : null}
                   today={localDateString()}

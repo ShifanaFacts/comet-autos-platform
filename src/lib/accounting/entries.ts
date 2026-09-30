@@ -58,7 +58,7 @@ const manualSchema = z.object({
 
 /** Books an entry made by hand. */
 export async function createManualEntry(user: AuthenticatedUser, rawInput: unknown) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.create');
   const input = parseInput(manualSchema, rawInput);
   const date = parseCalendarDate(input.date);
   if (!date) throw new DomainError('Choose a valid date.', 'date');
@@ -156,7 +156,7 @@ export async function reverseManualEntry(
   entryId: string,
   rawInput: unknown,
 ) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.delete');
   const input = parseInput(reverseSchema, rawInput);
   const date = parseCalendarDate(input.date);
   if (!date) throw new DomainError('Choose a valid date.', 'date');
@@ -206,7 +206,7 @@ export async function reverseManualEntry(
  * removes an account.
  */
 export async function completeStandardChart(user: AuthenticatedUser) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.create');
   return prisma.$transaction(async (tx) => {
     await ensureChart(tx, user.organizationId);
     const added = await addStandardAccounts(tx, user.organizationId);
@@ -391,7 +391,7 @@ export async function countUnbooked(user: AuthenticatedUser) {
  * closed period) is reported without undoing the rest.
  */
 export async function bookExistingRecords(user: AuthenticatedUser) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.approve');
   const waiting = await unbooked(user.organizationId);
   const order: PostedSource[] = [
     'STOCK_MOVEMENT',

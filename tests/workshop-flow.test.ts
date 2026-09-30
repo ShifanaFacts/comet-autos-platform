@@ -40,21 +40,14 @@ import { getQuoteAccess, loadCustomerQuote, decideQuoteAsCustomer } from '@/lib/
 import { hashToken } from '@/lib/customer-access/tokens';
 import { toLocalDateTimeInput, localDateString } from '@/lib/format';
 import { resolveDefaultVatRate, UAE_STANDARD_VAT_RATE } from '@/lib/tax';
+import { PERMISSION_CODES } from '@/lib/auth/permission-catalog';
 
 const RUN = Date.now().toString(36).toUpperCase();
-const ALL_PERMISSIONS = [
-  'job_card.view',
-  'job_card.create',
-  'job_card.edit',
-  'job_card.assign',
-  'job_card.close',
-  'customer.view',
-  'customer.create',
-  'customer.edit',
-  'vehicle.view',
-  'vehicle.create',
-  'vehicle.edit',
-];
+// The front of the workshop: every action on jobs, quotations, appointments,
+// customers and vehicles — and nothing on stock, money or the team.
+const ALL_PERMISSIONS = PERMISSION_CODES.filter((code) =>
+  ['job_card', 'quotation', 'appointment', 'customer', 'vehicle'].includes(code.split('.')[0]),
+);
 
 interface TestOrg {
   owner: AuthenticatedUser;
@@ -104,7 +97,7 @@ async function createTestOrg(label: string): Promise<TestOrg> {
       id: viewerUser.id,
       email: viewerUser.email,
       fullName: viewerUser.fullName,
-      orgWidePermissions: new Set(['job_card.view', 'customer.view', 'vehicle.view']),
+      orgWidePermissions: new Set(['job_card.view', 'quotation.view', 'customer.view', 'vehicle.view']),
     },
     technicianIds: technicians.map((t) => t.id),
   };

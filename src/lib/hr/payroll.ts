@@ -58,11 +58,11 @@ export const PAYROLL_STATUS_LABEL: Record<PayrollStatus, string> = {
 
 /** Whether this user may see salary figures at all. */
 export function canSeePay(user: AuthenticatedUser) {
-  return hasPermission(user, 'payroll.create') || hasPermission(user, 'payroll.approve');
+  return hasPermission(user, 'payroll.view') || hasPermission(user, 'payroll.approve');
 }
 
 function requirePayAccess(user: AuthenticatedUser) {
-  if (!canSeePay(user)) throw new AuthError('Missing permission: payroll.create');
+  if (!canSeePay(user)) throw new AuthError('Missing permission: payroll.view');
 }
 
 const DAY_MS = 86_400_000;
@@ -469,7 +469,7 @@ async function transition(
  * corrected or leave approved late. Any hand-edited deductions are replaced.
  */
 export async function recalculatePayroll(user: AuthenticatedUser, payrollId: string) {
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'payroll.edit');
   return prisma.$transaction(async (tx) => {
     const payroll = await loadRun(tx, user, payrollId, ['DRAFT', 'CALCULATED'], 'recalculated');
     const before = totalsOf(await tx.payrollItem.findMany({ where: { payrollId: payroll.id } }));
@@ -530,7 +530,7 @@ export async function adjustDeduction(
   rawInput: unknown,
 ) {
   const input = parseInput(adjustSchema, rawInput);
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'payroll.edit');
   const deduction = toFils(input.deductions);
 
   return prisma.$transaction(async (tx) => {
@@ -637,7 +637,7 @@ const cancelSchema = z.object({
  */
 export async function cancelPayroll(user: AuthenticatedUser, payrollId: string, rawInput: unknown) {
   const input = parseInput(cancelSchema, rawInput);
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'payroll.delete');
   return prisma.$transaction(async (tx) => {
     const payroll = await loadRun(
       tx,

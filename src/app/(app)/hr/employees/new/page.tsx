@@ -7,7 +7,7 @@ import { createEmployeeAction } from '../../actions';
 
 export default async function NewEmployeePage() {
   const user = await requireUser();
-  if (!hasPermission(user, 'payroll.create')) return <AccessDenied what="adding employees" />;
+  if (!hasPermission(user, 'employee.create')) return <AccessDenied what="adding employees" />;
   const options = await getEmployeeFormOptions(user);
 
   return (

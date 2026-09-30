@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function RoleDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
-  if (!hasPermission(user, 'user.view')) {
+  if (!hasPermission(user, 'role.view')) {
     return <AccessDenied what="this role" />;
   }
   const { id } = await params;
@@ -25,7 +25,7 @@ export default async function RoleDetailPage({ params }: { params: Promise<{ id:
     if (error instanceof NotFoundError) notFound();
     throw error;
   }
-  const canManage = hasPermission(user, 'role.manage') && !role.isSystem;
+  const canManage = hasPermission(user, 'role.edit') && !role.isSystem;
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -50,7 +50,8 @@ export default async function RoleDetailPage({ params }: { params: Promise<{ id:
       {role.isSystem ? (
         <p className="flex items-start gap-2 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
           <Info className="mt-0.5 size-4 shrink-0" />
-          This is a built-in role and its permissions can’t be changed. Create a role of your own to
+          The Owner role is built in: it always holds every permission, its ticks can’t be
+          changed, and it can’t be taken from the last active owner. Create a role of your own to
           grant something different.
         </p>
       ) : null}

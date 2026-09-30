@@ -43,6 +43,8 @@ export function ListDataActions({
   search,
   /** Import is offered when the list allows it and the user may create rows. */
   canImport = false,
+  /** Export is offered when the user holds the module's Export permission. */
+  canExport = false,
   label,
   columns = [],
   note,
@@ -50,6 +52,7 @@ export function ListDataActions({
   entity: string;
   search?: string;
   canImport?: boolean;
+  canExport?: boolean;
   /** What the rows are called, e.g. "customers". */
   label: string;
   columns?: ImportColumn[];
@@ -68,22 +71,33 @@ export function ListDataActions({
     if (!open) setSession((current) => current + 1);
   }
 
+  if (!canImport && !canExport) return null;
+
   return (
     <>
       {/* Phone: one quiet menu beside the primary action. */}
       <div className="sm:hidden">
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<Button variant="outline" size="icon" className="size-12" aria-label="Import or export" />}
+            render={
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-12"
+                aria-label="Import or export"
+              />
+            }
           >
             <MoreHorizontal />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-48">
             {/* A real link: the browser downloads the file rather than routing to it. */}
-            <DropdownMenuItem className="gap-2.5 py-2.5" render={<a href={exportHref} />}>
-              <Download className="size-4" />
-              Export {label}
-            </DropdownMenuItem>
+            {canExport ? (
+              <DropdownMenuItem className="gap-2.5 py-2.5" render={<a href={exportHref} />}>
+                <Download className="size-4" />
+                Export {label}
+              </DropdownMenuItem>
+            ) : null}
             {canImport ? (
               <DropdownMenuItem className="gap-2.5 py-2.5" onClick={() => setImportOpen(true)}>
                 <Upload className="size-4" />
@@ -102,15 +116,17 @@ export function ListDataActions({
             Import
           </Button>
         ) : null}
-        <Button
-          variant="outline"
-          className="h-10"
-          nativeButton={false}
-          render={<a href={exportHref} />}
-        >
-          <Download />
-          Export
-        </Button>
+        {canExport ? (
+          <Button
+            variant="outline"
+            className="h-10"
+            nativeButton={false}
+            render={<a href={exportHref} />}
+          >
+            <Download />
+            Export
+          </Button>
+        ) : null}
       </div>
 
       {canImport ? (
@@ -198,7 +214,10 @@ function ImportDialog({
                 </p>
                 <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
                   {columns.map((column) => (
-                    <li key={column.header} className={column.required ? 'font-semibold' : 'text-muted-foreground'}>
+                    <li
+                      key={column.header}
+                      className={column.required ? 'font-semibold' : 'text-muted-foreground'}
+                    >
                       {column.header}
                       {column.required ? ' *' : ''}
                     </li>
@@ -273,9 +292,7 @@ function ImportReport({
         )}
       >
         <p className={cn('font-semibold', failed ? 'text-destructive' : 'text-success')}>
-          {failed
-            ? 'Nothing was imported'
-            : `${outcome.created} ${label} imported`}
+          {failed ? 'Nothing was imported' : `${outcome.created} ${label} imported`}
         </p>
         <p className="mt-1 text-muted-foreground">
           {failed
@@ -290,7 +307,9 @@ function ImportReport({
         <ul className="flex max-h-56 flex-col gap-1.5 overflow-y-auto text-sm">
           {outcome.errors.slice(0, 40).map((error) => (
             <li key={error.row} className="flex gap-2">
-              <span className="w-14 shrink-0 text-muted-foreground tabular-nums">Row {error.row}</span>
+              <span className="w-14 shrink-0 text-muted-foreground tabular-nums">
+                Row {error.row}
+              </span>
               <span>{error.message}</span>
             </li>
           ))}
@@ -308,9 +327,7 @@ function ImportReport({
               <span>{skip.reason}</span>
             </li>
           ))}
-          {outcome.skipped.length > 20 ? (
-            <li>…and {outcome.skipped.length - 20} more.</li>
-          ) : null}
+          {outcome.skipped.length > 20 ? <li>…and {outcome.skipped.length - 20} more.</li> : null}
         </ul>
       ) : null}
 

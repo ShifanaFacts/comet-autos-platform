@@ -239,8 +239,8 @@ export default async function VatPage({
   }
   const { period, boxes } = data;
   const payable = boxes.netFils >= 0;
-  const canFile = hasPermission(user, 'accounting.edit');
-  const canSeeFilings = hasPermission(user, 'accounting.view');
+  const canFile = hasPermission(user, 'vat.create');
+  const canSeeFilings = hasPermission(user, 'vat.view');
   const today = localDateString();
   const [filings, money] = canSeeFilings
     ? await Promise.all([

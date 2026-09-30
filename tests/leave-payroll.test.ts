@@ -165,7 +165,7 @@ describe('leave', () => {
   test('approve-now is ignored for someone who may not approve', async () => {
     const preparer = {
       ...a.owner,
-      orgWidePermissions: new Set(['payroll.view', 'payroll.create']),
+      orgWidePermissions: new Set(['employee.view', 'leave.view', 'leave.create']),
     };
     const leave = await requestLeave(preparer, {
       employeeId: tech,
@@ -211,7 +211,10 @@ describe('leave', () => {
 
 describe('salary', () => {
   test('pay is hidden from someone who only sees the team', async () => {
-    const teamOnly = { ...a.owner, orgWidePermissions: new Set(['payroll.view']) };
+    const teamOnly = {
+      ...a.owner,
+      orgWidePermissions: new Set(['employee.view', 'attendance.view', 'leave.view']),
+    };
     await assert.rejects(getSalaryHistory(teamOnly, tech), AuthError);
     await assert.rejects(getPayrollOverview(teamOnly), AuthError);
   });
@@ -300,7 +303,7 @@ describe('payroll run', () => {
   test('approving fixes the figures; paying needs the approver too', async () => {
     const preparer = {
       ...a.owner,
-      orgWidePermissions: new Set(['payroll.view', 'payroll.create']),
+      orgWidePermissions: new Set(['payroll.view', 'payroll.create', 'payroll.edit']),
     };
     await assert.rejects(approvePayroll(preparer, runId), AuthError);
     await approvePayroll(a.owner, runId);

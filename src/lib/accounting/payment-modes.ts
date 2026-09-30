@@ -120,7 +120,7 @@ export async function getPaymentModeOptions(
 // ─── The master screen ──────────────────────────────────────────────────────
 
 export async function listPaymentModes(user: AuthenticatedUser) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'settings.view');
   await ensurePaymentModes(user.organizationId);
   const [modes, accounts] = await Promise.all([
     prisma.paymentMode.findMany({
@@ -208,7 +208,7 @@ async function assertNameFree(tx: Tx, organizationId: string, name: string, exce
 }
 
 export async function createPaymentMode(user: AuthenticatedUser, rawInput: unknown) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'settings.create');
   const input = parseInput(modeSchema, rawInput);
   const data = readMode(input);
   const isDefault = ticked(input.isDefault);
@@ -244,7 +244,7 @@ export async function updatePaymentMode(
   modeId: string,
   rawInput: unknown,
 ) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'settings.edit');
   const input = parseInput(modeSchema, rawInput);
   const data = readMode(input);
 

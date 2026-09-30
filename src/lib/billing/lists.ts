@@ -121,7 +121,7 @@ export async function listPayments(
   filters: { q?: string; view?: PaymentView },
   limit = 200,
 ) {
-  requirePermission(user, 'invoice.view');
+  requirePermission(user, 'payment.view');
   const q = filters.q?.trim();
   const view = filters.view ?? 'received';
   const payments = await prisma.payment.findMany({

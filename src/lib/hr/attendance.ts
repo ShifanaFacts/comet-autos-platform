@@ -140,7 +140,7 @@ const recordSelect = {
  * records joined in memory by id. Never a query per person.
  */
 export async function getAttendanceDay(user: AuthenticatedUser, dateInput?: string) {
-  requirePermission(user, 'payroll.view');
+  requirePermission(user, 'attendance.view');
   const { key, date } = resolveDate(dateInput);
 
   const [employees, records] = await Promise.all([
@@ -214,7 +214,7 @@ export async function getEmployeeAttendance(
   employeeId: string,
   month?: string,
 ) {
-  requirePermission(user, 'payroll.view');
+  requirePermission(user, 'attendance.view');
   const key = /^\d{4}-\d{2}$/.test(month ?? '') ? month! : localDateString().slice(0, 7);
   const from = parseCalendarDate(`${key}-01`);
   if (!from) throw new DomainError('Choose a valid month.', 'month');
@@ -291,7 +291,7 @@ async function audit(
  */
 export async function clockIn(user: AuthenticatedUser, employeeId: string, rawInput: unknown = {}) {
   const input = parseInput(clockSchema, rawInput);
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'attendance.create');
   const { key, date } = resolveDate(input.date);
   const at = input.at ? parseLocalDateTime(input.at) : new Date();
   if (!at) throw new DomainError('Enter a valid time.', 'at');
@@ -343,7 +343,7 @@ export async function clockIn(user: AuthenticatedUser, employeeId: string, rawIn
  */
 export async function clockOut(user: AuthenticatedUser, employeeId: string, rawInput: unknown = {}) {
   const input = parseInput(clockSchema, rawInput);
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'attendance.create');
   const { key, date } = resolveDate(input.date);
   const at = input.at ? parseLocalDateTime(input.at) : new Date();
   if (!at) throw new DomainError('Enter a valid time.', 'at');
@@ -399,7 +399,7 @@ export async function markAttendance(
   rawInput: unknown,
 ) {
   const input = parseInput(markSchema, rawInput);
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'attendance.edit');
   const { key, date } = resolveDate(input.date);
   const worked = input.status === 'PRESENT' || input.status === 'HALF_DAY';
 

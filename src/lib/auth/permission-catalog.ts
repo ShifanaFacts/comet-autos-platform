@@ -1,264 +1,447 @@
 /*
  * The permission catalogue: one place naming every code the system enforces,
- * and how they group for a human reading a role.
+ * laid out as modules × actions so a role reads as a grid.
+ *
+ * Every code is `<module>.<action>`. The six actions mean the same thing in
+ * every module:
+ *
+ *   view     open the lists, records and documents
+ *   create   add a new record
+ *   edit     change a record
+ *   delete   delete, void, cancel, reverse or remove one
+ *   approve  sign something off (leave, payroll, a customer's approval,
+ *            receiving a delivery, adjusting stock, closing the books)
+ *   export   download a list as a spreadsheet
+ *
+ * A module only carries the actions that exist for it — a VAT return has no
+ * "delete", a receipt has no "approve". The grid shows an empty cell there.
  *
  * This is a description of the catalogue, not a second authorization system.
- * Enforcement stays exactly where it was — `requirePermission` against the
- * codes a session resolved from the database. The seed and the
- * `ensure-permissions` script write these rows; nothing here grants anything.
+ * Enforcement stays where it was — `requirePermission` against the codes a
+ * session resolved from the database. The seed and `npm run db:permissions`
+ * write these rows; nothing here grants anything.
  */
+
+export const PERMISSION_ACTIONS = [
+  'view',
+  'create',
+  'edit',
+  'delete',
+  'approve',
+  'export',
+] as const;
+export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
+
+export const ACTION_LABELS: Record<PermissionAction, string> = {
+  view: 'View',
+  create: 'Create',
+  edit: 'Edit',
+  delete: 'Delete',
+  approve: 'Approve',
+  export: 'Export',
+};
 
 export interface PermissionModule {
   /** The `module` column on Permission — the prefix of every code in it. */
   key: string;
   label: string;
-  /** What a person actually gets, in terms of the screens they will use. */
-  covers: string;
-  permissions: { code: string; label: string; detail: string }[];
+  /** One line: what the module is, in terms of the screens people use. */
+  description: string;
+  /** Which of the six actions exist here, and what each one lets a person do. */
+  actions: Partial<Record<PermissionAction, string>>;
 }
 
 export const PERMISSION_MODULES: PermissionModule[] = [
   {
     key: 'job_card',
-    label: 'Job cards & workshop',
-    covers: 'Job cards, check-in, appointments, inspection, diagnosis, estimates and approvals.',
-    permissions: [
-      {
-        code: 'job_card.view',
-        label: 'View job cards',
-        detail: 'Open jobs, inspections, diagnoses, estimates and approvals.',
-      },
-      {
-        code: 'job_card.create',
-        label: 'Check vehicles in',
-        detail: 'Start a new job from the check-in screen.',
-      },
-      {
-        code: 'job_card.edit',
-        label: 'Work on jobs',
-        detail: 'Record inspection, diagnosis, repair, labour, quality checks and photos.',
-      },
-      {
-        code: 'job_card.assign',
-        label: 'Assign technicians',
-        detail: 'Put a technician on a job.',
-      },
-      {
-        code: 'job_card.close',
-        label: 'Hand vehicles back',
-        detail: 'Deliver a paid job and close it.',
-      },
-    ],
+    label: 'Job cards',
+    description: 'Check-in, inspection, diagnosis, repair, quality check, photos and handover.',
+    actions: {
+      view: 'Open job cards, inspections, the repair screen and photos.',
+      create: 'Check a vehicle in and open a job card; import job cards.',
+      edit: 'Record inspection, diagnosis, repair, labour, parts used, quality checks and photos.',
+      delete: 'Delete a job card or remove a photo.',
+      approve: 'Assign technicians, and hand a finished vehicle back to the customer.',
+      export: 'Download the job card list as a spreadsheet.',
+    },
+  },
+  {
+    key: 'quotation',
+    label: 'Quotations',
+    description: 'Quotations, estimates and extra work found during a job.',
+    actions: {
+      view: 'Open quotations and estimates.',
+      create: 'Write a quotation or estimate; import quotations.',
+      edit: 'Change, revise, duplicate, send and share a quotation.',
+      delete: 'Delete a draft quotation.',
+      approve: 'Record the customer’s approval or rejection.',
+      export: 'Download the quotation list as a spreadsheet.',
+    },
+  },
+  {
+    key: 'appointment',
+    label: 'Appointments',
+    description: 'The appointment board and bookings.',
+    actions: {
+      view: 'See the appointment board.',
+      create: 'Book an appointment.',
+      edit: 'Confirm, reschedule, or mark a no-show.',
+      delete: 'Cancel an appointment.',
+    },
   },
   {
     key: 'customer',
     label: 'Customers',
-    covers: 'The customer directory.',
-    permissions: [
-      { code: 'customer.view', label: 'View customers', detail: 'Browse and search customers.' },
-      {
-        code: 'customer.create',
-        label: 'Add customers',
-        detail: 'Create a customer, including during check-in.',
-      },
-      { code: 'customer.edit', label: 'Edit customers', detail: 'Change a customer’s details.' },
-    ],
+    description: 'The customer directory.',
+    actions: {
+      view: 'Browse and search customers.',
+      create: 'Add a customer, including during check-in; import customers.',
+      edit: 'Change a customer’s details.',
+      delete: 'Delete or restore a customer, and merge duplicates.',
+      export: 'Download the customer list as a spreadsheet.',
+    },
   },
   {
     key: 'vehicle',
     label: 'Vehicles',
-    covers: 'The vehicle directory and ownership transfers.',
-    permissions: [
-      {
-        code: 'vehicle.view',
-        label: 'View vehicles',
-        detail: 'Browse vehicles and their service history.',
-      },
-      {
-        code: 'vehicle.create',
-        label: 'Add vehicles',
-        detail: 'Register a vehicle, including during check-in.',
-      },
-      {
-        code: 'vehicle.edit',
-        label: 'Edit & transfer vehicles',
-        detail: 'Change details, and transfer a vehicle to a new owner.',
-      },
-    ],
+    description: 'The vehicle directory and ownership transfers.',
+    actions: {
+      view: 'Browse vehicles and their service history.',
+      create: 'Register a vehicle, including during check-in; import vehicles.',
+      edit: 'Change details, and transfer a vehicle to a new owner.',
+      delete: 'Delete or restore a vehicle.',
+      export: 'Download the vehicle list as a spreadsheet.',
+    },
   },
   {
     key: 'inventory',
-    label: 'Inventory',
-    covers: 'Parts, stock levels and stock movements.',
-    permissions: [
-      {
-        code: 'inventory.view',
-        label: 'View stock',
-        detail: 'Parts, suppliers, purchases and stock movements.',
-      },
-      {
-        code: 'inventory.issue',
-        label: 'Issue parts to jobs',
-        detail: 'Take stock out for a repair.',
-      },
-      {
-        code: 'inventory.adjust',
-        label: 'Adjust stock',
-        detail: 'Correct a stock level, with a reason.',
-      },
-      {
-        code: 'inventory.manage',
-        label: 'Manage parts & suppliers',
-        detail: 'Create and edit parts and suppliers.',
-      },
-    ],
+    label: 'Parts & stock',
+    description: 'Parts, suppliers, stock levels and stock movements.',
+    actions: {
+      view: 'Parts, suppliers, stock levels and movements.',
+      create: 'Add and change parts, prices and suppliers; import them.',
+      edit: 'Issue parts to a job and take them back (on the repair screen).',
+      delete: 'Delete a part or a supplier.',
+      approve: 'Adjust a stock level, with a reason, and reverse a stock movement.',
+      export: 'Download parts, suppliers and stock movements as spreadsheets.',
+    },
   },
   {
     key: 'purchase',
-    label: 'Purchasing',
-    covers: 'Buying parts from suppliers.',
-    permissions: [
-      { code: 'purchase.create', label: 'Raise purchases', detail: 'Order parts from a supplier.' },
-      {
-        code: 'purchase.receive',
-        label: 'Receive deliveries',
-        detail: 'Book a delivery in and move stock.',
-      },
-    ],
+    label: 'Purchases',
+    description: 'Buying parts from suppliers.',
+    actions: {
+      view: 'Open purchases and deliveries.',
+      create: 'Raise a purchase.',
+      edit: 'Change a purchase that hasn’t been received.',
+      delete: 'Cancel or delete a purchase.',
+      approve: 'Receive a delivery into stock.',
+      export: 'Download the purchase list as a spreadsheet.',
+    },
+  },
+  {
+    key: 'supplier_payment',
+    label: 'Supplier payments',
+    description: 'What the workshop owes suppliers, and paying them.',
+    actions: {
+      view: 'Payables, supplier balances and statements, and payments made.',
+      create: 'Pay a supplier.',
+      delete: 'Reverse a supplier payment.',
+    },
   },
   {
     key: 'invoice',
-    label: 'Invoicing',
-    covers: 'Customer invoices.',
-    permissions: [
-      {
-        code: 'invoice.view',
-        label: 'View invoices',
-        detail: 'Invoices, the finance overview and outstanding balances.',
-      },
-      {
-        code: 'invoice.create',
-        label: 'Issue invoices',
-        detail: 'Turn completed work into an invoice.',
-      },
-      { code: 'invoice.cancel', label: 'Cancel invoices', detail: 'Cancel an issued invoice.' },
-    ],
+    label: 'Sales invoices',
+    description: 'Customer invoices, receivables and customer statements.',
+    actions: {
+      view: 'Invoices, receivables, customer statements and the financial overview.',
+      create: 'Issue an invoice; import invoices.',
+      edit: 'Correct an issued invoice.',
+      delete: 'Void an invoice.',
+      export: 'Download the invoice list as a spreadsheet.',
+    },
   },
   {
     key: 'payment',
-    label: 'Payments',
-    covers: 'Money received from customers.',
-    permissions: [
-      { code: 'payment.view', label: 'View payments', detail: 'See what has been received.' },
-      {
-        code: 'payment.create',
-        label: 'Take payments',
-        detail: 'Record a payment against an invoice.',
-      },
-      {
-        code: 'payment.reverse',
-        label: 'Reverse payments',
-        detail: 'Reverse a payment recorded in error.',
-      },
-    ],
+    label: 'Receipts',
+    description: 'Money received from customers.',
+    actions: {
+      view: 'Receipts and payments received.',
+      create: 'Take a payment against an invoice.',
+      delete: 'Reverse a receipt, or pay out a credit note’s refund.',
+      export: 'Download the receipt list as a spreadsheet.',
+    },
+  },
+  {
+    key: 'credit_note',
+    label: 'Credit notes',
+    description: 'Credits issued against invoices.',
+    actions: {
+      view: 'Open credit notes.',
+      create: 'Issue a credit note against an invoice.',
+      delete: 'Void a credit note.',
+    },
+  },
+  {
+    key: 'expense',
+    label: 'Expenses',
+    description: 'Workshop expenses and the supplier bills behind them.',
+    actions: {
+      view: 'Expenses and their attached bills.',
+      create: 'Record an expense and attach its bill.',
+      edit: 'Change an expense, or remove an attached bill.',
+      delete: 'Void an expense.',
+    },
   },
   {
     key: 'accounting',
-    label: 'Accounting & settings',
-    covers: 'Expenses, VAT, the accounts, and the workshop’s own details on customer documents.',
-    permissions: [
-      {
-        code: 'accounting.view',
-        label: 'View accounts',
-        detail:
-          'Expenses, the VAT return, profit & loss, cash and the chart of accounts, and the workshop settings screen.',
-      },
-      { code: 'accounting.create', label: 'Record expenses', detail: 'Enter an expense.' },
-      {
-        code: 'accounting.edit',
-        label: 'Edit accounts & settings',
-        detail:
-          'Void expenses, manage the chart of accounts, and change the workshop details and VAT rate.',
-      },
-      {
-        code: 'accounting.export',
-        label: 'Export accounts',
-        detail: 'Take accounting data out of the system.',
-      },
-    ],
+    label: 'Accounts & ledger',
+    description:
+      'Chart of accounts, journal, general ledger, opening balances, year-end, bank reconciliation and fixed assets.',
+    actions: {
+      view: 'The chart of accounts, journal, ledger, opening balances, year-end, bank reconciliation and fixed assets.',
+      create:
+        'Post a manual journal entry; add accounts and fixed assets; start a bank reconciliation.',
+      edit: 'Change accounts and opening balances; tick off bank lines; run depreciation.',
+      delete:
+        'Reverse a journal entry; dispose of or delete a fixed asset; discard a reconciliation.',
+      approve:
+        'Close and reopen the books and the financial year; complete a bank reconciliation; book existing records.',
+    },
+  },
+  {
+    key: 'vat',
+    label: 'VAT returns',
+    description: 'The VAT return and filings.',
+    actions: {
+      view: 'The VAT return and past filings.',
+      create: 'File a return and record its payment.',
+    },
+  },
+  {
+    key: 'reports',
+    label: 'Financial statements & reports',
+    description:
+      'Profit & loss, balance sheet, cash flow and trial balance. The workshop report shows each area to whoever can view it.',
+    actions: {
+      view: 'Profit & loss, balance sheet, cash flow and trial balance.',
+      export: 'Download the financial statements as spreadsheets.',
+    },
+  },
+  {
+    key: 'employee',
+    label: 'Employees',
+    description: 'Employee records.',
+    actions: {
+      view: 'The team list and employee records.',
+      create: 'Add an employee.',
+      edit: 'Change an employee’s record.',
+    },
+  },
+  {
+    key: 'attendance',
+    label: 'Attendance',
+    description: 'Clocking in and out, and daily attendance.',
+    actions: {
+      view: 'Daily attendance and each person’s record.',
+      create: 'Clock someone in or out.',
+      edit: 'Mark or correct a day’s attendance.',
+    },
+  },
+  {
+    key: 'leave',
+    label: 'Leave',
+    description: 'Leave requests and approvals.',
+    actions: {
+      view: 'Leave requests and balances.',
+      create: 'Record a leave request.',
+      delete: 'Cancel leave.',
+      approve: 'Approve or reject leave.',
+    },
   },
   {
     key: 'payroll',
-    label: 'Team & payroll',
-    covers: 'Employee records, attendance, leave and pay.',
-    permissions: [
-      {
-        code: 'payroll.view',
-        label: 'View the team',
-        detail: 'Employee records, attendance and leave.',
-      },
-      {
-        code: 'payroll.create',
-        label: 'Manage employees & payroll',
-        detail: 'Add and edit employees, record leave, set salaries and prepare payroll.',
-      },
-      {
-        code: 'payroll.approve',
-        label: 'Approve leave & payroll',
-        detail: 'Approve or reject leave, sign off a payroll run and record it as paid.',
-      },
-      {
-        code: 'payroll.export',
-        label: 'Export payroll',
-        detail: 'Take payroll data out of the system.',
-      },
-    ],
+    label: 'Payroll',
+    description: 'Salaries and monthly payroll runs.',
+    actions: {
+      view: 'Salaries and payroll runs.',
+      create: 'Set salaries and run payroll.',
+      edit: 'Recalculate a run and adjust deductions.',
+      delete: 'Cancel a payroll run.',
+      approve: 'Approve a run and record it as paid.',
+    },
+  },
+  {
+    key: 'settings',
+    label: 'Workshop settings',
+    description: 'Workshop details, branches, letterhead, tax codes, payment modes and menus.',
+    actions: {
+      view: 'The settings screens, tax codes and payment modes.',
+      create: 'Add tax codes and payment modes.',
+      edit: 'Change workshop details, VAT and tax codes, payment modes, letterhead and menus.',
+    },
   },
   {
     key: 'user',
-    label: 'Access management',
-    covers: 'Who can sign in, and what they are allowed to do.',
-    permissions: [
-      {
-        code: 'user.view',
-        label: 'View users & roles',
-        detail: 'See the user list, a user’s roles, and what each role allows.',
-      },
-      {
-        code: 'user.manage',
-        label: 'Manage users',
-        detail:
-          'Create logins, assign roles and branches, activate and deactivate, reset passwords.',
-      },
-      {
-        code: 'role.manage',
-        label: 'Manage roles',
-        detail: 'Create roles and change which permissions a role carries.',
-      },
-    ],
+    label: 'Users',
+    description: 'Who can sign in.',
+    actions: {
+      view: 'The user list and each user’s roles.',
+      create: 'Create a login.',
+      edit: 'Change a user’s details and roles; reset a password.',
+      delete: 'Deactivate or reactivate an account.',
+    },
+  },
+  {
+    key: 'role',
+    label: 'Roles',
+    description: 'What each role is allowed to do.',
+    actions: {
+      view: 'See each role and what it allows.',
+      create: 'Create a role.',
+      edit: 'Change which permissions a role carries.',
+    },
+  },
+  {
+    key: 'audit',
+    label: 'Audit log',
+    description: 'Who did what, and when.',
+    actions: {
+      view: 'Read the audit log.',
+      export: 'Download the audit log as a spreadsheet.',
+    },
   },
 ];
 
+export function permissionCode(module: string, action: PermissionAction) {
+  return `${module}.${action}`;
+}
+
 /** Every code the system knows about, in catalogue order. */
 export const PERMISSION_CODES = PERMISSION_MODULES.flatMap((module) =>
-  module.permissions.map((permission) => permission.code),
-);
-
-/**
- * The access-management codes. They did not exist in the original V1
- * catalogue — before this, changing who could sign in meant SQL. They are
- * granted to whichever roles already carried every other permission, so no
- * one gained access they did not already effectively have.
- */
-export const ACCESS_PERMISSION_CODES = ['user.view', 'user.manage', 'role.manage'];
-
-const LABELS = new Map(
-  PERMISSION_MODULES.flatMap((module) =>
-    module.permissions.map((permission) => [permission.code, permission.label] as const),
+  PERMISSION_ACTIONS.filter((action) => module.actions[action]).map((action) =>
+    permissionCode(module.key, action),
   ),
 );
 
-/** A code's human label, falling back to the code itself for anything unknown. */
+const DETAILS = new Map(
+  PERMISSION_MODULES.flatMap((module) =>
+    PERMISSION_ACTIONS.filter((action) => module.actions[action]).map(
+      (action) => [permissionCode(module.key, action), module.actions[action]!] as const,
+    ),
+  ),
+);
+
+const MODULE_LABELS = new Map(PERMISSION_MODULES.map((module) => [module.key, module.label]));
+
+/** "Customers · Edit" — a code's human label, falling back to the code itself. */
 export function permissionLabel(code: string) {
-  return LABELS.get(code) ?? code;
+  const [module, action] = code.split('.');
+  const label = MODULE_LABELS.get(module);
+  if (!label || !DETAILS.has(code)) return code;
+  return `${label} · ${ACTION_LABELS[action as PermissionAction]}`;
 }
+
+/** What a code lets a person do, in a sentence. */
+export function permissionDetail(code: string) {
+  return DETAILS.get(code) ?? null;
+}
+
+/**
+ * Starting points for a new role. The admin adjusts the ticks after choosing
+ * one; nothing ties a role to the preset it began from.
+ */
+export interface RolePreset {
+  key: string;
+  label: string;
+  description: string;
+  codes: string[];
+}
+
+const every = (action: PermissionAction) =>
+  PERMISSION_CODES.filter((code) => code.endsWith(`.${action}`));
+const all = (...modules: string[]) =>
+  PERMISSION_CODES.filter((code) => modules.includes(code.split('.')[0]));
+const only = (...codes: string[]) => codes.filter((code) => PERMISSION_CODES.includes(code));
+
+export const ROLE_PRESETS: RolePreset[] = [
+  {
+    key: 'owner',
+    label: 'Owner-like',
+    description: 'Everything, including users, roles and the audit log.',
+    codes: [...PERMISSION_CODES],
+  },
+  {
+    key: 'manager',
+    label: 'Manager',
+    description: 'Runs the workshop day to day: everything except users, roles and the audit log.',
+    codes: PERMISSION_CODES.filter(
+      (code) => !['user', 'role', 'audit'].includes(code.split('.')[0]),
+    ).concat(only('user.view', 'role.view')),
+  },
+  {
+    key: 'accountant',
+    label: 'Accountant',
+    description: 'The books: invoices, receipts, expenses, payables, VAT, payroll and reports.',
+    codes: [
+      ...every('view').filter((code) => !['user.view', 'role.view'].includes(code)),
+      ...all(
+        'invoice',
+        'payment',
+        'credit_note',
+        'expense',
+        'supplier_payment',
+        'accounting',
+        'vat',
+        'reports',
+        'payroll',
+      ),
+      ...only('purchase.export', 'inventory.export', 'customer.export', 'settings.edit'),
+    ],
+  },
+  {
+    key: 'front_desk',
+    label: 'Front desk',
+    description: 'Check-in, customers, appointments, quotations, invoices and taking payments.',
+    codes: [
+      ...all('customer', 'vehicle', 'appointment').filter((code) => !code.endsWith('.delete')),
+      ...only(
+        'job_card.view',
+        'job_card.create',
+        'job_card.approve',
+        'quotation.view',
+        'quotation.create',
+        'quotation.edit',
+        'quotation.approve',
+        'invoice.view',
+        'invoice.create',
+        'payment.view',
+        'payment.create',
+        'credit_note.view',
+        'inventory.view',
+      ),
+    ],
+  },
+  {
+    key: 'technician',
+    label: 'Technician',
+    description: 'Works on jobs: inspection, diagnosis, repair, parts used and photos.',
+    codes: only(
+      'job_card.view',
+      'job_card.edit',
+      'quotation.view',
+      'customer.view',
+      'vehicle.view',
+      'inventory.view',
+      'inventory.edit',
+      'appointment.view',
+    ),
+  },
+  {
+    key: 'partner',
+    label: 'Partner (view only)',
+    description:
+      'Sees everything, changes nothing: every View, the report downloads and the audit log.',
+    codes: [...every('view'), ...only('reports.export', 'audit.view')],
+  },
+].map((preset) => ({ ...preset, codes: [...new Set(preset.codes)] }));

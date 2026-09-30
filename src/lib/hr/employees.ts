@@ -129,7 +129,7 @@ function employeeData(input: EmployeeInput) {
 
 export async function createEmployee(user: AuthenticatedUser, rawInput: unknown) {
   const input = parseInput(employeeSchema, rawInput);
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'employee.create');
   const data = employeeData(input);
   if (data.terminationDate && data.terminationDate < data.hireDate) {
     throw new DomainError('The leaving date is before the joining date.', 'terminationDate');
@@ -167,7 +167,7 @@ export async function updateEmployee(
   rawInput: unknown,
 ) {
   const input = parseInput(employeeSchema, rawInput);
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'employee.edit');
   const before = await prisma.employee.findFirst({
     where: { id: employeeId, organizationId: user.organizationId },
   });
@@ -226,7 +226,7 @@ export async function listEmployees(
   user: AuthenticatedUser,
   options: { query?: string; show?: 'all' | 'active' | 'inactive' } = {},
 ) {
-  requirePermission(user, 'payroll.view');
+  requirePermission(user, 'employee.view');
   const q = options.query?.trim() ?? '';
   const show = options.show ?? 'active';
   const employees = await prisma.employee.findMany({
@@ -260,7 +260,7 @@ export type EmployeeRow = Awaited<ReturnType<typeof listEmployees>>[number];
 
 /** One person: who they are, and the work attributed to them. */
 export async function getEmployeeDetail(user: AuthenticatedUser, employeeId: string) {
-  requirePermission(user, 'payroll.view');
+  requirePermission(user, 'employee.view');
   const employee = await prisma.employee.findFirst({
     where: { id: employeeId, organizationId: user.organizationId },
     include: {
@@ -325,7 +325,7 @@ export async function getEmployeeDetail(user: AuthenticatedUser, employeeId: str
 }
 
 export async function getEmployeeForEdit(user: AuthenticatedUser, employeeId: string) {
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'employee.edit');
   const employee = await prisma.employee.findFirst({
     where: { id: employeeId, organizationId: user.organizationId },
   });
@@ -335,7 +335,7 @@ export async function getEmployeeForEdit(user: AuthenticatedUser, employeeId: st
 
 /** Branches and the logins that aren't already somebody's, for the employee form. */
 export async function getEmployeeFormOptions(user: AuthenticatedUser, employeeId?: string) {
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'employee.edit');
   const [branches, users] = await Promise.all([
     prisma.branch.findMany({
       where: { organizationId: user.organizationId, isActive: true },

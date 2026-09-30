@@ -13,7 +13,7 @@ export default async function NewPartPage() {
   if (
     !hasPermission(
       user,
-      'inventory.manage',
+      'inventory.create',
       user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
     )
   ) {
