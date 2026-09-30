@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { AlertTriangle, Cog, History, PackageX, Plus } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
+import { canExport } from '@/lib/data-transfer/exports';
 import { listParts, type ActiveFilter, type StockFilter } from '@/lib/inventory/parts';
 import { formatMoney } from '@/lib/format';
 import { formatMilli, signedToMilli } from '@/lib/money';
@@ -48,7 +49,7 @@ export default async function PartsPage({ searchParams }: { searchParams: Promis
     stock,
     status,
   });
-  const canManage = hasPermission(user, 'inventory.manage');
+  const canManage = hasPermission(user, 'inventory.create');
   const canRemove = hasPermission(user, REMOVAL.parts.permission);
   // Stock on hand would vanish from the count, so only an active part with
   // none here is offered. The server also checks other branches and open
@@ -100,6 +101,7 @@ export default async function PartsPage({ searchParams }: { searchParams: Promis
           <>
             <ListDataActions
               entity="parts"
+              canExport={canExport(user, 'parts')}
               label="parts"
               search={new URLSearchParams(
                 Object.entries(params).filter(([, value]) => Boolean(value)) as [string, string][],

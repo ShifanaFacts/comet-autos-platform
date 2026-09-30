@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ClipboardList, Plus } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
+import { canExport } from '@/lib/data-transfer/exports';
 import { getAllowedNextStatuses } from '@/lib/workshop/job-status';
 import { usesDetailedJobCards } from '@/lib/organization/settings';
 import { countJobCards, listJobCards } from '@/lib/workshop/job-card-list';
@@ -89,6 +90,7 @@ export default async function JobCardsPage({
           <>
             <ListDataActions
               entity="work-orders"
+              canExport={canExport(user, 'work-orders')}
               label="job cards"
               canImport={canImport(user, 'work-orders')}
               columns={importColumns('work-orders')}

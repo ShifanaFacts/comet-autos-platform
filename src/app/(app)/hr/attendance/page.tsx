@@ -49,7 +49,7 @@ export default async function AttendancePage({
       throw error;
     }
   }
-  const canEdit = hasPermission(user, 'payroll.create');
+  const canEdit = hasPermission(user, 'attendance.create');
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">

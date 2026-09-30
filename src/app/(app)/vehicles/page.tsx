@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Car, UserPlus } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
+import { canExport } from '@/lib/data-transfer/exports';
 import { listVehicles } from '@/lib/vehicles/service';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { SearchField } from '@/components/shared/search-field';
@@ -53,6 +54,7 @@ export default async function VehiclesPage({
           <>
             <ListDataActions
               entity="vehicles"
+              canExport={canExport(user, 'vehicles')}
               label="vehicles"
               search={query ? new URLSearchParams({ q: query }).toString() : ''}
               canImport={canImport}

@@ -113,7 +113,7 @@ export async function listReconciliationAccounts(user: AuthenticatedUser) {
 /** Starts reconciling a money account against a statement. */
 export async function startReconciliation(user: AuthenticatedUser, rawInput: unknown) {
   const input = parseInput(startSchema, rawInput);
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.create');
   const statementDate = parseCalendarDate(input.statementDate);
   if (!statementDate) throw new DomainError('Enter the statement date.', 'statementDate');
   if (input.statementDate > localDateString()) {
@@ -355,7 +355,7 @@ export async function setReconciledLines(
 
 /** Completes a reconciliation whose cleared balance agrees with the statement. */
 export async function completeReconciliation(user: AuthenticatedUser, reconciliationId: string) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.approve');
   const detail = await getReconciliation(user, reconciliationId);
   if (detail.status !== 'IN_PROGRESS') throw new DomainError('This reconciliation is completed.');
   if (detail.differenceFils !== 0) {
@@ -387,7 +387,7 @@ export async function completeReconciliation(user: AuthenticatedUser, reconcilia
 
 /** Reopens the latest completed reconciliation of an account, to correct it. */
 export async function reopenReconciliation(user: AuthenticatedUser, reconciliationId: string) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.approve');
   return prisma.$transaction(async (tx) => {
     const reconciliation = await tx.bankReconciliation.findFirst({
       where: { id: reconciliationId, organizationId: user.organizationId },
@@ -427,7 +427,7 @@ export async function reopenReconciliation(user: AuthenticatedUser, reconciliati
 
 /** Discards a reconciliation in progress, ticks and all. The books are untouched. */
 export async function discardReconciliation(user: AuthenticatedUser, reconciliationId: string) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.delete');
   return prisma.$transaction(async (tx) => {
     const reconciliation = await lockOpen(tx, user.organizationId, reconciliationId);
     await tx.reconciledLine.deleteMany({

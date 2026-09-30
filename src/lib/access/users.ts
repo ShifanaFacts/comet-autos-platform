@@ -298,7 +298,7 @@ async function otherAdminCount(
       userRoles: {
         some: {
           ...ACTIVE_GRANT,
-          role: { rolePermissions: { some: { permission: { code: 'user.manage' } } } },
+          role: { rolePermissions: { some: { permission: { code: 'user.edit' } } } },
         },
       },
     },
@@ -317,7 +317,7 @@ async function refuseIfLastAdmin(
       userRoles: {
         some: {
           ...ACTIVE_GRANT,
-          role: { rolePermissions: { some: { permission: { code: 'user.manage' } } } },
+          role: { rolePermissions: { some: { permission: { code: 'user.edit' } } } },
         },
       },
     },
@@ -326,6 +326,36 @@ async function refuseIfLastAdmin(
   if ((await otherAdminCount(tx, organizationId, userId)) === 0) {
     throw new DomainError(
       `This is the only active account that can manage access. ${what} would leave the workshop locked out. Give someone else that role first.`,
+    );
+  }
+}
+
+/**
+ * The Owner (system) role must always stay with at least one active person:
+ * it is the one role that holds every permission and can't be edited, so
+ * losing its last holder would leave nobody with full access.
+ */
+async function refuseIfLastOwner(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  userId: string,
+  what: string,
+) {
+  const holdsOwner = await tx.userRole.count({
+    where: { userId, ...ACTIVE_GRANT, role: { isSystem: true } },
+  });
+  if (holdsOwner === 0) return;
+  const others = await tx.user.count({
+    where: {
+      organizationId,
+      isActive: true,
+      id: { not: userId },
+      userRoles: { some: { ...ACTIVE_GRANT, role: { isSystem: true } } },
+    },
+  });
+  if (others === 0) {
+    throw new DomainError(
+      `This is the last active Owner. ${what} would leave the workshop with nobody holding every permission. Make someone else an Owner first.`,
     );
   }
 }
@@ -371,7 +401,7 @@ async function resolveBranch(
  */
 export async function createUser(user: AuthenticatedUser, rawInput: unknown) {
   const input = parseInput(createUserSchema, rawInput);
-  requirePermission(user, 'user.manage');
+  requirePermission(user, 'user.create');
 
   const email = input.email.trim().toLowerCase();
   const roleIds = roleIdList(input.roleIds);
@@ -456,7 +486,7 @@ export async function createUser(user: AuthenticatedUser, rawInput: unknown) {
 /** Details and role grants. Who did what in the past is never rewritten. */
 export async function updateUser(user: AuthenticatedUser, userId: string, rawInput: unknown) {
   const input = parseInput(baseUserSchema, rawInput);
-  requirePermission(user, 'user.manage');
+  requirePermission(user, 'user.edit');
 
   const email = input.email.trim().toLowerCase();
   const roleIds = roleIdList(input.roleIds);
@@ -472,7 +502,7 @@ export async function updateUser(user: AuthenticatedUser, userId: string, rawInp
         primaryBranchId: true,
         userRoles: {
           where: ACTIVE_GRANT,
-          select: { id: true, roleId: true, role: { select: { name: true } } },
+          select: { id: true, roleId: true, role: { select: { name: true, isSystem: true } } },
         },
       },
     });
@@ -499,6 +529,11 @@ export async function updateUser(user: AuthenticatedUser, userId: string, rawInp
       const losingManage = [...held].some((id) => !wanted.has(id));
       if (losingManage)
         await refuseIfLastAdmin(tx, user.organizationId, userId, 'Changing its roles');
+      const losingOwner = before.userRoles.some(
+        (grant) => grant.role.isSystem && !wanted.has(grant.roleId),
+      );
+      if (losingOwner)
+        await refuseIfLastOwner(tx, user.organizationId, userId, 'Removing the Owner role');
     }
 
     if (email !== before.email) {
@@ -578,7 +613,7 @@ const activeSchema = z.object({
  */
 export async function setUserActive(user: AuthenticatedUser, userId: string, rawInput: unknown) {
   const input = parseInput(activeSchema, rawInput);
-  requirePermission(user, 'user.manage');
+  requirePermission(user, 'user.delete');
   const isActive = input.isActive === 'true';
 
   return prisma.$transaction(async (tx) => {
@@ -594,6 +629,7 @@ export async function setUserActive(user: AuthenticatedUser, userId: string, raw
         throw new DomainError('You can’t deactivate your own account.');
       }
       await refuseIfLastAdmin(tx, user.organizationId, userId, 'Deactivating it');
+      await refuseIfLastOwner(tx, user.organizationId, userId, 'Deactivating it');
     }
 
     const updated = await tx.user.update({
@@ -629,7 +665,7 @@ export async function resetUserPassword(
   rawInput: unknown,
 ) {
   const input = parseInput(resetSchema, rawInput);
-  requirePermission(user, 'user.manage');
+  requirePermission(user, 'user.edit');
   const passwordHash = await hashPassword(input.password);
 
   return prisma.$transaction(async (tx) => {

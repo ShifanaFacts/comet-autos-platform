@@ -144,7 +144,7 @@ export async function getSupplierOutstanding(
   user: AuthenticatedUser,
   filters: OutstandingFilters = {},
 ) {
-  requirePermission(user, 'inventory.view');
+  requirePermission(user, 'supplier_payment.view');
   const q = filters.query?.trim();
   const defaultVat = await resolveDefaultVatRate(user.organizationId);
 

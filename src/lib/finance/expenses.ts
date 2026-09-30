@@ -98,7 +98,7 @@ async function assertCategory(organizationId: string, categoryId: string | null)
 
 export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) {
   const input = parseInput(expenseSchema, rawInput);
-  requirePermission(user, 'accounting.create');
+  requirePermission(user, 'expense.create');
   const branch = await resolveInventoryBranch(user);
 
   if (toFils(input.amount) <= 0)
@@ -162,7 +162,7 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
  */
 export async function updateExpense(user: AuthenticatedUser, expenseId: string, rawInput: unknown) {
   const input = parseInput(expenseSchema, rawInput);
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'expense.edit');
   if (toFils(input.amount) <= 0)
     throw new DomainError('The amount must be more than zero.', 'amount');
   const { taxRate, taxCodeId } = await readTax(user.organizationId, input);
@@ -230,7 +230,7 @@ const voidSchema = z.object({
  */
 export async function voidExpense(user: AuthenticatedUser, expenseId: string, rawInput: unknown) {
   const input = parseInput(voidSchema, rawInput);
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'expense.delete');
   const expense = await prisma.expense.findFirst({
     where: { id: expenseId, organizationId: user.organizationId },
   });
@@ -295,7 +295,7 @@ function where(organizationId: string, filters: ExpenseFilters): Prisma.ExpenseW
 
 /** Expenses for the filters given, with the totals for exactly that set. */
 export async function listExpenses(user: AuthenticatedUser, filters: ExpenseFilters = {}) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'expense.view');
   const clause = where(user.organizationId, filters);
   const [expenses, categories] = await Promise.all([
     prisma.expense.findMany({
@@ -352,7 +352,7 @@ export async function listExpenseCategories(user: AuthenticatedUser) {
 /** What the expense form needs: categories, and the default VAT rate to suggest. */
 export async function getExpenseFormOptions(user: AuthenticatedUser) {
   // Recording and correcting an expense use the same form.
-  if (!hasPermission(user, 'accounting.create')) requirePermission(user, 'accounting.edit');
+  if (!hasPermission(user, 'expense.create')) requirePermission(user, 'expense.edit');
   const [categories, accounts] = await Promise.all([
     listExpenseCategories(user),
     getAccountChoices(user),

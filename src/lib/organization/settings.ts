@@ -70,7 +70,7 @@ const settingsSchema = z.object({
 
 /** The settings screen's data. Reading them needs the accounting view right. */
 export async function getOrganizationSettings(user: AuthenticatedUser) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'settings.view');
   const organization = await prisma.organization.findUnique({
     where: { id: user.organizationId },
     select: {
@@ -117,7 +117,7 @@ export async function usesDetailedJobCards(user: AuthenticatedUser): Promise<boo
  * so a stale or tampered list can never hide Settings.
  */
 export async function setHiddenMenus(user: AuthenticatedUser, hrefs: string[]) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'settings.edit');
   const hideable = hideableMenuHrefs();
   const hidden = [...new Set(hrefs)].filter((href) => hideable.includes(href)).sort();
   await prisma.$transaction(async (tx) => {
@@ -150,7 +150,7 @@ export async function setHiddenMenus(user: AuthenticatedUser, hrefs: string[]) {
  * through the detailed steps keeps showing them.
  */
 export async function setDetailedJobCards(user: AuthenticatedUser, detailed: boolean) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'settings.edit');
   await prisma.$transaction(async (tx) => {
     const before = await tx.organization.findUnique({
       where: { id: user.organizationId },
@@ -183,7 +183,7 @@ export type OrganizationSettings = Awaited<ReturnType<typeof getOrganizationSett
  */
 export async function updateOrganizationSettings(user: AuthenticatedUser, rawInput: unknown) {
   const input = parseInput(settingsSchema, rawInput);
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'settings.edit');
 
   const rate = Number(input.vatRate);
   if (!Number.isFinite(rate) || rate < 0 || rate > 100) {

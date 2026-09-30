@@ -31,7 +31,7 @@ const branchSchema = z.object({
 });
 
 export async function listBranches(user: AuthenticatedUser) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'settings.view');
   return prisma.branch.findMany({
     where: { organizationId: user.organizationId },
     orderBy: [{ isActive: 'desc' }, { createdAt: 'asc' }],
@@ -43,7 +43,7 @@ export type BranchSettings = Awaited<ReturnType<typeof listBranches>>[number];
 
 export async function updateBranch(user: AuthenticatedUser, branchId: string, rawInput: unknown) {
   const input = parseInput(branchSchema, rawInput);
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'settings.edit');
   const data = {
     name: input.name.replace(/\s+/g, ' '),
     address: emptyToNull(input.address),

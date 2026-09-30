@@ -27,13 +27,13 @@ export default async function EmployeesPage({
   searchParams: Promise<{ q?: string; show?: string }>;
 }) {
   const user = await requireUser();
-  if (!hasPermission(user, 'payroll.view')) return <AccessDenied what="the team" />;
+  if (!hasPermission(user, 'employee.view')) return <AccessDenied what="the team" />;
 
   const params = await searchParams;
   const query = (params.q ?? '').trim();
   const show: Show = SHOW.includes(params.show as Show) ? (params.show as Show) : 'active';
   const employees = await listEmployees(user, { query, show });
-  const canManage = hasPermission(user, 'payroll.create');
+  const canManage = hasPermission(user, 'employee.create');
   const filtered = Boolean(query) || show !== 'active';
 
   return (

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Download, Wallet } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
+import { canExport } from '@/lib/data-transfer/exports';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { listPayments } from '@/lib/billing/lists';
 import { formatDateTime, formatMoney } from '@/lib/format';
@@ -39,7 +40,7 @@ export default async function PaymentsPage({
   if (
     !hasPermission(
       user,
-      'invoice.view',
+      'payment.view',
       user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
     )
   ) {
@@ -82,6 +83,7 @@ export default async function PaymentsPage({
         actions={
           <ListDataActions
             entity="payments"
+            canExport={canExport(user, 'payments')}
             label="payments"
             search={query ? new URLSearchParams({ q: query }).toString() : ''}
           />

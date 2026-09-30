@@ -103,8 +103,8 @@ export default async function JobCardWorkspacePage({
   const next = getNextAction(workspace);
   const secondary = getSecondaryNextStatuses(jobCard.status);
   const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
-  const canAssign = hasPermission(user, 'job_card.assign', { branchId: jobCard.branchId });
-  const canIssueParts = hasPermission(user, 'inventory.issue', { branchId: jobCard.branchId });
+  const canAssign = hasPermission(user, 'job_card.approve', { branchId: jobCard.branchId });
+  const canIssueParts = hasPermission(user, 'inventory.edit', { branchId: jobCard.branchId });
   const canPay = hasPermission(user, 'payment.create', { branchId: jobCard.branchId });
   const repairPhase = REPAIR_PHASE.includes(status);
   const billingPhase = BILLING_PHASE.includes(status);
@@ -184,7 +184,7 @@ export default async function JobCardWorkspacePage({
               preview={preview}
               canInvoice={hasPermission(user, 'invoice.create', { branchId: jobCard.branchId })}
               canPay={canPay}
-              canDeliver={hasPermission(user, 'job_card.close', { branchId: jobCard.branchId })}
+              canDeliver={hasPermission(user, 'job_card.approve', { branchId: jobCard.branchId })}
               moneyAccounts={canPay ? (await getAccountChoices(user)).money : []}
               modes={canPay ? await getPaymentModeOptions(user.organizationId, 'receipts') : []}
             />

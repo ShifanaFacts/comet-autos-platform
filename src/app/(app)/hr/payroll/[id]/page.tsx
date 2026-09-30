@@ -46,7 +46,7 @@ export default async function PayrollRunPage({ params }: { params: Promise<{ id:
     if (error instanceof NotFoundError) notFound();
     throw error;
   }
-  const canPrepare = hasPermission(user, 'payroll.create');
+  const canPrepare = hasPermission(user, 'payroll.edit');
   const canApprove = hasPermission(user, 'payroll.approve');
   const editable = run.status === 'CALCULATED' && canPrepare;
 

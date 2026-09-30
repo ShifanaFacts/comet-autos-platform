@@ -105,7 +105,7 @@ export async function createEstimate(user: AuthenticatedUser, jobCardId: string)
       select: { id: true, branchId: true, status: true, customerId: true, vehicleId: true },
     });
     if (!jobCard) throw new NotFoundError('job card');
-    requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
+    requirePermission(user, 'quotation.create', { branchId: jobCard.branchId });
 
     const existing = await tx.estimate.findFirst({
       where: { jobCardId: jobCard.id, organizationId: user.organizationId, kind: 'ORIGINAL' },
@@ -193,7 +193,7 @@ export async function createQuotation(user: AuthenticatedUser, rawInput: unknown
     throw new DomainError('Your account has no branch assigned. Contact an administrator.');
   }
   const branchId = user.primaryBranchId;
-  requirePermission(user, 'job_card.edit', { branchId });
+  requirePermission(user, 'quotation.create', { branchId });
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'quotation.create');
@@ -229,7 +229,7 @@ export async function createQuotation(user: AuthenticatedUser, rawInput: unknown
       if (jobCard.customerId !== customer.id) {
         throw new DomainError('That job card belongs to a different customer.', 'jobCardId');
       }
-      requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
+      requirePermission(user, 'quotation.create', { branchId: jobCard.branchId });
       const open = await tx.estimate.findFirst({
         where: { jobCardId: jobCard.id, organizationId: user.organizationId, kind: 'ORIGINAL' },
         select: { estimateNumber: true },
@@ -328,7 +328,7 @@ export async function saveEstimateDraft(
 
   return prisma.$transaction(async (tx) => {
     const estimate = await loadEstimate(tx, user.organizationId, estimateId);
-    requirePermission(user, 'job_card.edit', { branchId: estimate.branchId });
+    requirePermission(user, 'quotation.edit', { branchId: estimate.branchId });
     await tx.$executeRaw`SELECT id FROM estimates WHERE id = ${estimate.id}::uuid FOR UPDATE`;
     const fresh = await tx.estimate.findUniqueOrThrow({
       where: { id: estimate.id },
@@ -372,7 +372,7 @@ export async function saveEstimateDraft(
 export async function sendEstimate(user: AuthenticatedUser, estimateId: string) {
   return prisma.$transaction(async (tx) => {
     const estimate = await loadEstimate(tx, user.organizationId, estimateId);
-    requirePermission(user, 'job_card.edit', { branchId: estimate.branchId });
+    requirePermission(user, 'quotation.edit', { branchId: estimate.branchId });
     if (estimate.jobCardId) await lockJob(tx, user.organizationId, estimate.jobCardId);
     await tx.$executeRaw`SELECT id FROM estimates WHERE id = ${estimate.id}::uuid FOR UPDATE`;
 
@@ -477,7 +477,7 @@ export async function sendEstimate(user: AuthenticatedUser, estimateId: string) 
 export async function reissueEstimateLink(user: AuthenticatedUser, estimateId: string) {
   return prisma.$transaction(async (tx) => {
     const estimate = await loadEstimate(tx, user.organizationId, estimateId);
-    requirePermission(user, 'job_card.edit', { branchId: estimate.branchId });
+    requirePermission(user, 'quotation.edit', { branchId: estimate.branchId });
     if (estimate.status !== 'SENT' || estimate._count.nextVersions > 0 || !estimate.validUntil) {
       throw new DomainError(
         'A new link can only be created for the estimate currently waiting approval.',
@@ -535,7 +535,7 @@ export async function createAdditionalEstimate(
       select: { id: true, branchId: true, status: true, customerId: true, vehicleId: true },
     });
     if (!jobCard) throw new NotFoundError('job card');
-    requirePermission(user, 'job_card.edit', { branchId: jobCard.branchId });
+    requirePermission(user, 'quotation.create', { branchId: jobCard.branchId });
     if (normalizeStatus(jobCard.status) !== 'REPAIR') {
       throw new DomainError('Additional work can only be requested while the job is in repair.');
     }
@@ -602,7 +602,7 @@ function rootEstimateNumber(estimateNumber: string): string {
 export async function reviseEstimate(user: AuthenticatedUser, estimateId: string) {
   return prisma.$transaction(async (tx) => {
     const source = await loadEstimate(tx, user.organizationId, estimateId);
-    requirePermission(user, 'job_card.edit', { branchId: source.branchId });
+    requirePermission(user, 'quotation.edit', { branchId: source.branchId });
     if (source.jobCardId) await lockJob(tx, user.organizationId, source.jobCardId);
 
     const newer = await tx.estimate.findFirst({
@@ -878,7 +878,7 @@ export async function recordCustomerDecision(
       : null;
   return prisma.$transaction(async (tx) => {
     const estimate = await loadEstimate(tx, user.organizationId, estimateId);
-    requirePermission(user, 'job_card.edit', { branchId: estimate.branchId });
+    requirePermission(user, 'quotation.approve', { branchId: estimate.branchId });
     const approval = await applyEstimateDecision(tx, {
       organizationId: user.organizationId,
       estimateId: estimate.id,
@@ -934,7 +934,7 @@ export async function getAdditionalEstimate(
     },
   });
   if (!estimate) throw new NotFoundError('additional work request');
-  requirePermission(user, 'job_card.view', { branchId: estimate.branchId });
+  requirePermission(user, 'quotation.view', { branchId: estimate.branchId });
   return estimate;
 }
 
@@ -954,7 +954,7 @@ export async function deleteDraftQuotation(user: AuthenticatedUser, estimateId: 
       },
     });
     if (!estimate) throw new NotFoundError('quotation');
-    requirePermission(user, 'job_card.edit', { branchId: estimate.branchId });
+    requirePermission(user, 'quotation.delete', { branchId: estimate.branchId });
     const blocker = draftDeleteBlocker({ ...estimate, nextVersions: estimate._count.nextVersions });
     if (blocker) throw new DomainError(blocker);
     if (estimate._count.approvals > 0)

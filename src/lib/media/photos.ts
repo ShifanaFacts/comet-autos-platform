@@ -157,7 +157,7 @@ export async function removeJobPhoto(
     include: { jobCard: { select: { id: true, branchId: true } } },
   });
   if (!photo?.jobCard) throw new NotFoundError('photo');
-  requirePermission(user, 'job_card.edit', { branchId: photo.jobCard.branchId });
+  requirePermission(user, 'job_card.delete', { branchId: photo.jobCard.branchId });
   if (photo.deletedAt) return photo;
 
   return prisma.$transaction(async (tx) => {

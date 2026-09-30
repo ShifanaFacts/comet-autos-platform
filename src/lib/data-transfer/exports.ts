@@ -1,4 +1,5 @@
 import type { AuthenticatedUser } from '@/lib/auth/session';
+import { hasPermission, requirePermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { formatMilli } from '@/lib/money';
 import { listCustomers } from '@/lib/customers/service';
@@ -18,8 +19,9 @@ import { toCsv, type CsvColumn } from '@/lib/data-transfer/csv';
  *
  * Each export runs the same service the screen runs, with the same search
  * and filters, so what downloads is what was on screen — only without the
- * page limit. Permissions are the service's own: someone who cannot see a
- * list cannot export it either.
+ * page limit. Two permission checks: the module's Export permission, and
+ * the service's own View check — someone who cannot see a list cannot
+ * export it either.
  *
  * Amounts are written as plain decimal strings ("1250.00") so a spreadsheet
  * reads them as numbers; dates as ISO so they sort.
@@ -39,6 +41,8 @@ export interface ExportFilters {
 }
 
 interface ExportDefinition<Row> {
+  /** The module's export permission, on top of the list's own view check. */
+  permission: string;
   /** Shown in the file name. */
   label: string;
   load: (user: AuthenticatedUser, filters: ExportFilters) => Promise<Row[]>;
@@ -60,6 +64,7 @@ function definition<Row>(definition: ExportDefinition<Row>): ExportDefinition<un
  */
 export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   customers: definition({
+    permission: 'customer.export',
     label: 'Customers',
     load: (user, filters) => listCustomers(user, filters.q ?? '', EXPORT_LIMIT),
     columns: [
@@ -76,6 +81,7 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   }),
 
   vehicles: definition({
+    permission: 'vehicle.export',
     label: 'Vehicles',
     load: (user, filters) => listVehicles(user, filters.q ?? '', EXPORT_LIMIT),
     columns: [
@@ -93,6 +99,7 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   }),
 
   parts: definition({
+    permission: 'inventory.export',
     label: 'Parts',
     load: async (user, filters) =>
       (
@@ -121,6 +128,7 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   }),
 
   suppliers: definition({
+    permission: 'inventory.export',
     label: 'Suppliers',
     load: (user, filters) => listSuppliers(user, filters.q ?? ''),
     columns: [
@@ -139,6 +147,7 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   }),
 
   'work-orders': definition({
+    permission: 'job_card.export',
     label: 'Job cards',
     load: (user, filters) =>
       listJobCards(user, { q: filters.q, status: filters.status }, EXPORT_LIMIT),
@@ -157,6 +166,7 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   }),
 
   quotations: definition({
+    permission: 'quotation.export',
     label: 'Quotations',
     load: async (user, filters) =>
       (await listQuotations(user, { q: filters.q, status: filters.status }, EXPORT_LIMIT))
@@ -180,6 +190,7 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   }),
 
   invoices: definition({
+    permission: 'invoice.export',
     label: 'Invoices',
     load: async (user, filters) =>
       (await listInvoices(user, { q: filters.q, status: filters.status }, EXPORT_LIMIT)).invoices,
@@ -203,6 +214,7 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   }),
 
   payments: definition({
+    permission: 'payment.export',
     label: 'Payments',
     load: async (user, filters) =>
       (await listPayments(user, { q: filters.q, view: 'all' }, EXPORT_LIMIT)).payments,
@@ -224,6 +236,7 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   }),
 
   purchases: definition({
+    permission: 'purchase.export',
     label: 'Purchases',
     load: async (user, filters) =>
       (
@@ -249,6 +262,7 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
   }),
 
   'stock-movements': definition({
+    permission: 'inventory.export',
     label: 'Stock movements',
     load: async (user, filters) =>
       (await listMovements(user, { q: filters.q, type: filters.type }, EXPORT_LIMIT)).movements,
@@ -272,7 +286,16 @@ export function isExportEntity(entity: string): entity is string {
   return Object.hasOwn(EXPORTS, entity);
 }
 
-/** Runs the export and returns the file's text. Permissions are the list service's own. */
+/** Whether this user may download the list: its module's Export permission. */
+export function canExport(user: AuthenticatedUser, entity: string) {
+  const definition = EXPORTS[entity];
+  return Boolean(definition) && hasPermission(user, definition.permission);
+}
+
+/**
+ * Runs the export and returns the file's text. Two checks: the module's
+ * Export permission here, and the list service's own view check.
+ */
 export async function buildExport(
   user: AuthenticatedUser,
   entity: string,
@@ -280,6 +303,7 @@ export async function buildExport(
 ): Promise<{ csv: string; label: string; rows: number }> {
   const definition = EXPORTS[entity];
   if (!definition) throw new NotFoundError('export');
+  requirePermission(user, definition.permission);
   const rows = await definition.load(user, filters);
   return { csv: toCsv(rows, definition.columns), label: definition.label, rows: rows.length };
 }

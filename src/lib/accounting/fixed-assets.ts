@@ -126,7 +126,7 @@ export async function getFixedAssetAccountChoices(user: AuthenticatedUser) {
 /** Records an asset in the register and books it. */
 export async function createFixedAsset(user: AuthenticatedUser, rawInput: unknown) {
   const input = parseInput(assetSchema, rawInput);
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.create');
   const today = localDateString();
   const acquiredOn = parseCalendarDate(input.acquiredOn);
   if (!acquiredOn || input.acquiredOn > today) {
@@ -357,7 +357,7 @@ export async function disposeFixedAsset(
   rawInput: unknown,
 ) {
   const input = parseInput(disposeSchema, rawInput);
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.delete');
   const disposedOn = parseCalendarDate(input.disposedOn);
   if (!disposedOn || input.disposedOn > localDateString()) {
     throw new DomainError('Enter the date — not a future one.', 'disposedOn');
@@ -415,7 +415,7 @@ export async function disposeFixedAsset(
  * on it. Its entry in the books is reversed; its number is not reused.
  */
 export async function deleteFixedAsset(user: AuthenticatedUser, assetId: string) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.delete');
   return prisma.$transaction(async (tx) => {
     const asset = await tx.fixedAsset.findFirst({
       where: { id: assetId, organizationId: user.organizationId },

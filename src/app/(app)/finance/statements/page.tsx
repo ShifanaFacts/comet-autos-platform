@@ -153,7 +153,7 @@ export default async function StatementsPage({
   if (!statement || !kind) {
     const query = (params.q ?? '').trim();
     const parties = await getStatementParties(user, query);
-    const canSuppliers = hasPermission(user, 'inventory.view');
+    const canSuppliers = hasPermission(user, 'supplier_payment.view');
     return (
       <Stack gap="2xl" className="animate-in fade-in duration-300">
         <PageHeader

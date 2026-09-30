@@ -270,7 +270,7 @@ export async function transitionJobStatus(
     select: { branchId: true },
   });
   if (!jobCard) throw new NotFoundError('job card');
-  requirePermission(user, toStatus === 'DELIVERED' ? 'job_card.close' : 'job_card.edit', {
+  requirePermission(user, toStatus === 'DELIVERED' ? 'job_card.approve' : 'job_card.edit', {
     branchId: jobCard.branchId,
   });
   await applyJobStatusChange(tx, {

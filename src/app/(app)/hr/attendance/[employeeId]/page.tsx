@@ -57,7 +57,7 @@ export default async function EmployeeAttendancePage({
   }
   const { employee, days, totals } = data;
   const thisMonth = localDateString().slice(0, 7);
-  const canEdit = hasPermission(user, 'payroll.create');
+  const canEdit = hasPermission(user, 'attendance.create');
   const monthLabel = new Date(`${data.month}-01T12:00:00Z`).toLocaleDateString(WORKSHOP_LOCALE, {
     month: 'long',
     year: 'numeric',

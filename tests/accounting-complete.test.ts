@@ -266,14 +266,14 @@ describe('the VAT return', () => {
       items: [
         { itemType: 'LABOUR', description: 'Service', quantity: '1', unitPrice: '200' },
         {
-          itemType: 'OTHER',
+          itemType: 'LABOUR',
           description: 'Export recovery',
           quantity: '1',
           unitPrice: '100',
           vatTreatment: 'ZERO_RATED',
         },
         {
-          itemType: 'OTHER',
+          itemType: 'LABOUR',
           description: 'Traffic fine paid on the customer’s behalf',
           quantity: '1',
           unitPrice: '30',

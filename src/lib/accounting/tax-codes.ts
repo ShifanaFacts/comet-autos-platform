@@ -165,7 +165,7 @@ export async function syncStandardRate(tx: Tx, organizationId: string, rate: str
 // ─── The master screen ──────────────────────────────────────────────────────
 
 export async function listTaxCodes(user: AuthenticatedUser) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'settings.view');
   await ensureTaxCodes(prisma, user.organizationId);
   const codes = await prisma.taxCode.findMany({
     where: { organizationId: user.organizationId },
@@ -256,7 +256,7 @@ async function assertCodeFree(client: Client, organizationId: string, code: stri
 }
 
 export async function createTaxCode(user: AuthenticatedUser, rawInput: unknown) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'settings.create');
   const input = parseInput(codeSchema, rawInput);
   const data = readCode(input);
   const isDefault = ticked(input.isDefault);
@@ -291,7 +291,7 @@ export async function createTaxCode(user: AuthenticatedUser, rawInput: unknown) 
  * with it. The default code can't be retired — choose another default first.
  */
 export async function updateTaxCode(user: AuthenticatedUser, taxCodeId: string, rawInput: unknown) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'settings.edit');
   const input = parseInput(codeSchema, rawInput);
 
   return prisma.$transaction(async (tx) => {

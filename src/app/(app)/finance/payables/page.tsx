@@ -62,8 +62,8 @@ export default async function PayablesPage({
     if (error instanceof AuthError) return <AccessDenied what="what the workshop owes" />;
     throw error;
   }
-  const canPay = hasPermission(user, 'accounting.create');
-  const canReverse = hasPermission(user, 'accounting.edit');
+  const canPay = hasPermission(user, 'supplier_payment.create');
+  const canReverse = hasPermission(user, 'supplier_payment.delete');
   const filtered = Boolean(params.q || params.supplierId || params.olderThanDays);
 
   return (

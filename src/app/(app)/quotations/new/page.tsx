@@ -12,7 +12,7 @@ export default async function NewQuotationPage({
   searchParams: Promise<{ customer?: string }>;
 }) {
   const user = await requireUser();
-  requirePermission(user, 'job_card.edit', {
+  requirePermission(user, 'quotation.create', {
     branchId: user.primaryBranchId ?? undefined,
   });
   const { customer } = await searchParams;

@@ -7,19 +7,27 @@ import { DomainError, NotFoundError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull } from '@/lib/normalize';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
-import { PERMISSION_CODES, PERMISSION_MODULES } from '@/lib/auth/permission-catalog';
+import {
+  ACTION_LABELS,
+  PERMISSION_ACTIONS,
+  PERMISSION_CODES,
+  PERMISSION_MODULES,
+  ROLE_PRESETS,
+  permissionCode,
+  permissionLabel,
+} from '@/lib/auth/permission-catalog';
 
 /*
  * Roles: the named bundles of permissions this workshop grants.
  *
  * A role carries permission codes; a user holds roles; a session resolves
  * the union. That is the whole model and this module does not add to it —
- * it only lets someone with `role.manage` edit the bundles from a screen.
+ * it only lets someone with `role.edit` edit the bundles from a screen.
  *
  * System roles (`isSystem`) are read-only here. The seed marks Owner as one
- * because a workshop that can edit its own full-access role can remove its
- * own last way in; the lockout guard below is the second line of defence
- * for every other role.
+ * — it always holds every permission — because a workshop that can edit its
+ * own full-access role can remove its own last way in; the lockout guard
+ * below is the second line of defence for every other role.
  */
 
 const ACTIVE_GRANT = { revokedAt: null } as const;
@@ -33,6 +41,24 @@ const roleSchema = z.object({
   description: z.string().trim().max(300).optional(),
   requestKey: z.string().optional(),
 });
+
+const newRoleSchema = roleSchema.extend({
+  preset: z.string().trim().optional(),
+});
+
+/**
+ * A module's View is implied by anything else ticked on it: someone who may
+ * edit invoices must be able to open them. The screen ticks it for the
+ * admin; this makes the rule hold whatever the browser sent.
+ */
+export function withImpliedView(codes: Iterable<string>): string[] {
+  const set = new Set(codes);
+  for (const code of [...set]) {
+    const view = `${code.split('.')[0]}.view`;
+    if (!code.endsWith('.view') && PERMISSION_CODES.includes(view)) set.add(view);
+  }
+  return PERMISSION_CODES.filter((code) => set.has(code));
+}
 
 const permissionsSchema = z.object({
   permissions: z.union([z.string(), z.array(z.string())]).optional(),
@@ -53,7 +79,7 @@ function codeList(value: string | string[] | undefined): string[] {
  * costs one query however many roles there are.
  */
 export async function listRoles(user: AuthenticatedUser) {
-  requirePermission(user, 'user.view');
+  requirePermission(user, 'role.view');
   const roles = await prisma.role.findMany({
     where: { organizationId: user.organizationId },
     select: {
@@ -87,7 +113,7 @@ export type RoleRow = Awaited<ReturnType<typeof listRoles>>[number];
  * "what this person can do", and who currently holds it.
  */
 export async function getRoleDetail(user: AuthenticatedUser, roleId: string) {
-  requirePermission(user, 'user.view');
+  requirePermission(user, 'role.view');
   const role = await prisma.role.findFirst({
     where: { id: roleId, organizationId: user.organizationId },
     select: {
@@ -110,13 +136,18 @@ export async function getRoleDetail(user: AuthenticatedUser, roleId: string) {
   if (!role) throw new NotFoundError('role');
 
   const held = new Set(role.rolePermissions.map((row) => row.permission.code));
+  // One row per module, one cell per action; a cell is null where the
+  // action doesn't exist for that module.
   const modules = PERMISSION_MODULES.map((module) => ({
-    ...module,
-    permissions: module.permissions.map((permission) => ({
-      ...permission,
-      granted: held.has(permission.code),
-    })),
-    grantedCount: module.permissions.filter((permission) => held.has(permission.code)).length,
+    key: module.key,
+    label: module.label,
+    description: module.description,
+    cells: PERMISSION_ACTIONS.map((action) => {
+      const detail = module.actions[action];
+      if (!detail) return null;
+      const code = permissionCode(module.key, action);
+      return { action, label: ACTION_LABELS[action], code, detail, granted: held.has(code) };
+    }),
   }));
 
   return {
@@ -135,10 +166,19 @@ export type RoleDetail = Awaited<ReturnType<typeof getRoleDetail>>;
 
 // ─── Writing ────────────────────────────────────────────────────────────────
 
+/**
+ * Creates a role, optionally starting from a preset's ticks. The admin
+ * adjusts them on the role's grid afterwards.
+ */
 export async function createRole(user: AuthenticatedUser, rawInput: unknown) {
-  const input = parseInput(roleSchema, rawInput);
-  requirePermission(user, 'role.manage');
+  const input = parseInput(newRoleSchema, rawInput);
+  requirePermission(user, 'role.create');
   const name = input.name.replace(/\s+/g, ' ');
+  const presetKey = emptyToNull(input.preset);
+  const preset = presetKey ? ROLE_PRESETS.find((option) => option.key === presetKey) : null;
+  if (presetKey && !preset)
+    throw new DomainError('Choose a starting point from the list.', 'preset');
+  const codes = withImpliedView(preset?.codes ?? []);
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'role.create');
@@ -157,13 +197,31 @@ export async function createRole(user: AuthenticatedUser, rawInput: unknown) {
       },
       select: { id: true, name: true },
     });
+    if (codes.length > 0) {
+      const permissions = await tx.permission.findMany({
+        where: { code: { in: codes } },
+        select: { id: true },
+      });
+      await tx.rolePermission.createMany({
+        data: permissions.map((permission) => ({
+          organizationId: user.organizationId,
+          roleId: role.id,
+          permissionId: permission.id,
+        })),
+      });
+    }
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
       actorUserId: user.id,
       action: 'role.created',
       entityType: 'Role',
       entityId: role.id,
-      afterData: { name: role.name, description: emptyToNull(input.description) },
+      afterData: {
+        name: role.name,
+        description: emptyToNull(input.description),
+        preset: preset?.label ?? null,
+        permissions: codes,
+      },
     });
     await settleRequestKey(tx, user, rawInput, role.id);
     return role;
@@ -173,7 +231,7 @@ export async function createRole(user: AuthenticatedUser, rawInput: unknown) {
 /** Renames a role or changes its description. System roles keep their name. */
 export async function updateRole(user: AuthenticatedUser, roleId: string, rawInput: unknown) {
   const input = parseInput(roleSchema, rawInput);
-  requirePermission(user, 'role.manage');
+  requirePermission(user, 'role.edit');
   const name = input.name.replace(/\s+/g, ' ');
 
   return prisma.$transaction(async (tx) => {
@@ -222,13 +280,14 @@ export async function updateRolePermissions(
   rawInput: unknown,
 ) {
   const input = parseInput(permissionsSchema, rawInput);
-  requirePermission(user, 'role.manage');
-  const codes = codeList(input.permissions);
+  requirePermission(user, 'role.edit');
+  const sent = codeList(input.permissions);
 
-  const unknown = codes.filter((code) => !PERMISSION_CODES.includes(code));
+  const unknown = sent.filter((code) => !PERMISSION_CODES.includes(code));
   if (unknown.length > 0) {
     throw new DomainError('That permission isn’t one this system has.', 'permissions');
   }
+  const codes = withImpliedView(sent);
 
   return prisma.$transaction(async (tx) => {
     const role = await tx.role.findFirst({
@@ -243,18 +302,25 @@ export async function updateRolePermissions(
     if (!role) throw new NotFoundError('role');
     if (role.isSystem) {
       throw new DomainError(
-        'A built-in role’s permissions can’t be changed. Create a role of your own to grant something different.',
+        'This built-in role always has every permission, so its ticks can’t be changed. Create a role of your own to grant something different.',
       );
     }
 
     const held = new Set(role.rolePermissions.map((row) => row.permission.code));
     const wanted = new Set(codes);
-    const unchanged = held.size === wanted.size && [...wanted].every((code) => held.has(code));
-    if (unchanged) return { id: role.id, changed: false };
+    const added = codes.filter((code) => !held.has(code));
+    const removed = PERMISSION_CODES.filter((code) => held.has(code) && !wanted.has(code)).concat(
+      // A retired code still on the role (never after `db:permissions`).
+      [...held].filter((code) => !PERMISSION_CODES.includes(code)),
+    );
+    if (added.length === 0 && removed.length === 0) {
+      return { id: role.id, changed: false, added, removed };
+    }
 
-    // Dropping `user.manage` from this role must not empty the workshop of
-    // administrators. Anyone whose only route to it is this role loses it.
-    if (held.has('user.manage') && !wanted.has('user.manage')) {
+    // Dropping `user.edit` from this role must not empty the workshop of
+    // people who can manage access. Anyone whose only route to it is this
+    // role loses it.
+    if (held.has('user.edit') && !wanted.has('user.edit')) {
       const remaining = await tx.user.count({
         where: {
           organizationId: user.organizationId,
@@ -263,7 +329,7 @@ export async function updateRolePermissions(
             some: {
               ...ACTIVE_GRANT,
               roleId: { not: roleId },
-              role: { rolePermissions: { some: { permission: { code: 'user.manage' } } } },
+              role: { rolePermissions: { some: { permission: { code: 'user.edit' } } } },
             },
           },
         },
@@ -298,7 +364,11 @@ export async function updateRolePermissions(
       entityId: roleId,
       beforeData: { name: role.name, permissions: [...held].sort() },
       afterData: { name: role.name, permissions: [...wanted].sort() },
+      metadata: {
+        added: added.map(permissionLabel),
+        removed: removed.map(permissionLabel),
+      },
     });
-    return { id: role.id, changed: true };
+    return { id: role.id, changed: true, added, removed };
   });
 }

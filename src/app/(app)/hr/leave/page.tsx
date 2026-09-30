@@ -56,7 +56,7 @@ export default async function LeavePage({
   searchParams: Promise<{ q?: string; status?: string; type?: string }>;
 }) {
   const user = await requireUser();
-  if (!hasPermission(user, 'payroll.view')) return <AccessDenied what="the team's leave" />;
+  if (!hasPermission(user, 'leave.view')) return <AccessDenied what="the team's leave" />;
   const params = await searchParams;
 
   const { rows, totals } = await listLeave(user, {
@@ -64,8 +64,8 @@ export default async function LeavePage({
     status: params.status,
     type: params.type,
   });
-  const canRecord = hasPermission(user, 'payroll.create');
-  const canApprove = hasPermission(user, 'payroll.approve');
+  const canRecord = hasPermission(user, 'leave.create');
+  const canApprove = hasPermission(user, 'leave.approve');
   const options = canRecord ? await getLeaveFormOptions(user) : null;
   const filtered = Boolean(params.q || params.status || params.type);
 

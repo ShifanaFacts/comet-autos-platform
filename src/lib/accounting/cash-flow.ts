@@ -43,7 +43,7 @@ interface FlowRow {
 const DAY = 86_400_000;
 
 export async function getCashFlowStatement(user: AuthenticatedUser, input: PeriodInput = {}) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'reports.view');
   const organizationId = user.organizationId;
   const period: ResolvedPeriod = resolvePeriod(input);
   const from = parseCalendarDate(period.from)!;

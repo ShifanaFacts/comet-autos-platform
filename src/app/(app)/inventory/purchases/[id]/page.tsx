@@ -34,11 +34,14 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
   const { purchase, lines, receivedValue, receipts } = detail;
   const receivable = ['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED'].includes(purchase.status);
   const canReceive =
-    receivable && hasPermission(user, 'purchase.receive', { branchId: purchase.branchId });
+    receivable && hasPermission(user, 'purchase.approve', { branchId: purchase.branchId });
   const nothingReceived = lines.every((line) => line.receivedMilli === 0);
   const canEdit =
     purchase.status === 'DRAFT' &&
-    hasPermission(user, 'purchase.create', { branchId: purchase.branchId });
+    hasPermission(user, 'purchase.edit', { branchId: purchase.branchId });
+  const canCancel =
+    purchase.status === 'DRAFT' &&
+    hasPermission(user, 'purchase.delete', { branchId: purchase.branchId });
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -85,7 +88,7 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
                 Edit draft
               </LinkButton>
             ) : null}
-            {canEdit && nothingReceived ? (
+            {canCancel && nothingReceived ? (
               <CancelPurchaseButton
                 purchaseId={purchase.id}
                 purchaseNumber={purchase.purchaseNumber}

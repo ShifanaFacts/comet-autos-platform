@@ -148,8 +148,8 @@ export function financeAccess(user: AuthenticatedUser) {
   const scope = user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined;
   return {
     sales: hasPermission(user, 'invoice.view', scope),
-    expenses: hasPermission(user, 'accounting.view', scope),
-    payables: hasPermission(user, 'inventory.view', scope),
+    expenses: hasPermission(user, 'expense.view', scope),
+    payables: hasPermission(user, 'supplier_payment.view', scope),
   };
 }
 

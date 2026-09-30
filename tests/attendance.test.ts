@@ -278,7 +278,7 @@ describe('security', () => {
     );
 
     // Someone who may see the team but not record against it.
-    const readOnly = { ...a.owner, orgWidePermissions: new Set(['payroll.view']) };
+    const readOnly = { ...a.owner, orgWidePermissions: new Set(['attendance.view']) };
     assert.ok(await getAttendanceDay(readOnly));
     for (const call of [
       () => clockIn(readOnly, tech, { date: daysAgo(5), requestKey: `att-noperm-in-${RUN}` }),

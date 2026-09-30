@@ -481,12 +481,17 @@ describe('roles', () => {
 
     const detail = await getRoleDetail(a.owner, techRoleA);
     assert.equal(detail.name, 'Technician');
+    const cell = (key: string, action: string) =>
+      detail.modules.find((module) => module.key === key)?.cells.find((c) => c?.action === action);
+    assert.ok(cell('job_card', 'edit')?.granted);
+    assert.equal(cell('job_card', 'approve')?.granted, false);
     const jobs = detail.modules.find((module) => module.key === 'job_card');
-    assert.ok(jobs?.permissions.find((p) => p.code === 'job_card.edit')?.granted);
-    assert.equal(jobs?.permissions.find((p) => p.code === 'job_card.close')?.granted, false);
+    assert.equal(jobs?.cells.length, 6, 'one cell per action');
+    const vat = detail.modules.find((module) => module.key === 'vat');
+    assert.equal(vat?.cells[3], null, 'an action a module doesn’t have is an empty cell');
     const access = detail.modules.find((module) => module.key === 'user');
-    assert.ok(access, 'access management is shown as its own group');
-    assert.equal(access.grantedCount, 0);
+    assert.ok(access, 'users are shown as their own module');
+    assert.equal(access.cells.filter((c) => c?.granted).length, 0);
 
     await assert.rejects(listRoles(a.viewer), (error: unknown) => error instanceof AuthError);
     await assert.rejects(
@@ -541,14 +546,14 @@ describe('roles', () => {
   });
 
   test('the last role that can manage access keeps that permission', async () => {
-    // adminRoleA is the only live route to user.manage in this workshop.
-    const without = PERMISSION_CODES.filter((code) => code !== 'user.manage');
+    // adminRoleA is the only live route to user.edit in this workshop.
+    const without = PERMISSION_CODES.filter((code) => code !== 'user.edit');
     await expectDomainError(
       updateRolePermissions(a.owner, adminRoleA, { permissions: without }),
       /only role that can manage access/i,
     );
     const detail = await getRoleDetail(a.owner, adminRoleA);
-    assert.ok(detail.granted.includes('user.manage'), 'and the role is unchanged');
+    assert.ok(detail.granted.includes('user.edit'), 'and the role is unchanged');
   });
 
   test('a role from another workshop cannot be edited', async () => {

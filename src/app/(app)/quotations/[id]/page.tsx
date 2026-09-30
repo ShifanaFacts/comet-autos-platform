@@ -56,7 +56,7 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
   }
 
   const { customer, vehicle, jobCard, expired, isLatest, versions } = quotation;
-  const canEdit = hasPermission(user, 'job_card.edit', { branchId: quotation.branchId });
+  const canEdit = hasPermission(user, 'quotation.edit', { branchId: quotation.branchId });
   const canInvoice = hasPermission(user, 'invoice.create', { branchId: quotation.branchId });
   const defaultVatRate = await resolveDefaultVatRate(user.organizationId);
   const decision = quotation.approvals[0];
@@ -78,7 +78,7 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
     isLatest &&
     quotation.kind !== 'ADDITIONAL' &&
     (quotation.status === 'SENT' || quotation.status === 'REJECTED');
-  const canDuplicate = hasPermission(user, 'job_card.edit', {
+  const canDuplicate = hasPermission(user, 'quotation.edit', {
     branchId: user.primaryBranchId ?? quotation.branchId,
   });
   const canChangeParty = canEdit && !partyChangeBlocker(history);

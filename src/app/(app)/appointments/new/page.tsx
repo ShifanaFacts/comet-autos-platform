@@ -22,7 +22,7 @@ export default async function NewAppointmentPage({
   if (
     !hasPermission(
       user,
-      'job_card.create',
+      'appointment.create',
       user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
     )
   ) {

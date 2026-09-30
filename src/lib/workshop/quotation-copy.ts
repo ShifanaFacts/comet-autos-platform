@@ -74,9 +74,9 @@ export async function duplicateQuotation(
       include: { items: { orderBy: { createdAt: 'asc' } } },
     });
     if (!source) throw new NotFoundError('quotation');
-    requirePermission(user, 'job_card.view', { branchId: source.branchId });
+    requirePermission(user, 'quotation.view', { branchId: source.branchId });
     const branchId = user.primaryBranchId ?? source.branchId;
-    requirePermission(user, 'job_card.edit', { branchId });
+    requirePermission(user, 'quotation.create', { branchId });
     await claimRequestKey(tx, user, rawInput, 'quotation.duplicate');
 
     const customer = await tx.customer.findFirst({
@@ -185,7 +185,7 @@ export async function changeQuotationParty(
       include: { _count: { select: { nextVersions: true } } },
     });
     if (!estimate) throw new NotFoundError('quotation');
-    requirePermission(user, 'job_card.edit', { branchId: estimate.branchId });
+    requirePermission(user, 'quotation.edit', { branchId: estimate.branchId });
     const blocker = partyChangeBlocker({ ...estimate, nextVersions: estimate._count.nextVersions });
     if (blocker) throw new DomainError(blocker);
 

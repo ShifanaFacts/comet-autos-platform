@@ -31,7 +31,7 @@ export default async function SupplierDetailPage({ params }: { params: Promise<{
     throw error;
   }
   const { supplier, parts, purchases, balance } = detail;
-  const canManage = hasPermission(user, 'inventory.manage');
+  const canManage = hasPermission(user, 'inventory.create');
   const canPurchase = hasPermission(user, 'purchase.create');
   const canStatement = hasPermission(user, 'invoice.view');
 

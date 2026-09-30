@@ -308,7 +308,7 @@ describe('finance dashboard', () => {
     assert.equal(salesOnly.recent.expenses.length, 0);
 
     const expensesOnly = await getFinanceDashboard(
-      { ...a.owner, orgWidePermissions: new Set(['accounting.view']) },
+      { ...a.owner, orgWidePermissions: new Set(['expense.view']) },
       { period: 'today' },
     );
     assert.equal(expensesOnly.revenue, null, 'sales are withheld');

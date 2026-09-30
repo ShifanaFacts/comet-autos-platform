@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function NewUserPage() {
   const user = await requireUser();
-  if (!hasPermission(user, 'user.manage')) {
+  if (!hasPermission(user, 'user.create')) {
     return <AccessDenied what="adding a user" />;
   }
   const options = await getAccessOptions(user);

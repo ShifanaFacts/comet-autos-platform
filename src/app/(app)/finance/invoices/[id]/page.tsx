@@ -68,10 +68,10 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const isVoid = invoice.status === 'VOID';
   const canPay = !isVoid && hasPermission(user, 'payment.create', branch);
   const editBlocker = invoiceEditBlocker(invoice);
-  const canEditInvoice = hasPermission(user, 'invoice.create', branch) && !editBlocker;
-  const canVoid = hasPermission(user, 'invoice.cancel', branch) && !invoiceVoidBlocker(invoice);
-  const canReverse = !isVoid && hasPermission(user, 'payment.reverse', branch);
-  const canCredit = hasPermission(user, 'invoice.cancel', branch) && !creditBlocker(invoice);
+  const canEditInvoice = hasPermission(user, 'invoice.edit', branch) && !editBlocker;
+  const canVoid = hasPermission(user, 'invoice.delete', branch) && !invoiceVoidBlocker(invoice);
+  const canReverse = !isVoid && hasPermission(user, 'payment.delete', branch);
+  const canCredit = hasPermission(user, 'credit_note.create', branch) && !creditBlocker(invoice);
   const creditNotes = await listInvoiceCreditNotes(user, invoice.id);
   const credited = toFils(invoice.creditedAmount.toString());
   const fullyCredited = credited > 0 && credited >= toFils(invoice.totalAmount.toString());
@@ -418,7 +418,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
                   {invoice.notes}
                 </p>
               ) : null}
-              {!isVoid && editBlocker && hasPermission(user, 'invoice.create', branch) ? (
+              {!isVoid && editBlocker && hasPermission(user, 'invoice.edit', branch) ? (
                 <p className="mt-4 flex items-start gap-2 border-t border-border pt-4 text-xs text-muted-foreground">
                   <Info className="mt-0.5 size-3.5 shrink-0" />
                   {editBlocker}

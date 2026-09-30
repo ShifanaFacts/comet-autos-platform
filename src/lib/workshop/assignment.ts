@@ -34,7 +34,7 @@ export async function assignPrimaryTechnician(
       select: { id: true, branchId: true, status: true },
     });
     if (!jobCard) throw new NotFoundError('job card');
-    requirePermission(user, 'job_card.assign', { branchId: jobCard.branchId });
+    requirePermission(user, 'job_card.approve', { branchId: jobCard.branchId });
     if (!isOpenJobStatus(jobCard.status)) {
       throw new DomainError('This job is finished — technicians can no longer be changed.');
     }

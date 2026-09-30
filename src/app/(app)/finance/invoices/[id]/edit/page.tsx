@@ -24,7 +24,7 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
     if (error instanceof NotFoundError) notFound();
     throw error;
   }
-  requirePermission(user, 'invoice.create', { branchId: invoice.branchId });
+  requirePermission(user, 'invoice.edit', { branchId: invoice.branchId });
   const blocker = invoiceEditBlocker(invoice);
   const defaultVatRate = await resolveDefaultVatRate(user.organizationId);
 

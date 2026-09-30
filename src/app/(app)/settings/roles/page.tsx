@@ -13,11 +13,11 @@ export const dynamic = 'force-dynamic';
 
 export default async function RolesPage() {
   const user = await requireUser();
-  if (!hasPermission(user, 'user.view')) {
+  if (!hasPermission(user, 'role.view')) {
     return <AccessDenied what="the workshop's roles" />;
   }
   const roles = await listRoles(user);
-  const canManage = hasPermission(user, 'role.manage');
+  const canManage = hasPermission(user, 'role.create');
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">

@@ -34,7 +34,7 @@ export default async function JobQuotationPage({ params }: { params: Promise<{ i
   const { jobCard, status, diagnosis, estimate } = workspace;
   if (estimate) redirect(`/quotations/${estimate.id}`);
 
-  const canEdit = hasPermission(user, 'job_card.edit', { branchId: jobCard.branchId });
+  const canEdit = hasPermission(user, 'quotation.edit', { branchId: jobCard.branchId });
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">

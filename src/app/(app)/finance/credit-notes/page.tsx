@@ -36,7 +36,7 @@ export default async function CreditNotesPage({
   if (
     !hasPermission(
       user,
-      'invoice.view',
+      'credit_note.view',
       user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined,
     )
   ) {

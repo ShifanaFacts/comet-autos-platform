@@ -165,7 +165,7 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'invoice.update');
     const invoice = await lockInvoice(tx, user.organizationId, invoiceId);
-    requirePermission(user, 'invoice.create', { branchId: invoice.branchId });
+    requirePermission(user, 'invoice.edit', { branchId: invoice.branchId });
     const blocker = invoiceEditBlocker({
       status: invoice.status,
       invoiceType: invoice.invoiceType,
@@ -324,7 +324,7 @@ export async function voidInvoice(user: AuthenticatedUser, invoiceId: string, ra
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'invoice.void');
     const invoice = await lockInvoice(tx, user.organizationId, invoiceId);
-    requirePermission(user, 'invoice.cancel', { branchId: invoice.branchId });
+    requirePermission(user, 'invoice.delete', { branchId: invoice.branchId });
     const blocker = invoiceVoidBlocker({
       status: invoice.status,
       paidAmount: filsToString(paidFils(invoice.payments)),
@@ -410,14 +410,14 @@ export async function reverseInvoicePayment(
   const input = parseInput(reversalSchema, rawInput);
 
   return prisma.$transaction(async (tx) => {
-    await claimRequestKey(tx, user, rawInput, 'payment.reverse');
+    await claimRequestKey(tx, user, rawInput, 'payment.reversal');
     const found = await tx.payment.findFirst({
       where: { id: paymentId, organizationId: user.organizationId },
       select: { id: true, invoiceId: true },
     });
     if (!found) throw new NotFoundError('payment');
     const invoice = await lockInvoice(tx, user.organizationId, found.invoiceId);
-    requirePermission(user, 'payment.reverse', { branchId: invoice.branchId });
+    requirePermission(user, 'payment.delete', { branchId: invoice.branchId });
 
     const payment = await tx.payment.findFirstOrThrow({
       where: { id: found.id, organizationId: user.organizationId },

@@ -35,7 +35,7 @@ export default async function ExpensesPage({
   }>;
 }) {
   const user = await requireUser();
-  if (!hasPermission(user, 'accounting.view')) return <AccessDenied what="workshop expenses" />;
+  if (!hasPermission(user, 'expense.view')) return <AccessDenied what="workshop expenses" />;
 
   const params = await searchParams;
   const filters = {
@@ -46,9 +46,11 @@ export default async function ExpensesPage({
     show: params.show === 'all' ? ('all' as const) : ('recorded' as const),
   };
   const { expenses, totals } = await listExpenses(user, filters);
-  const canRecord = hasPermission(user, 'accounting.create');
-  const canVoid = hasPermission(user, 'accounting.edit');
-  const formOptions = canRecord || canVoid ? await getExpenseFormOptions(user) : null;
+  const canRecord = hasPermission(user, 'expense.create');
+  const canEdit = hasPermission(user, 'expense.edit');
+  const canVoid = hasPermission(user, 'expense.delete');
+  const canChange = canEdit || canVoid;
+  const formOptions = canRecord || canEdit ? await getExpenseFormOptions(user) : null;
   // The supplier's bill behind each expense, kept as evidence for the VAT reclaimed.
   const bills = await listExpenseBills(
     user,
@@ -59,7 +61,7 @@ export default async function ExpensesPage({
       expenseId={expense.id}
       bills={bills.get(expense.id) ?? []}
       canAttach={canRecord && expense.status === 'RECORDED'}
-      canRemove={canVoid && expense.status === 'RECORDED'}
+      canRemove={canEdit && expense.status === 'RECORDED'}
     />
   );
   const draft = (expense: (typeof expenses)[number]) => ({
@@ -179,9 +181,9 @@ export default async function ExpensesPage({
                     footer={`${expense.vendorName ? `${expense.vendorName} · ` : ''}Recorded by ${expense.recordedBy.fullName}`}
                   >
                     {billsCell(expense)}
-                    {canVoid && expense.status === 'RECORDED' ? (
+                    {canChange && expense.status === 'RECORDED' ? (
                       <span className="flex flex-wrap gap-2">
-                        {formOptions ? (
+                        {canEdit && formOptions ? (
                           <EditExpenseButton
                             expense={draft(expense)}
                             categories={formOptions.categories}
@@ -191,10 +193,12 @@ export default async function ExpensesPage({
                             moneyAccounts={formOptions.moneyAccounts}
                           />
                         ) : null}
-                        <VoidExpenseButton
-                          expenseId={expense.id}
-                          description={expense.description}
-                        />
+                        {canVoid ? (
+                          <VoidExpenseButton
+                            expenseId={expense.id}
+                            description={expense.description}
+                          />
+                        ) : null}
                       </span>
                     ) : null}
                   </RecordCard>
@@ -212,7 +216,7 @@ export default async function ExpensesPage({
                       <th className="w-24 px-2 py-4 text-right">VAT</th>
                       <th className="w-28 px-4 py-4 pr-6 text-right">Total</th>
                       <th className="px-2 py-4">Bill</th>
-                      {canVoid ? <th className="w-0 px-2 py-4" /> : null}
+                      {canChange ? <th className="w-0 px-2 py-4" /> : null}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -254,11 +258,11 @@ export default async function ExpensesPage({
                           {formatMoney(expense.total)}
                         </td>
                         <td className="px-2 py-4">{billsCell(expense)}</td>
-                        {canVoid ? (
+                        {canChange ? (
                           <td className="px-2 py-4 text-right">
                             {expense.status === 'RECORDED' ? (
                               <span className="inline-flex gap-1">
-                                {formOptions ? (
+                                {canEdit && formOptions ? (
                                   <EditExpenseButton
                                     expense={draft(expense)}
                                     categories={formOptions.categories}
@@ -268,10 +272,12 @@ export default async function ExpensesPage({
                                     moneyAccounts={formOptions.moneyAccounts}
                                   />
                                 ) : null}
-                                <VoidExpenseButton
-                                  expenseId={expense.id}
-                                  description={expense.description}
-                                />
+                                {canVoid ? (
+                                  <VoidExpenseButton
+                                    expenseId={expense.id}
+                                    description={expense.description}
+                                  />
+                                ) : null}
                               </span>
                             ) : null}
                           </td>

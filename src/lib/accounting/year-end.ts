@@ -188,7 +188,7 @@ export type YearEnd = Awaited<ReturnType<typeof getYearEnd>>;
 
 /** Closes a financial year into retained earnings. */
 export async function closeFinancialYear(user: AuthenticatedUser, rawInput: unknown) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.approve');
   const input = parseInput(closeSchema, rawInput);
   const yearEnd = parseCalendarDate(input.yearEnd);
   if (!yearEnd) throw new DomainError('Choose a valid date.', 'yearEnd');
@@ -282,7 +282,7 @@ export async function reopenFinancialYear(
   entryId: string,
   rawInput: unknown,
 ) {
-  requirePermission(user, 'accounting.edit');
+  requirePermission(user, 'accounting.approve');
   const input = parseInput(reopenSchema, rawInput);
 
   return prisma.$transaction(async (tx) => {

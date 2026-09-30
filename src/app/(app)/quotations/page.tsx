@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { FilePlus2, FileText } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
+import { canExport } from '@/lib/data-transfer/exports';
 import { listQuotations, type QuotationListItem } from '@/lib/workshop/quotations';
 import { formatCalendarDate, formatDate, formatMoney } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -50,7 +51,7 @@ export default async function QuotationsPage({
   const user = await requireUser();
   const params = await searchParams;
   const { quotations, status } = await listQuotations(user, params);
-  const canCreate = hasPermission(user, 'job_card.edit', {
+  const canCreate = hasPermission(user, 'quotation.create', {
     branchId: user.primaryBranchId ?? undefined,
   });
   const canRemove = hasPermission(user, REMOVAL.quotations.permission, {
@@ -83,6 +84,7 @@ export default async function QuotationsPage({
           <>
             <ListDataActions
               entity="quotations"
+              canExport={canExport(user, 'quotations')}
               label="quotations"
               canImport={canImport(user, 'quotations')}
               columns={importColumns('quotations')}

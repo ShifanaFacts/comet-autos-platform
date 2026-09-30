@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function EditUserPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
-  if (!hasPermission(user, 'user.manage')) {
+  if (!hasPermission(user, 'user.edit')) {
     return <AccessDenied what="changing a user" />;
   }
   const { id } = await params;

@@ -46,7 +46,7 @@ export async function mergeCustomers(
   duplicateId: string,
   rawInput: unknown,
 ) {
-  requirePermission(user, 'customer.edit');
+  requirePermission(user, 'customer.delete');
   const input = parseInput(mergeSchema, rawInput);
   if (input.targetId === duplicateId) {
     throw new DomainError('Choose a different customer to keep.', 'targetId');
@@ -148,7 +148,7 @@ export async function mergeCustomers(
 
 /** What a merge would move — shown before it is confirmed. */
 export async function getMergePreview(user: AuthenticatedUser, customerId: string) {
-  requirePermission(user, 'customer.edit');
+  requirePermission(user, 'customer.delete');
   const where = { organizationId: user.organizationId, customerId };
   const [vehicles, jobCards, quotations, invoices, creditNotes, appointments] = await Promise.all([
     prisma.vehicle.count({ where }),

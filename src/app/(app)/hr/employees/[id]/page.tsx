@@ -18,7 +18,7 @@ import { SalaryForm } from '@/components/hr/payroll-forms';
 
 export default async function EmployeePage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
-  if (!hasPermission(user, 'payroll.view')) return <AccessDenied what="the team" />;
+  if (!hasPermission(user, 'employee.view')) return <AccessDenied what="the team" />;
   const { id } = await params;
 
   let detail;
@@ -29,7 +29,8 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
     throw error;
   }
   const { employee, openJobs, recentLabour, counts } = detail;
-  const canManage = hasPermission(user, 'payroll.create');
+  const canManage = hasPermission(user, 'employee.edit');
+  const canSetSalary = hasPermission(user, 'payroll.create');
   // Pay is shown only to those who prepare or approve payroll.
   const pay = canSeePay(user) ? await getSalaryHistory(user, employee.id) : null;
 
@@ -268,7 +269,7 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
                       ))}
                     </ul>
                   ) : null}
-                  {canManage ? (
+                  {canSetSalary ? (
                     <InlineForm
                       label={pay.current ? 'Change salary' : 'Set salary'}
                       hint="From a date. The same date as the latest salary corrects it."

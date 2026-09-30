@@ -5,7 +5,12 @@ import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getUserDetail } from '@/lib/access/users';
 import { formatDateTime } from '@/lib/format';
-import { PERMISSION_MODULES } from '@/lib/auth/permission-catalog';
+import {
+  ACTION_LABELS,
+  PERMISSION_ACTIONS,
+  PERMISSION_MODULES,
+  permissionCode,
+} from '@/lib/auth/permission-catalog';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { LinkButton } from '@/components/shared/link-button';
@@ -48,13 +53,25 @@ export default async function UserDetailPage({
     throw error;
   }
 
-  const canManage = hasPermission(user, 'user.manage');
+  const canManage = hasPermission(user, 'user.edit');
+  const canDeactivate = hasPermission(user, 'user.delete');
   const isSelf = detail.id === user.id;
   const held = new Set(detail.permissions);
-  const modules = PERMISSION_MODULES.map((module) => ({
-    ...module,
-    granted: module.permissions.filter((permission) => held.has(permission.code)),
-  })).filter((module) => module.granted.length > 0);
+  const modules = PERMISSION_MODULES.map((module) => {
+    const permissions = PERMISSION_ACTIONS.filter((action) => module.actions[action]).map(
+      (action) => ({
+        code: permissionCode(module.key, action),
+        label: ACTION_LABELS[action],
+        detail: module.actions[action]!,
+      }),
+    );
+    return {
+      key: module.key,
+      label: module.label,
+      permissions,
+      granted: permissions.filter((permission) => held.has(permission.code)),
+    };
+  }).filter((module) => module.granted.length > 0);
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -162,7 +179,7 @@ export default async function UserDetailPage({
             </Panel>
           </Section>
 
-          {canManage ? (
+          {canManage || canDeactivate ? (
             <Section title="Account actions" description="Sensitive changes are recorded.">
               <Panel>
                 <UserAccountActions
@@ -170,6 +187,8 @@ export default async function UserDetailPage({
                   name={detail.fullName}
                   isActive={detail.isActive}
                   isSelf={isSelf}
+                  canDeactivate={canDeactivate}
+                  canResetPassword={canManage}
                 />
               </Panel>
             </Section>

@@ -50,7 +50,7 @@ export default async function NewPurchasePage({
               : undefined
           }
           isNew
-          canReceive={hasPermission(user, 'purchase.receive')}
+          canReceive={hasPermission(user, 'purchase.approve')}
           cancelHref="/inventory/purchases"
         />
       </Panel>

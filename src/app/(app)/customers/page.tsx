@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { UserPlus, Users } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
+import { canExport } from '@/lib/data-transfer/exports';
 import { listCustomers } from '@/lib/customers/service';
 import { formatDate } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
@@ -53,6 +54,7 @@ export default async function CustomersPage({
           <>
             <ListDataActions
               entity="customers"
+              canExport={canExport(user, 'customers')}
               label="customers"
               search={query ? new URLSearchParams({ q: query }).toString() : ''}
               canImport={canImport}

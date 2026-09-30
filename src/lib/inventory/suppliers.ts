@@ -76,7 +76,7 @@ export async function createSupplier(
   client?: Prisma.TransactionClient,
 ) {
   const input = parseInput(supplierSchema, rawInput);
-  requirePermission(user, 'inventory.manage');
+  requirePermission(user, 'inventory.create');
   const run = async (tx: Prisma.TransactionClient) => {
     await claimRequestKey(tx, user, rawInput, 'supplier.create');
     await assertNameFree(user.organizationId, input.name, undefined, tx);
@@ -103,7 +103,7 @@ export async function updateSupplier(
   rawInput: unknown,
 ) {
   const input = parseInput(supplierSchema, rawInput);
-  requirePermission(user, 'inventory.manage');
+  requirePermission(user, 'inventory.create');
   const before = await prisma.supplier.findFirst({
     where: { id: supplierId, organizationId: user.organizationId },
   });
@@ -290,7 +290,7 @@ export async function getSupplierDetail(user: AuthenticatedUser, supplierId: str
 }
 
 export async function getSupplierForEdit(user: AuthenticatedUser, supplierId: string) {
-  requirePermission(user, 'inventory.manage');
+  requirePermission(user, 'inventory.create');
   const supplier = await prisma.supplier.findFirst({
     where: { id: supplierId, organizationId: user.organizationId },
   });
@@ -311,7 +311,7 @@ export async function deleteSupplier(
   user: AuthenticatedUser,
   supplierId: string,
 ): Promise<{ outcome: 'deleted' | 'archived' }> {
-  requirePermission(user, 'inventory.manage');
+  requirePermission(user, 'inventory.delete');
   const supplier = await prisma.supplier.findFirst({
     where: { id: supplierId, organizationId: user.organizationId },
     include: { _count: { select: { purchases: true, parts: true } } },

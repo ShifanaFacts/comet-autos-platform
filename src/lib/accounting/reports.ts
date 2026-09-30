@@ -126,7 +126,7 @@ const row = (account: AccountTotals, fils: number) => ({
 // ─── Trial balance ──────────────────────────────────────────────────────────
 
 export async function getTrialBalance(user: AuthenticatedUser, input: { asOf?: string } = {}) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'reports.view');
   const asOf = input.asOf && parseCalendarDate(input.asOf) ? input.asOf : localDateString();
   const totals = await accountTotals(user.organizationId, { to: day(asOf) });
   const rows = totals
@@ -158,7 +158,7 @@ export type TrialBalance = Awaited<ReturnType<typeof getTrialBalance>>;
 // ─── Profit and loss ────────────────────────────────────────────────────────
 
 export async function getLedgerProfitAndLoss(user: AuthenticatedUser, input: PeriodInput = {}) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'reports.view');
   const period: ResolvedPeriod = resolvePeriod(input);
   const totals = await accountTotals(user.organizationId, {
     from: day(period.from),
@@ -200,7 +200,7 @@ export type LedgerProfitAndLoss = Awaited<ReturnType<typeof getLedgerProfitAndLo
 // ─── Balance sheet ──────────────────────────────────────────────────────────
 
 export async function getBalanceSheet(user: AuthenticatedUser, input: { asOf?: string } = {}) {
-  requirePermission(user, 'accounting.view');
+  requirePermission(user, 'reports.view');
   const asOf = input.asOf && parseCalendarDate(input.asOf) ? input.asOf : localDateString();
   const totals = await accountTotals(user.organizationId, { to: day(asOf) });
   const pick = (type: AccountType) =>

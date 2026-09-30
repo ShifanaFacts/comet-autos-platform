@@ -27,11 +27,17 @@ export function UserAccountActions({
   name,
   isActive,
   isSelf,
+  canDeactivate,
+  canResetPassword,
 }: {
   userId: string;
   name: string;
   isActive: boolean;
   isSelf: boolean;
+  /** Users → Delete. */
+  canDeactivate: boolean;
+  /** Users → Edit. */
+  canResetPassword: boolean;
 }) {
   const router = useRouter();
   const [isSwitching, startSwitching] = useTransition();
@@ -65,7 +71,7 @@ export function UserAccountActions({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row">
-        {isActive ? (
+        {!canDeactivate ? null : isActive ? (
           <ConfirmAction
             trigger={
               <Button
@@ -94,18 +100,20 @@ export function UserAccountActions({
           </Button>
         )}
 
-        <Button
-          variant="outline"
-          className="h-12 w-full sm:h-11 sm:w-auto"
-          onClick={() => setResetting((open) => !open)}
-          aria-expanded={resetting}
-        >
-          <KeyRound />
-          Reset password
-        </Button>
+        {canResetPassword ? (
+          <Button
+            variant="outline"
+            className="h-12 w-full sm:h-11 sm:w-auto"
+            onClick={() => setResetting((open) => !open)}
+            aria-expanded={resetting}
+          >
+            <KeyRound />
+            Reset password
+          </Button>
+        ) : null}
       </div>
 
-      {isSelf ? (
+      {isSelf && canDeactivate ? (
         <p className="text-xs text-muted-foreground">
           This is your own account, so it can’t be deactivated here. Change your own password from
           your account page.
@@ -126,11 +134,7 @@ export function UserAccountActions({
           />
           <FormError message={Object.keys(errors).length ? undefined : state.error} />
           <div className="flex flex-col gap-2 sm:flex-row">
-            <SubmitButton
-              pending={isPending}
-              className="h-12 sm:h-11"
-              pendingLabel="Setting…"
-            >
+            <SubmitButton pending={isPending} className="h-12 sm:h-11" pendingLabel="Setting…">
               <KeyRound />
               Set new password
             </SubmitButton>

@@ -170,7 +170,7 @@ async function audit(
  */
 export async function requestLeave(user: AuthenticatedUser, rawInput: unknown) {
   const input = parseInput(requestSchema, rawInput);
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'leave.create');
   const start = parseCalendarDate(input.startDate);
   const end = parseCalendarDate(input.endDate);
   if (!start) throw new DomainError('Choose the first day of leave.', 'startDate');
@@ -181,7 +181,7 @@ export async function requestLeave(user: AuthenticatedUser, rawInput: unknown) {
   }
   const approveNow =
     (input.approveNow === 'on' || input.approveNow === 'true') &&
-    hasPermission(user, 'payroll.approve');
+    hasPermission(user, 'leave.approve');
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'leave.request');
@@ -230,7 +230,7 @@ export async function decideLeave(
   rawInput: unknown = {},
 ) {
   const input = parseInput(reasonSchema, rawInput);
-  requirePermission(user, 'payroll.approve');
+  requirePermission(user, 'leave.approve');
 
   return prisma.$transaction(async (tx) => {
     const leave = await tx.leave.findFirst({
@@ -287,7 +287,7 @@ export async function cancelLeave(
   rawInput: unknown = {},
 ) {
   const input = parseInput(reasonSchema, rawInput);
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'leave.delete');
 
   return prisma.$transaction(async (tx) => {
     const leave = await tx.leave.findFirst({
@@ -300,7 +300,7 @@ export async function cancelLeave(
         `This leave is already ${LEAVE_STATUS_LABEL[leave.status].toLowerCase()}.`,
       );
     }
-    if (leave.status === 'APPROVED') requirePermission(user, 'payroll.approve');
+    if (leave.status === 'APPROVED') requirePermission(user, 'leave.approve');
 
     const updated = await tx.leave.updateMany({
       where: { id: leave.id, status: leave.status },
@@ -332,7 +332,7 @@ export interface LeaveFilters {
 
 /** Leave for the filters given, newest first, with the figures the page opens on. */
 export async function listLeave(user: AuthenticatedUser, filters: LeaveFilters = {}) {
-  requirePermission(user, 'payroll.view');
+  requirePermission(user, 'leave.view');
   const organizationId = user.organizationId;
   const today = parseCalendarDate(localDateString())!;
   const in30 = new Date(today.getTime() + 30 * DAY_MS);
@@ -424,7 +424,7 @@ function isType(value: string | undefined): value is LeaveType {
 
 /** Active employees this user may record leave for. */
 export async function getLeaveFormOptions(user: AuthenticatedUser) {
-  requirePermission(user, 'payroll.create');
+  requirePermission(user, 'leave.create');
   const employees = await prisma.employee.findMany({
     where: { organizationId: user.organizationId, isActive: true, ...branchScope(user) },
     orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
@@ -436,7 +436,7 @@ export async function getLeaveFormOptions(user: AuthenticatedUser) {
       name: name(employee),
       code: employee.employeeCode,
     })),
-    canApprove: hasPermission(user, 'payroll.approve'),
+    canApprove: hasPermission(user, 'leave.approve'),
   };
 }
 

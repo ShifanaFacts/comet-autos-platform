@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Banknote, Receipt, ReceiptText } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
+import { canExport } from '@/lib/data-transfer/exports';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { listInvoices } from '@/lib/billing/lists';
 import { formatCalendarDate, formatMoney } from '@/lib/format';
@@ -77,6 +78,7 @@ export default async function InvoicesPage({
           <>
             <ListDataActions
               entity="invoices"
+              canExport={canExport(user, 'invoices')}
               label="invoices"
               canImport={canImport(user, 'invoices')}
               columns={importColumns('invoices')}

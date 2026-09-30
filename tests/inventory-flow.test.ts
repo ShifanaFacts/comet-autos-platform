@@ -839,7 +839,7 @@ describe('inventory management', () => {
     await assert.rejects(reverseMovement(viewer, found.id, { reason: 'Nope' }), AuthError);
 
     // A clerk may enter purchases but not receive stock.
-    const clerk = withPermissions(a.owner, ['inventory.view', 'purchase.create']);
+    const clerk = withPermissions(a.owner, ['inventory.view', 'purchase.view', 'purchase.create']);
     const draft = await createPurchase(clerk, {
       supplierId,
       items: [{ partId: filterId, quantity: '1', unitCost: '12.50' }],
@@ -853,7 +853,7 @@ describe('inventory management', () => {
       ),
       AuthError,
     );
-    // Returning a part from a job needs inventory.issue as well as job_card.edit.
+    // Returning a part from a job needs Parts & stock → Edit as well as job_card.edit.
     const noIssue = withPermissions(a.owner, ['job_card.view', 'job_card.edit']);
     await assert.rejects(
       returnPartFromJob(noIssue, job.jobCardId, usageId, { quantity: '1', reason: 'x'.repeat(5) }),

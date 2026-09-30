@@ -21,9 +21,9 @@ const BOX: Record<string, string> = {
 
 export default async function TaxCodesPage() {
   const user = await requireUser();
-  if (!hasPermission(user, 'accounting.view')) return <AccessDenied what="the accounts" />;
+  if (!hasPermission(user, 'settings.view')) return <AccessDenied what="the accounts" />;
   const codes = await listTaxCodes(user);
-  const canEdit = hasPermission(user, 'accounting.edit');
+  const canEdit = hasPermission(user, 'settings.edit');
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">

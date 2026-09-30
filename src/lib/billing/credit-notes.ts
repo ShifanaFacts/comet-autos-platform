@@ -236,7 +236,7 @@ export async function getCreditableInvoice(user: AuthenticatedUser, invoiceId: s
     },
   });
   if (!invoice) throw new NotFoundError('invoice');
-  requirePermission(user, 'invoice.cancel', { branchId: invoice.branchId });
+  requirePermission(user, 'credit_note.create', { branchId: invoice.branchId });
   const credited = await creditedSoFar(prisma, user.organizationId, invoice.id);
   const lines = creditableLines(invoice, credited).map((line) => ({
     id: line.item.id,
@@ -302,7 +302,7 @@ export async function createCreditNote(
       },
     });
     if (!invoice) throw new NotFoundError('invoice');
-    requirePermission(user, 'invoice.cancel', { branchId: invoice.branchId });
+    requirePermission(user, 'credit_note.create', { branchId: invoice.branchId });
     const blocker = creditBlocker(invoice);
     if (blocker) throw new DomainError(blocker);
     if (issueDate < invoice.issueDate) {
@@ -495,7 +495,7 @@ export async function recordCreditNoteRefund(
       },
     });
     if (!note) throw new NotFoundError('credit note');
-    requirePermission(user, 'payment.reverse', { branchId: note.branchId });
+    requirePermission(user, 'payment.delete', { branchId: note.branchId });
     if (note.status !== 'ISSUED') throw new DomainError('This credit note is void.');
     if (fils(note.refundAmount) === 0) {
       throw new DomainError('Nothing is owed back to the customer under this credit note.');
@@ -602,7 +602,7 @@ export async function voidCreditNote(
         },
       },
     });
-    requirePermission(user, 'invoice.cancel', { branchId: note.branchId });
+    requirePermission(user, 'credit_note.delete', { branchId: note.branchId });
     const blocker = creditNoteVoidBlocker(note);
     if (blocker) throw new DomainError(blocker);
 
@@ -675,7 +675,7 @@ export async function getCreditNote(user: AuthenticatedUser, creditNoteId: strin
     },
   });
   if (!note) throw new NotFoundError('credit note');
-  requirePermission(user, 'invoice.view', { branchId: note.branchId });
+  requirePermission(user, 'credit_note.view', { branchId: note.branchId });
   return note;
 }
 
@@ -683,7 +683,7 @@ export type CreditNoteDetail = Awaited<ReturnType<typeof getCreditNote>>;
 
 /** The credit notes against one invoice, newest first. */
 export async function listInvoiceCreditNotes(user: AuthenticatedUser, invoiceId: string) {
-  requirePermission(user, 'invoice.view');
+  requirePermission(user, 'credit_note.view');
   return prisma.creditNote.findMany({
     where: { organizationId: user.organizationId, invoiceId },
     orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
@@ -705,7 +705,7 @@ export async function listCreditNotes(
   user: AuthenticatedUser,
   filters: { q?: string; status?: 'ISSUED' | 'VOID' | 'REFUND_DUE' } = {},
 ) {
-  requirePermission(user, 'invoice.view');
+  requirePermission(user, 'credit_note.view');
   const q = filters.q?.trim();
   const where: Prisma.CreditNoteWhereInput = {
     organizationId: user.organizationId,
