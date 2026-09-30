@@ -92,7 +92,7 @@ export function SalaryForm({
         <TextField
           label="Basic salary"
           name="basicSalary"
-          inputMode="decimal"
+          numeric="money"
           required
           defaultValue={current?.basicSalary}
           placeholder="0.00"
@@ -103,7 +103,7 @@ export function SalaryForm({
         <TextField
           label="Allowances"
           name="allowances"
-          inputMode="decimal"
+          numeric="money"
           defaultValue={current?.allowances}
           placeholder="0.00"
           hint="Housing, transport — per month."
@@ -332,7 +332,7 @@ export function AdjustDeductionButton({
           <TextField
             label="Deduction"
             name="deductions"
-            inputMode="decimal"
+            numeric="money"
             required
             defaultValue={deductions}
             error={errors.deductions}

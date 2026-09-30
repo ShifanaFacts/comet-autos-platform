@@ -96,7 +96,7 @@ function TaxCodeForm({ code, onDone }: { code?: TaxCodeRow; onDone?: () => void 
           label="Rate %"
           id={id('rate')}
           name="rate"
-          inputMode="decimal"
+          numeric="rate"
           required
           readOnly={zero}
           defaultValue={zero ? '0' : (code?.rate.replace(/\.?0+$/, '') ?? '5')}

@@ -1,6 +1,7 @@
 'use client';
 
 import { MoneyAccountField } from '@/components/accounting/money-account-field';
+import { cleanNumber, finishNumber } from '@/components/forms/number-input';
 import type { AccountChoice } from '@/lib/accounting/reports';
 import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
 import { useMemo, useState } from 'react';
@@ -174,10 +175,10 @@ export function SupplierPaymentForm({
               </span>
               <input
                 id="supplier-payment-amount"
-                inputMode="decimal"
                 autoComplete="off"
                 value={amount}
-                onChange={(event) => setAmount(event.target.value)}
+                onChange={(event) => setAmount(cleanNumber(event.target.value, 'money'))}
+                onBlur={(event) => setAmount(finishNumber(event.target.value, 'money'))}
                 placeholder="0.00"
                 aria-describedby="supplier-payment-remaining"
                 className="h-16 w-full rounded-xl border border-input bg-card pr-4 pl-16 text-right text-2xl font-semibold tabular-nums outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"

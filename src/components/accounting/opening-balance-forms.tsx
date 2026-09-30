@@ -1,11 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { NumberInput } from '@/components/forms/number-input';
 import { useRouter } from 'next/navigation';
 import { Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { FormError, TextField } from '@/components/forms/fields';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
@@ -150,8 +150,7 @@ export function OpeningBalancesForm({
                     ) : (
                       <>
                         <td className="px-2 py-1.5">
-                          <Input
-                            inputMode="decimal"
+                          <NumberInput
                             aria-label={`${row.name} debit`}
                             value={values[row.id]?.debit ?? ''}
                             onChange={(event) => set(row.id, 'debit', event.target.value)}
@@ -159,8 +158,7 @@ export function OpeningBalancesForm({
                           />
                         </td>
                         <td className="px-4 py-1.5">
-                          <Input
-                            inputMode="decimal"
+                          <NumberInput
                             aria-label={`${row.name} credit`}
                             value={values[row.id]?.credit ?? ''}
                             onChange={(event) => set(row.id, 'credit', event.target.value)}
@@ -237,7 +235,7 @@ export function CustomerOpeningForm({ openingDate }: { openingDate: string }) {
             <TextField
               label="Amount owed"
               name="amount"
-              inputMode="decimal"
+              numeric="money"
               required
               placeholder="0.00"
               hint={`As on ${openingDate}, VAT included.`}

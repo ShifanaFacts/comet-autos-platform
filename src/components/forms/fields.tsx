@@ -4,6 +4,7 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { CONTROL } from '@/components/forms/control';
 import { SearchableSelect } from '@/components/forms/searchable-select';
+import { NumberInput, type NumberKind } from '@/components/forms/number-input';
 
 /** Label → control (8px) → hint/error (8px). Fields are stacked 24px apart by their parent form. */
 export function Field({
@@ -57,14 +58,27 @@ export function TextField({
   hint,
   required,
   className,
+  numeric,
+  allowNegative,
   ...inputProps
 }: Omit<ComponentProps<'input'>, 'name'> & {
   label: ReactNode;
   name: string;
   error?: string;
   hint?: ReactNode;
+  /** A number field: money, a quantity, a rate or hours, in the app's one standard. */
+  numeric?: NumberKind;
+  /** With `numeric`: a figure that can be below zero. */
+  allowNegative?: boolean;
 }) {
   const inputId = id ?? name;
+  const control = {
+    id: inputId,
+    name,
+    required,
+    'aria-invalid': error ? true : undefined,
+    'aria-describedby': error ? `${inputId}-error` : undefined,
+  } as const;
   return (
     <Field
       label={label}
@@ -74,14 +88,16 @@ export function TextField({
       required={required}
       className={className}
     >
-      <Input
-        id={inputId}
-        name={name}
-        required={required}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${inputId}-error` : undefined}
-        {...inputProps}
-      />
+      {numeric ? (
+        <NumberInput
+          {...control}
+          {...(inputProps as ComponentProps<typeof NumberInput>)}
+          kind={numeric}
+          allowNegative={allowNegative}
+        />
+      ) : (
+        <Input {...control} {...inputProps} />
+      )}
     </Field>
   );
 }

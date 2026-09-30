@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { NumberInput, type NumberKind } from '@/components/forms/number-input';
 import { NativeSelect } from '@/components/forms/fields';
 import { Package, Plus, Trash2, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -277,7 +278,7 @@ export function DocumentLinesEditor({
                   aria={`Line ${n} quantity`}
                   value={line.quantity}
                   onChange={(value) => update(line.key, { quantity: value })}
-                  numeric
+                  numeric="quantity"
                 />
                 <LabelledInput
                   label="Price"
@@ -285,7 +286,7 @@ export function DocumentLinesEditor({
                   value={line.unitPrice}
                   onChange={(value) => update(line.key, { unitPrice: value })}
                   placeholder="0.00"
-                  numeric
+                  numeric="money"
                 />
                 <label className="flex flex-col gap-1">
                   <span className="text-xs font-medium text-muted-foreground">VAT</span>
@@ -392,18 +393,16 @@ export function DocumentLinesEditor({
                     </td>
                   ) : null}
                   <td className="px-2 py-2">
-                    <Input
+                    <NumberInput kind="quantity"
                       aria-label={`Line ${n} quantity`}
-                      inputMode="decimal"
                       value={line.quantity}
                       onChange={(event) => update(line.key, { quantity: event.target.value })}
                       className="text-right tabular-nums"
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <Input
+                    <NumberInput
                       aria-label={`Line ${n} price`}
-                      inputMode="decimal"
                       value={line.unitPrice}
                       placeholder="0.00"
                       onChange={(event) => update(line.key, { unitPrice: event.target.value })}
@@ -700,9 +699,9 @@ function DiscountInput({
   const unit = (kind: DiscountType) => (kind === 'PERCENT' ? 'percent' : 'AED');
   return (
     <span className="flex">
-      <Input
+      <NumberInput
+        kind={type === 'PERCENT' ? 'rate' : 'money'}
         aria-label={`${label} (${unit(type)})`}
-        inputMode="decimal"
         value={value}
         placeholder="0"
         onChange={(event) => onChange({ type, value: event.target.value })}
@@ -733,26 +732,37 @@ function LabelledInput({
   value,
   onChange,
   placeholder,
-  numeric = false,
+  numeric,
 }: {
   label: string;
   aria: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  numeric?: boolean;
+  /** A number box, in the app's one standard. */
+  numeric?: NumberKind;
 }) {
   return (
     <label className="flex flex-col gap-1">
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <Input
-        aria-label={aria}
-        value={value}
-        inputMode={numeric ? 'decimal' : undefined}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        className={cn('h-12 text-base', numeric && 'text-right tabular-nums')}
-      />
+      {numeric ? (
+        <NumberInput
+          kind={numeric}
+          aria-label={aria}
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-12 text-base"
+        />
+      ) : (
+        <Input
+          aria-label={aria}
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-12 text-base"
+        />
+      )}
     </label>
   );
 }

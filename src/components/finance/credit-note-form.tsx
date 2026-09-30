@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState, useTransition } from 'react';
+import { NumberInput } from '@/components/forms/number-input';
 import { useRouter } from 'next/navigation';
 import { ReceiptText } from 'lucide-react';
 import { toast } from 'sonner';
@@ -181,9 +182,8 @@ export function CreditNoteForm({
                     </td>
                     <td className="px-2 py-3">
                       {left > 0 ? (
-                        <Input
+                        <NumberInput kind="quantity"
                           aria-label={`${line.description}: quantity coming back`}
-                          inputMode="decimal"
                           value={quantities[line.id] ?? ''}
                           onChange={(event) => setQuantity(line, event.target.value)}
                           className="text-right tabular-nums"
@@ -192,9 +192,8 @@ export function CreditNoteForm({
                     </td>
                     <td className="px-2 py-3">
                       {left > 0 ? (
-                        <Input
+                        <NumberInput
                           aria-label={`${line.description}: amount to credit`}
-                          inputMode="decimal"
                           placeholder="0.00"
                           value={amounts[line.id] ?? ''}
                           onChange={(event) => {

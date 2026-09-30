@@ -200,7 +200,7 @@ export function PartUsageForm({
           label={`Quantity${part ? ` (${part.unitOfMeasure})` : ''}`}
           name="quantity"
           required
-          inputMode="decimal"
+          numeric="quantity"
           value={quantity}
           onChange={(e) => setQuantity(e.target.value)}
           error={errors.quantity}
@@ -318,7 +318,7 @@ export function LabourForm({
           label="Hours"
           name="hours"
           required
-          inputMode="decimal"
+          numeric="hours"
           placeholder="e.g. 1.5"
           value={hours}
           onChange={(e) => setHours(e.target.value)}
@@ -329,7 +329,7 @@ export function LabourForm({
           label="Hourly rate (AED)"
           name="rate"
           required
-          inputMode="decimal"
+          numeric="money"
           value={rate}
           onChange={(e) => setRate(e.target.value)}
           error={errors.rate}
@@ -551,7 +551,7 @@ export function ReturnPartButton({
           <TextField
             label={`Quantity (${unit})`}
             name="quantity"
-            inputMode="decimal"
+            numeric="quantity"
             required
             defaultValue={formatMilli(onJobMilli)}
             error={errors.quantity}

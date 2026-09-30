@@ -82,7 +82,7 @@ export function InvoicePaymentForm({
           label="Amount received (AED)"
           name="amount"
           required
-          inputMode="decimal"
+          numeric="money"
           value={amount}
           onChange={(event) => setAmount(event.target.value)}
           error={errors.amount}

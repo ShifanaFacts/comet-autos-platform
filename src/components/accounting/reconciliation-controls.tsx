@@ -62,7 +62,8 @@ export function StartReconciliationForm({
           label="Closing balance on the statement (AED)"
           name="statementBalance"
           required
-          inputMode="decimal"
+          numeric="money"
+          allowNegative
           error={errors.statementBalance}
           hint="Negative if overdrawn, e.g. -250.00."
           className="[&_input]:h-11 [&_input]:text-right [&_input]:tabular-nums"

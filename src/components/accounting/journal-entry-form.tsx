@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { NumberInput } from '@/components/forms/number-input';
 import { useRouter } from 'next/navigation';
 import { Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -155,9 +156,8 @@ export function JournalEntryForm({
                   ) : null}
                 </td>
                 <td className="px-2 py-2">
-                  <Input
+                  <NumberInput
                     aria-label={`Line ${index + 1} debit`}
-                    inputMode="decimal"
                     value={line.debit}
                     placeholder="0.00"
                     onChange={(event) =>
@@ -167,9 +167,8 @@ export function JournalEntryForm({
                   />
                 </td>
                 <td className="px-2 py-2">
-                  <Input
+                  <NumberInput
                     aria-label={`Line ${index + 1} credit`}
-                    inputMode="decimal"
                     value={line.credit}
                     placeholder="0.00"
                     onChange={(event) =>

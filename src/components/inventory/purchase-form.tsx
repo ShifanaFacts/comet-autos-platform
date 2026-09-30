@@ -1,6 +1,7 @@
 'use client';
 
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
+import { NumberInput } from '@/components/forms/number-input';
 import { useMemo, useRef, useState } from 'react';
 import { PackageCheck, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -299,18 +300,16 @@ export function PurchaseForm({
                   <div className="grid grid-cols-[1fr_1fr_0.7fr_auto] items-end gap-2 lg:w-[30rem]">
                     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                       Qty ({part?.unit})
-                      <Input
+                      <NumberInput kind="quantity"
                         value={line.quantity}
-                        inputMode="decimal"
                         onChange={(event) => update(line.key, { quantity: event.target.value })}
                         className="h-11 text-right text-base tabular-nums md:text-sm"
                       />
                     </label>
                     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                       Unit cost
-                      <Input
+                      <NumberInput
                         value={line.unitCost}
-                        inputMode="decimal"
                         onChange={(event) => update(line.key, { unitCost: event.target.value })}
                         className="h-11 text-right text-base tabular-nums md:text-sm"
                       />
@@ -339,9 +338,9 @@ export function PurchaseForm({
                     ) : (
                       <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                         VAT %
-                        <Input
+                        <NumberInput
+                          kind="rate"
                           value={line.taxRate}
-                          inputMode="decimal"
                           onChange={(event) => update(line.key, { taxRate: event.target.value })}
                           className="h-11 text-right text-base tabular-nums md:text-sm"
                         />
