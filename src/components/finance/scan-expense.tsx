@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -41,6 +42,7 @@ function toPrefill(draft: BillDraft, codes: TaxCodeOption[]) {
   const prefill: Partial<Omit<ExpenseDraft, 'id'>> = {
     vendorName: draft.supplier?.name ?? draft.supplierName ?? '',
     billNumber: draft.billNumber ?? '',
+    supplierTrn: draft.supplierTrn ?? '',
     taxCodeId: codeFor(codes, draft),
   };
   if (draft.billDate) prefill.expenseDate = draft.billDate;
@@ -52,6 +54,8 @@ function toPrefill(draft: BillDraft, codes: TaxCodeOption[]) {
     if (reason) flags.amount = reason;
   } else if (draft.subtotal) {
     prefill.amount = draft.subtotal;
+    // The VAT exactly as the bill prints it — that is what is reclaimed.
+    if (draft.vat) prefill.taxAmount = draft.vat;
     if (reason) flags.amount = reason;
   } else if (draft.total) {
     flags.amount = `Only the total (${draft.total}) could be read. Enter the amount before VAT.`;
@@ -83,6 +87,8 @@ export function ScanExpense({
 }) {
   const router = useRouter();
   const { phase, scan, reset } = useBillScan('expense');
+  // Each expense recorded by hand clears the form for the next one.
+  const [saved, setSaved] = useState(0);
   const scanned = phase.name === 'ready' ? phase : null;
   const form = { categories, defaultVatRate, moneyAccounts, taxCodes, modes, people };
 
@@ -140,7 +146,11 @@ export function ScanExpense({
           <BillPreview file={scanned.file} previewUrl={scanned.previewUrl} />
         </div>
       ) : (
-        <ExpenseForm key="manual" {...form} />
+        <ExpenseForm
+          key={`manual-${saved}`}
+          {...form}
+          onDone={() => setSaved((count) => count + 1)}
+        />
       )}
     </Panel>
   );

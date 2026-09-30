@@ -17,6 +17,8 @@ import { listPersonalPayers, resolvePersonalPayer } from '@/lib/finance/owner-pa
 import { getTaxCodeOptions, resolveTaxCode } from '@/lib/accounting/tax-codes';
 import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { getAccountChoices } from '@/lib/accounting/reports';
+import { allocateDocumentNumber } from '@/lib/numbering';
+import { listExpenseBills } from '@/lib/finance/expense-bills';
 
 /*
  * What the workshop spends to keep running — rent, utilities, workshop
@@ -51,6 +53,14 @@ const expenseSchema = z.object({
   taxRate: z
     .union([z.literal(''), z.string().regex(/^\d{1,2}(\.\d{1,2})?$/, 'Enter a VAT rate like 5.')])
     .optional(),
+  /**
+   * The VAT exactly as printed on the supplier's bill. Blank: worked out from
+   * the amount and the rate. A bill's own figure can differ by rounding, and
+   * the VAT reclaimed must be what the tax invoice says.
+   */
+  taxAmount: z
+    .union([z.literal(''), z.string().trim().regex(/^\d{1,9}(\.\d{1,2})?$/, 'Enter the VAT like 12.50.')])
+    .optional(),
   expenseDate: z
     .string({ error: 'Choose the date.' })
     .trim()
@@ -58,6 +68,22 @@ const expenseSchema = z.object({
   vendorName: z.string().trim().max(160).optional(),
   /** The supplier's own bill / invoice number. */
   billNumber: z.string().trim().max(60, 'Keep the bill number under 60 characters.').optional(),
+  /** The supplier's TRN from their tax invoice: 15 digits. */
+  supplierTrn: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || /^\d{15}$/.test(value.replace(/[\s-]/g, '')),
+      'A TRN is 15 digits, as printed on the supplier’s tax invoice.',
+    ),
+  /** A bill not paid yet: when it is due. */
+  dueDate: z
+    .union([z.literal(''), z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the due date.')])
+    .optional(),
+  /** The transfer, cheque or card-slip number it was paid with. */
+  paymentReference: z.string().trim().max(60, 'Keep the reference under 60 characters.').optional(),
+  notes: z.string().trim().max(1000, 'Keep the notes under 1000 characters.').optional(),
   /** Set when the form was filled by Scan bill: the fields the reader filled. */
   scannedFields: z.string().trim().max(200).optional(),
   paymentMethod: z.union([z.literal(''), z.enum(PAYMENT_METHODS)]).optional(),
@@ -85,12 +111,36 @@ async function readTax(organizationId: string, input: { taxCodeId?: string; taxR
   return { taxCodeId: null, taxRate: emptyToNull(input.taxRate) };
 }
 
-function split(amount: string, taxRate: string | null) {
+/**
+ * Net, VAT and total. The VAT is worked out from the rate unless it was typed
+ * from the bill, in which case the bill's figure stands — but never VAT on a
+ * code that carries none, and never more than the amount it is charged on.
+ */
+function split(amount: string, taxRate: string | null, typedTax?: string) {
   const amounts = calculateLine({ quantity: '1', unitPrice: amount, taxRate: taxRate ?? '0' });
+  let taxFils = amounts.taxFils;
+  if (typedTax) {
+    const typed = toFils(typedTax);
+    if (!taxRate && typed > 0) {
+      throw new DomainError(
+        'This tax code carries no VAT to reclaim. Choose the standard code, or leave the VAT at 0.',
+        'taxAmount',
+      );
+    }
+    if (typed > amounts.lineTotalFils) {
+      throw new DomainError(
+        'The VAT cannot be more than the amount before VAT. Check the figures on the bill.',
+        'taxAmount',
+      );
+    }
+    taxFils = typed;
+  }
   return {
     net: amounts.lineTotal,
-    tax: amounts.taxAmount,
-    total: filsToString(amounts.lineTotalFils + amounts.taxFils),
+    tax: filsToString(taxFils),
+    total: filsToString(amounts.lineTotalFils + taxFils),
+    /** The rate's own figure, for the record when the bill's differs. */
+    calculatedTax: amounts.taxAmount,
   };
 }
 
@@ -133,6 +183,33 @@ async function readPayer(
   };
 }
 
+/**
+ * The details kept with an expense beyond its money: the supplier's TRN, and
+ * either how it was paid (a reference) or, while unpaid, when it is due.
+ */
+function readDetails(
+  input: {
+    supplierTrn?: string;
+    dueDate?: string;
+    paymentReference?: string;
+    notes?: string;
+    expenseDate: string;
+  },
+  payer: { paymentMethod: string | null; paidByUserId: string | null },
+) {
+  const unpaid = !payer.paymentMethod && !payer.paidByUserId;
+  const dueDate = unpaid ? emptyToNull(input.dueDate) : null;
+  if (dueDate && dueDate < input.expenseDate) {
+    throw new DomainError('The due date cannot be before the bill’s date.', 'dueDate');
+  }
+  return {
+    supplierTrn: emptyToNull(input.supplierTrn)?.replace(/[\s-]/g, '') ?? null,
+    dueDate: dueDate ? new Date(`${dueDate}T00:00:00Z`) : null,
+    paymentReference: payer.paymentMethod ? emptyToNull(input.paymentReference) : null,
+    notes: emptyToNull(input.notes),
+  };
+}
+
 async function assertCategory(organizationId: string, categoryId: string | null) {
   if (!categoryId) return;
   const account = await prisma.chartOfAccount.findFirst({
@@ -152,15 +229,25 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
   const { taxRate, taxCodeId } = await readTax(user.organizationId, input);
   const categoryId = emptyToNull(input.categoryId);
   await assertCategory(user.organizationId, categoryId);
-  const money = split(input.amount, taxRate);
+  const money = split(input.amount, taxRate, emptyToNull(input.taxAmount) ?? undefined);
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'expense.record');
     const { paidPersonallyBy, ...payer } = await readPayer(tx, user.organizationId, input);
+    const details = readDetails(input, payer);
+    // EXP-000123: the voucher number it is filed and found under.
+    const expenseNumber = await allocateDocumentNumber(
+      tx,
+      user.organizationId,
+      branch.id,
+      'EXPENSE_VOUCHER',
+    );
     const expense = await tx.expense.create({
       data: {
         organizationId: user.organizationId,
         branchId: branch.id,
+        expenseNumber,
+        ...details,
         chartOfAccountId: categoryId,
         description: input.description.replace(/\s+/g, ' '),
         // `amount` is the net; `taxAmount` the VAT on top, so net + tax is
@@ -189,6 +276,7 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
         amount: money.net,
         taxAmount: money.tax,
         total: money.total,
+        ...(money.tax !== money.calculatedTax ? { vatAsOnBill: true, calculatedTax: money.calculatedTax } : {}),
         expenseDate: input.expenseDate,
         vendorName: expense.vendorName,
         paymentMethod: expense.paymentMethod,
@@ -231,7 +319,7 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
   const { taxRate, taxCodeId } = await readTax(user.organizationId, input);
   const categoryId = emptyToNull(input.categoryId);
   await assertCategory(user.organizationId, categoryId);
-  const money = split(input.amount, taxRate);
+  const money = split(input.amount, taxRate, emptyToNull(input.taxAmount) ?? undefined);
 
   return prisma.$transaction(async (tx) => {
     const before = await tx.expense.findFirst({
@@ -242,6 +330,7 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
     const { paidPersonallyBy, ...payer } = await readPayer(tx, user.organizationId, input);
 
     const data = {
+      ...readDetails(input, payer),
       chartOfAccountId: categoryId,
       description: input.description.replace(/\s+/g, ' '),
       amount: money.net,
@@ -272,7 +361,15 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
         paidByUserId: before.paidByUserId,
         chartOfAccountId: before.chartOfAccountId,
       },
-      afterData: { ...data, paidPersonallyBy, expenseDate: input.expenseDate, total: money.total },
+      afterData: {
+        ...data,
+        paidPersonallyBy,
+        expenseDate: input.expenseDate,
+        total: money.total,
+        ...(money.tax !== money.calculatedTax
+          ? { vatAsOnBill: true, calculatedTax: money.calculatedTax }
+          : {}),
+      },
     });
     await syncPosting(tx, user.organizationId, 'EXPENSE', expense.id, user.id);
     return expense;
@@ -433,5 +530,123 @@ export async function getExpenseFormOptions(user: AuthenticatedUser) {
       id: person.id,
       name: person.fullName,
     })),
+  };
+}
+
+
+/**
+ * One expense, in full: what it was, what it cost and the VAT reclaimed, who
+ * was paid and how, the bill kept with it, how it was booked, and every
+ * change made to it since.
+ */
+export async function getExpenseDetail(user: AuthenticatedUser, expenseId: string) {
+  requirePermission(user, 'expense.view');
+  const expense = await prisma.expense.findFirst({
+    where: { id: expenseId, organizationId: user.organizationId },
+    include: {
+      chartOfAccount: { select: { id: true, accountCode: true, accountName: true } },
+      paidFrom: { select: { accountCode: true, accountName: true } },
+      paidByUser: { select: { id: true, fullName: true } },
+      recordedBy: { select: { fullName: true } },
+      branch: { select: { name: true } },
+      taxCode: { select: { code: true, name: true, rate: true, treatment: true } },
+    },
+  });
+  if (!expense) throw new NotFoundError('expense');
+  const [bills, entries, history] = await Promise.all([
+    listExpenseBills(user, [expense.id]).then((byExpense) => byExpense.get(expense.id) ?? []),
+    // Every entry that has booked it — the standing one and any it replaced.
+    prisma.journalEntry.findMany({
+      where: { organizationId: user.organizationId, sourceType: 'EXPENSE', sourceId: expense.id },
+      orderBy: [{ createdAt: 'asc' }],
+      select: {
+        id: true,
+        entryNumber: true,
+        entryDate: true,
+        description: true,
+        reversalOfJournalEntryId: true,
+        _count: { select: { reversals: true } },
+        lines: {
+          select: {
+            debitAmount: true,
+            creditAmount: true,
+            chartOfAccount: { select: { accountCode: true, accountName: true } },
+          },
+        },
+      },
+    }),
+    prisma.auditLog.findMany({
+      where: { organizationId: user.organizationId, entityType: 'Expense', entityId: expense.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true,
+        action: true,
+        createdAt: true,
+        metadata: true,
+        actorUser: { select: { fullName: true } },
+      },
+    }),
+  ]);
+  const net = toFils(expense.amount.toString());
+  const tax = expense.taxAmount ? toFils(expense.taxAmount.toString()) : 0;
+  return {
+    ...expense,
+    total: filsToString(net + tax),
+    bills,
+    entries: entries.map((entry) => ({
+      ...entry,
+      /** Replaced by a correction, or itself the reversal of one. */
+      superseded: entry._count.reversals > 0 || Boolean(entry.reversalOfJournalEntryId),
+    })),
+    history,
+    canEdit: expense.status === 'RECORDED' && hasPermission(user, 'expense.edit'),
+    canVoid: expense.status === 'RECORDED' && hasPermission(user, 'expense.delete'),
+    canAttach: expense.status === 'RECORDED' && hasPermission(user, 'expense.create'),
+  };
+}
+
+export type ExpenseDetail = Awaited<ReturnType<typeof getExpenseDetail>>;
+
+/** An expense as the form's starting values, for correcting it. */
+export function toExpenseDraft(expense: {
+  id: string;
+  description: string;
+  amount: { toString(): string };
+  taxRate: { toString(): string } | null;
+  taxAmount: { toString(): string } | null;
+  taxCodeId: string | null;
+  expenseDate: Date;
+  vendorName: string | null;
+  billNumber: string | null;
+  supplierTrn: string | null;
+  dueDate: Date | null;
+  paymentReference: string | null;
+  notes: string | null;
+  paymentMethod: string | null;
+  paidFromAccountId: string | null;
+  paidByUserId: string | null;
+  chartOfAccountId: string | null;
+}) {
+  const trim = (value: string) => (value.includes('.') ? value.replace(/\.?0+$/, '') : value);
+  return {
+    id: expense.id,
+    description: expense.description,
+    amount: expense.amount.toString(),
+    // "5.00" → "5"; a whole number like "10" is left alone.
+    taxRate: expense.taxRate ? trim(expense.taxRate.toString()) : '',
+    taxAmount: expense.taxAmount ? expense.taxAmount.toString() : '',
+    taxCodeId: expense.taxCodeId ?? '',
+    expenseDate: expense.expenseDate.toISOString().slice(0, 10),
+    vendorName: expense.vendorName ?? '',
+    billNumber: expense.billNumber ?? '',
+    supplierTrn: expense.supplierTrn ?? '',
+    dueDate: expense.dueDate ? expense.dueDate.toISOString().slice(0, 10) : '',
+    paymentReference: expense.paymentReference ?? '',
+    notes: expense.notes ?? '',
+    paymentMethod: expense.paymentMethod ?? '',
+    paidFromAccountId: expense.paidFromAccountId ?? '',
+    paidByUserId: expense.paidByUserId ?? '',
+    categoryId: expense.chartOfAccountId ?? '',
   };
 }
