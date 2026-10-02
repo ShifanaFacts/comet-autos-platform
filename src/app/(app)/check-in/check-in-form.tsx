@@ -46,9 +46,12 @@ function Step({ number, title, done, children }: { number: number; title: string
 export function CheckInForm({
   initialVehicle,
   initialAppointment,
+  today,
 }: {
   initialVehicle: VehicleSummary | null;
   initialAppointment: AppointmentContext | null;
+  /** "YYYY-MM-DD" in Dubai: the arrival date's default and latest choice. */
+  today: string;
 }) {
   const [state, onSubmit, isPending] = useFormAction<ActionResult<CheckInResult>>(checkInAction, { ok: false });
   const [vehicle, setVehicle] = useState<VehicleSummary | null>(initialVehicle);
@@ -157,7 +160,7 @@ export function CheckInForm({
             <TextField label="VIN" name="vin" error={errors.vin} hint="Optional" />
           </div>
         </Step>
-        <VisitStep number={3} errors={errors} lastMileage={null} />
+        <VisitStep number={3} errors={errors} lastMileage={null} today={today} />
         <FormError message={state.error} />
         <div className="flex flex-wrap items-center gap-3 border-t border-border pt-6">
           <SubmitButton pending={isPending} size="lg" pendingLabel="Creating…">
@@ -273,6 +276,7 @@ export function CheckInForm({
             errors={errors}
             lastMileage={vehicle.lastMileage}
             defaultComplaint={appointment?.notes ?? ''}
+            today={today}
           />
           <Step number={4} title="Other vehicles of this customer">
             <OtherVehicles
@@ -304,11 +308,13 @@ function VisitStep({
   errors,
   lastMileage,
   defaultComplaint = '',
+  today,
 }: {
   number: number;
   errors: Record<string, string>;
   lastMileage: number | null;
   defaultComplaint?: string;
+  today: string;
 }) {
   return (
     <Step number={number} title="What needs doing">
@@ -336,6 +342,28 @@ function VisitStep({
           }
           className="max-w-xs [&_input]:h-12 [&_input]:text-base md:[&_input]:h-11 md:[&_input]:text-sm"
         />
+        {/* Today by default. An earlier date records a job that came in
+            before it was entered — it is opened on that day. */}
+        <div className="grid gap-4 sm:max-w-md sm:grid-cols-[1fr_9rem]">
+          <TextField
+            label="Arrived on"
+            name="arrivedOn"
+            type="date"
+            max={today}
+            defaultValue={today}
+            error={errors.arrivedOn}
+            hint="Change it to enter a job that came in on an earlier day."
+            className="[&_input]:h-12 [&_input]:text-base md:[&_input]:h-11 md:[&_input]:text-sm"
+          />
+          <TextField
+            label="Time"
+            name="arrivedAt"
+            type="time"
+            error={errors.arrivedAt}
+            hint="Optional"
+            className="[&_input]:h-12 [&_input]:text-base md:[&_input]:h-11 md:[&_input]:text-sm"
+          />
+        </div>
       </div>
     </Step>
   );

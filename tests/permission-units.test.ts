@@ -121,8 +121,14 @@ describe('upgrading the old codes', () => {
   test('every new code comes from exactly one old code — except the one documented fold', () => {
     for (const code of PERMISSION_CODES) {
       const sources = SOURCES.get(code) ?? [];
-      if (code === 'audit.view' || code === 'audit.export') {
-        assert.deepEqual(sources, [], 'the audit log is new: only the Owner starts with it');
+      if (
+        code === 'audit.view' ||
+        code === 'audit.export' ||
+        // Modules added after the upgrade: no old code guarded them.
+        code.startsWith('money.') ||
+        code.startsWith('customer_advance.')
+      ) {
+        assert.deepEqual(sources, [], `${code} is new: only the Owner starts with it`);
       } else if (code === 'job_card.approve') {
         assert.deepEqual(sources.sort(), ['job_card.assign', 'job_card.close']);
       } else {

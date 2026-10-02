@@ -13,6 +13,7 @@ import { createCustomer, type CustomerInput } from '@/lib/customers/service';
 import { createVehicle, MAX_MILEAGE, type VehicleInput } from '@/lib/vehicles/service';
 import { OPEN_APPOINTMENT_STATUSES } from '@/lib/appointments/service';
 import { formatKm } from '@/lib/format';
+import { arrivalMoment } from './arrival';
 
 /**
  * A job is "in the workshop" until it is delivered or cancelled. Legacy
@@ -115,6 +116,8 @@ export async function checkInVehicle(
   const branchId = user.primaryBranchId;
   requirePermission(user, 'job_card.create', { branchId });
   const visit = parseInput(visitSchema, input.visit);
+  // Blank: the job opens now. An earlier date records a job entered after the fact.
+  const arrivedAt = arrivalMoment(input.visit.arrivedOn, input.visit.arrivedAt);
   const also = input.mode === 'existing' ? (input.alsoVehicles ?? []) : [];
   if (also.length + 1 > MAX_VEHICLES_PER_CHECK_IN) {
     throw new DomainError(
@@ -163,6 +166,7 @@ export async function checkInVehicle(
       branchId,
       vehicleId,
       visit,
+      arrivedAt,
       visit.appointmentId || null,
     );
     const others: NonNullable<CheckInResult['others']> = [];
@@ -173,6 +177,7 @@ export async function checkInVehicle(
         branchId,
         extra.vehicleId,
         extra.visit,
+        arrivedAt,
         null,
         first.customerId,
       );
@@ -196,6 +201,11 @@ export async function checkInVehicle(
  * Opens one vehicle's job card (status ARRIVED) inside the check-in's
  * transaction. With `sameCustomer`, the vehicle must belong to that customer:
  * a fleet check-in is one customer's cars, never someone else's.
+ *
+ * `arrivedAt` (null: now) is when the vehicle came in. A job entered after
+ * the fact may carry a mileage lower than a reading recorded since, so the
+ * "never lower than the last reading" check applies only to a job opened
+ * now, and the vehicle's odometer only ever moves forward.
  */
 async function openJobCard(
   tx: Prisma.TransactionClient,
@@ -203,6 +213,7 @@ async function openJobCard(
   branchId: string,
   vehicleId: string,
   visit: z.infer<typeof visitSchema>,
+  arrivedAt: Date | null,
   requestedAppointmentId: string | null,
   sameCustomer?: string,
 ) {
@@ -236,6 +247,7 @@ async function openJobCard(
   }
 
   if (
+    arrivedAt === null &&
     visit.mileage !== null &&
     vehicle.lastMileage !== null &&
     visit.mileage < vehicle.lastMileage
@@ -292,12 +304,16 @@ async function openJobCard(
       status: 'ARRIVED',
       odometerReading: visit.mileage,
       customerComplaint: visit.complaint,
+      ...(arrivedAt ? { openedAt: arrivedAt } : {}),
       createdByUserId: user.id,
     },
   });
 
-  // Only a reading that was actually taken updates the vehicle's odometer.
-  if (visit.mileage !== null) {
+  // Only a reading that was actually taken, and never an older one, updates the odometer.
+  if (
+    visit.mileage !== null &&
+    (vehicle.lastMileage === null || visit.mileage >= vehicle.lastMileage)
+  ) {
     await tx.vehicle.update({ where: { id: vehicle.id }, data: { lastMileage: visit.mileage } });
   }
 
@@ -308,6 +324,7 @@ async function openJobCard(
       fromStatus: null,
       toStatus: 'ARRIVED',
       changedByUserId: user.id,
+      changedAt: jobCard.openedAt,
     },
   });
   await writeAuditLog(tx, {
@@ -325,6 +342,7 @@ async function openJobCard(
       appointmentId,
       odometerReading: visit.mileage,
       entry: appointmentId ? 'appointment' : 'walk_in',
+      ...(arrivedAt ? { arrivedAt: arrivedAt.toISOString(), backdated: true } : {}),
     },
   });
 

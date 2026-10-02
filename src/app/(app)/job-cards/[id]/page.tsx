@@ -21,6 +21,7 @@ import { employeeName, listWorkshopEmployees } from '@/lib/workshop/assignment';
 import { Grid, Panel, Section, Stack } from '@/components/layout/primitives';
 import { JobHero } from '@/components/workshop/job-hero';
 import { JobQuickActions } from '@/components/workshop/job-quick-actions';
+import { JobAdvances } from '@/components/finance/job-advances';
 import { NextActionPanel } from '@/components/workshop/next-action-panel';
 import { TechnicianForm } from '@/components/workshop/technician-form';
 import { EstimateStatusPill, InspectionResultPill } from '@/components/workshop/status-pills';
@@ -460,6 +461,8 @@ export default async function JobCardWorkspacePage({
               </JobDetailsEditor>
             </Panel>
           </Section>
+
+          <JobAdvances user={user} jobCard={jobCard} open={!isFinished} />
 
           <Section title="Vehicle & owner">
             <Panel padding="none">

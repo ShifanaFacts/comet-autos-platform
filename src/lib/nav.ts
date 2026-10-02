@@ -1,4 +1,6 @@
 import {
+  ArrowRightLeft,
+  PiggyBank,
   LayoutDashboard,
   CalendarDays,
   LogIn,
@@ -57,6 +59,12 @@ export interface NavItem {
 
 export interface NavGroup {
   label: string | null;
+  /**
+   * A section this group sits inside in the sidebar — Finance holds Sales &
+   * receivables, VAT, Reports… Everything else reads groups flat, so a group
+   * with a parent is still just a group of links to them.
+   */
+  parent?: string;
   items: NavItem[];
 }
 
@@ -67,49 +75,15 @@ export interface NavGroup {
  * listed, marked "Soon", so nothing silently disappears.
  */
 export const NAV_GROUPS: NavGroup[] = [
-  { label: null, items: [{ label: 'Dashboard', href: '/', icon: LayoutDashboard }] },
-  /*
-   * The four documents the workshop actually touches every day come first,
-   * in the order they happen. The detailed lifecycle screens — inspections,
-   * approvals, appointments — are still here, one group down, for the jobs
-   * that use them.
-   */
   {
-    label: 'Daily work',
-    items: [
-      {
-        label: 'Job Cards',
-        href: '/job-cards',
-        icon: ClipboardList,
-        permission: 'job_card.view',
-      },
-      { label: 'Quotations', href: '/quotations', icon: FileText, permission: 'quotation.view' },
-      {
-        label: 'Sales invoices',
-        href: '/finance/invoices',
-        icon: Receipt,
-        permission: 'invoice.view',
-      },
-      { label: 'Receipts', href: '/finance/payments', icon: Wallet, permission: 'payment.view' },
-      {
-        label: 'Credit notes',
-        href: '/finance/credit-notes',
-        icon: FileMinus,
-        permission: 'credit_note.view',
-      },
-    ],
-  },
-  {
-    label: 'Customers',
-    items: [
-      { label: 'Customers', href: '/customers', icon: Users, permission: 'customer.view' },
-      { label: 'Vehicles', href: '/vehicles', icon: Car, permission: 'vehicle.view' },
-    ],
+    label: null,
+    items: [{ label: 'Dashboard', href: '/', icon: LayoutDashboard }],
   },
   {
     label: 'Workshop',
     items: [
       { label: 'New job card', href: '/check-in', icon: LogIn, permission: 'job_card.create' },
+      { label: 'Job Cards', href: '/job-cards', icon: ClipboardList, permission: 'job_card.view' },
       {
         label: 'Appointments',
         href: '/appointments',
@@ -123,6 +97,38 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'job_card.view',
       },
       { label: 'Approvals', href: '/approvals', icon: BadgeCheck, permission: 'quotation.view' },
+    ],
+  },
+  {
+    label: 'Sales',
+    items: [
+      { label: 'Quotations', href: '/quotations', icon: FileText, permission: 'quotation.view' },
+      {
+        label: 'Sales invoices',
+        href: '/finance/invoices',
+        icon: Receipt,
+        permission: 'invoice.view',
+      },
+      { label: 'Receipts', href: '/finance/payments', icon: Wallet, permission: 'payment.view' },
+      {
+        label: 'Customer advances',
+        href: '/finance/advances',
+        icon: HandCoins,
+        permission: 'customer_advance.view',
+      },
+      {
+        label: 'Credit notes',
+        href: '/finance/credit-notes',
+        icon: FileMinus,
+        permission: 'credit_note.view',
+      },
+    ],
+  },
+  {
+    label: 'Customers',
+    items: [
+      { label: 'Customers', href: '/customers', icon: Users, permission: 'customer.view' },
+      { label: 'Vehicles', href: '/vehicles', icon: Car, permission: 'vehicle.view' },
     ],
   },
   {
@@ -150,31 +156,34 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Receivables & payables',
+    label: 'Overview',
+    parent: 'Finance',
+    items: [
+      { label: 'Financial overview', href: '/finance', icon: ChartPie, permission: 'invoice.view' },
+    ],
+  },
+  {
+    label: 'Money',
+    parent: 'Finance',
+    items: [
+      { label: 'Money', href: '/finance/money', icon: PiggyBank, permission: 'money.view' },
+      {
+        label: 'Money transfers',
+        href: '/finance/money/transfers',
+        icon: ArrowRightLeft,
+        permission: 'money.view',
+      },
+    ],
+  },
+  {
+    label: 'Sales & receivables',
+    parent: 'Finance',
     items: [
       {
-        label: 'Receivables',
+        label: 'Customers owing',
         href: '/finance/outstanding',
         icon: HandCoins,
         permission: 'invoice.view',
-      },
-      {
-        label: 'Payables',
-        href: '/finance/payables',
-        icon: Banknote,
-        permission: 'supplier_payment.view',
-      },
-      {
-        label: 'Owed to owner',
-        href: '/finance/owner-advances',
-        icon: UserRoundCheck,
-        permission: 'accounting.view',
-      },
-      {
-        label: 'Expenses & bills',
-        href: '/finance/expenses',
-        icon: ReceiptText,
-        permission: 'expense.view',
       },
       {
         label: 'Statements of account',
@@ -185,26 +194,74 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Accounting',
+    label: 'Purchases & payables',
+    parent: 'Finance',
     items: [
-      { label: 'Financial overview', href: '/finance', icon: ChartPie, permission: 'invoice.view' },
+      {
+        label: 'Expenses & bills',
+        href: '/finance/expenses',
+        icon: ReceiptText,
+        permission: 'expense.view',
+      },
+      {
+        label: 'Suppliers owed',
+        href: '/finance/payables',
+        icon: Banknote,
+        permission: 'supplier_payment.view',
+      },
+      {
+        label: 'Owed to owner',
+        href: '/finance/owner-advances',
+        icon: UserRoundCheck,
+        permission: 'accounting.view',
+      },
+    ],
+  },
+  {
+    label: 'VAT',
+    parent: 'Finance',
+    items: [{ label: 'VAT returns', href: '/finance/vat', icon: Percent, permission: 'vat.view' }],
+  },
+  {
+    label: 'Reports',
+    parent: 'Finance',
+    items: [
+      {
+        label: 'Profit & loss',
+        href: '/finance/accounting?view=profit',
+        icon: TrendingUp,
+        permission: 'reports.view',
+      },
+      {
+        label: 'Balance sheet',
+        href: '/finance/accounting?view=balance',
+        icon: Scale,
+        permission: 'reports.view',
+      },
+      {
+        label: 'Cash flow',
+        href: '/finance/accounting?view=cash',
+        icon: WalletCards,
+        permission: 'reports.view',
+      },
+      {
+        label: 'Trial balance',
+        href: '/finance/accounting?view=trial',
+        icon: Sheet,
+        permission: 'reports.view',
+      },
+      { label: 'Reports', href: '/reports', icon: BarChart3 },
+    ],
+  },
+  {
+    label: 'Accounting',
+    parent: 'Finance',
+    items: [
       {
         label: 'Chart of accounts',
         href: '/finance/accounting?view=accounts',
         icon: BookOpen,
         permission: 'accounting.view',
-      },
-      {
-        label: 'Tax codes',
-        href: '/finance/accounting/tax-codes',
-        icon: Tags,
-        permission: 'settings.view',
-      },
-      {
-        label: 'Payment modes',
-        href: '/finance/accounting/payment-modes',
-        icon: CreditCard,
-        permission: 'settings.view',
       },
       {
         label: 'Journal entries',
@@ -237,82 +294,42 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'accounting.view',
       },
       {
-        label: 'VAT returns',
-        href: '/finance/vat',
-        icon: Percent,
-        permission: 'vat.view',
-      },
-      {
         label: 'Year-end closing',
         href: '/finance/accounting/year-end',
         icon: CalendarCheck2,
         permission: 'accounting.view',
       },
-    ],
-  },
-  {
-    label: 'Financial statements',
-    items: [
       {
-        label: 'Trial balance',
-        href: '/finance/accounting?view=trial',
-        icon: Sheet,
-        permission: 'reports.view',
+        label: 'Tax codes',
+        href: '/finance/accounting/tax-codes',
+        icon: Tags,
+        permission: 'settings.view',
       },
       {
-        label: 'Profit & loss',
-        href: '/finance/accounting?view=profit',
-        icon: TrendingUp,
-        permission: 'reports.view',
-      },
-      {
-        label: 'Balance sheet',
-        href: '/finance/accounting?view=balance',
-        icon: Scale,
-        permission: 'reports.view',
-      },
-      {
-        label: 'Cash flow',
-        href: '/finance/accounting?view=cash',
-        icon: WalletCards,
-        permission: 'reports.view',
+        label: 'Payment modes',
+        href: '/finance/accounting/payment-modes',
+        icon: CreditCard,
+        permission: 'settings.view',
       },
     ],
   },
   {
-    label: 'Team',
+    label: 'HR',
     items: [
-      {
-        label: 'Employees',
-        href: '/hr/employees',
-        icon: IdCard,
-        permission: 'employee.view',
-      },
+      { label: 'Employees', href: '/hr/employees', icon: IdCard, permission: 'employee.view' },
       {
         label: 'Attendance',
         href: '/hr/attendance',
         icon: CalendarCheck,
         permission: 'attendance.view',
       },
-      {
-        label: 'Leave',
-        href: '/hr/leave',
-        icon: CalendarOff,
-        permission: 'leave.view',
-      },
-      {
-        label: 'Payroll',
-        href: '/hr/payroll',
-        icon: Banknote,
-        permission: 'payroll.view',
-      },
+      { label: 'Leave', href: '/hr/leave', icon: CalendarOff, permission: 'leave.view' },
+      { label: 'Payroll', href: '/hr/payroll', icon: Banknote, permission: 'payroll.view' },
     ],
   },
   {
-    label: 'More',
+    label: 'Settings',
     items: [
-      { label: 'Letterhead', href: '/letterhead', icon: ScrollText },
-      { label: 'Reports', href: '/reports', icon: BarChart3 },
       { label: 'Settings', href: '/settings', icon: Settings, permission: 'settings.view' },
       {
         label: 'Users & roles',
@@ -321,6 +338,7 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'user.view',
       },
       { label: 'Audit log', href: '/settings/audit', icon: History, permission: 'audit.view' },
+      { label: 'Letterhead', href: '/letterhead', icon: ScrollText },
     ],
   },
 ];

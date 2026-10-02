@@ -3,7 +3,7 @@ import type { Prisma } from '@/generated/prisma/client';
 import type { PurchaseStatus } from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
-import { requirePermission } from '@/lib/auth/authorize';
+import { hasPermission, requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { allocateDocumentNumber } from '@/lib/numbering';
 import { DomainError, NotFoundError } from '@/lib/errors';
@@ -11,20 +11,26 @@ import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { parseInput, ValidationError } from '@/lib/form-data';
 import { emptyToNull } from '@/lib/normalize';
 import {
+  calculateDocument,
   calculateLine,
-  calculateTotals,
   filsToString,
   formatMilli,
   milliToString,
+  readDiscount,
+  shareFils,
   signedToMilli,
   toFils,
   toMilli,
+  type LineAmounts,
 } from '@/lib/money';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { postMovement, resolveInventoryBranch } from '@/lib/inventory/stock';
 import { getTaxCodeOptions, resolveTaxCodes } from '@/lib/accounting/tax-codes';
 import { PURCHASE_STATUS_LABEL } from '@/lib/inventory/labels';
+import { receivedValueFils, unitCostAfterDiscount } from '@/lib/inventory/purchase-value';
+import { takeSupplierPayment } from '@/lib/finance/supplier-payments';
+import { supplierPaidFils } from '@/lib/finance/supplier-balance';
 
 /*
  * Purchase receiving: a purchase records one supplier invoice / delivery
@@ -34,7 +40,20 @@ import { PURCHASE_STATUS_LABEL } from '@/lib/inventory/labels';
  * line's received quantity, so the purchase and the stock can't disagree.
  *
  * Totals are calculated here with the shared money helpers; the browser only
- * ever sends quantities, costs and VAT rates.
+ * ever sends quantities, costs, VAT rates and discounts as entered.
+ *
+ * Discounts are trade discounts, priced by the same engine as invoices
+ * (calculateLine / calculateDocument): each line may carry its own, and the
+ * bill one more, shared across the lines to the fil. They lower the stock's
+ * cost and the input VAT; nothing is booked as income. A discounted line
+ * keeps its cost after both discounts (`netAmount`), from which every
+ * delivery of it is valued (lib/inventory/purchase-value.ts). A purchase
+ * with no discount stores no `netAmount` and is valued exactly as before.
+ *
+ * Receiving can settle the bill at once ("paid now", in full or in part):
+ * an ordinary supplier payment, by the same function the Pay screen uses
+ * (takeSupplierPayment), in the same transaction. "Pay later" records
+ * nothing but an optional due date.
  */
 
 const lineSchema = z.object({
@@ -62,7 +81,23 @@ const lineSchema = z.object({
     ),
   /** The purchase tax code; when given, its rate is the line's VAT rate. */
   taxCodeId: z.union([z.literal(''), z.uuid()]).optional(),
+  /** The line's own trade discount: a percentage or an AED amount, as entered. */
+  discountType: z.union([z.literal(''), z.enum(['PERCENT', 'AMOUNT'])]).optional(),
+  discountValue: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || /^\d+(\.\d{1,2})?$/.test(value),
+      'Enter a discount like 10 or 10.50.',
+    ),
 });
+
+const DATE_FIELD = z
+  .string()
+  .trim()
+  .optional()
+  .refine((value) => !value || parseCalendarDate(value) !== null, 'Enter a valid date.');
 
 const purchaseSchema = z.object({
   supplierId: z.uuid('Choose the supplier.'),
@@ -81,6 +116,18 @@ const purchaseSchema = z.object({
       "The purchase date can't be in the future.",
     ),
   notes: z.string().trim().max(500).optional(),
+  /** A trade discount on the whole bill, after the lines' own. */
+  billDiscountType: z.union([z.literal(''), z.enum(['PERCENT', 'AMOUNT'])]).optional(),
+  billDiscountValue: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || /^\d+(\.\d{1,2})?$/.test(value),
+      'Enter a discount like 10 or 10.50.',
+    ),
+  /** When the supplier expects to be paid. */
+  dueDate: DATE_FIELD,
   /** Set when the form was filled by Scan bill: the fields the reader filled. */
   scannedFields: z.string().trim().max(200).optional(),
   items: z
@@ -121,6 +168,46 @@ export function purchaseLineAmounts(quantity: string, unitCost: string, taxRate:
   return calculateLine({ quantity, unitPrice: unitCost, taxRate });
 }
 
+/**
+ * A saved line's amounts for the screens: as stored when it carries a
+ * discount (its own discount, its cost after the bill discount, its VAT),
+ * else priced as it always was.
+ */
+function lineAmountsOf(
+  item: {
+    quantityOrdered: { toString(): string };
+    unitCost: { toString(): string };
+    discountType: 'PERCENT' | 'AMOUNT' | null;
+    discountValue: { toString(): string } | null;
+    taxAmount: { toString(): string } | null;
+    netAmount: { toString(): string } | null;
+  },
+  taxRate: string,
+) {
+  const base = purchaseLineAmounts(
+    milliToString(signedToMilli(item.quantityOrdered)),
+    item.unitCost.toString(),
+    taxRate,
+  );
+  const discounted = calculateLine({
+    quantity: milliToString(signedToMilli(item.quantityOrdered)),
+    unitPrice: item.unitCost.toString(),
+    taxRate,
+    discount: readDiscount(item.discountType, item.discountValue),
+  });
+  return {
+    ...discounted,
+    /** Quantity × cost, before any discount. */
+    grossFils: base.lineTotalFils,
+    /** After the line's own discount and its share of the bill discount, before VAT. */
+    net: item.netAmount ? filsToString(toFils(item.netAmount.toString())) : discounted.lineTotal,
+    taxAmount:
+      item.netAmount && item.taxAmount
+        ? filsToString(toFils(item.taxAmount.toString()))
+        : discounted.taxAmount,
+  };
+}
+
 async function prepareLines(
   tx: Prisma.TransactionClient,
   organizationId: string,
@@ -143,15 +230,71 @@ async function prepareLines(
     const code = item.taxCodeId ? codes.get(item.taxCodeId) : undefined;
     const taxRate = code?.rate ?? (item.taxRate || defaultVat);
     const quantity = milliToString(toMilli(item.quantity));
+    let amounts: LineAmounts;
+    try {
+      amounts = calculateLine({
+        quantity,
+        unitPrice: item.unitCost,
+        taxRate,
+        discount: readDiscount(item.discountType, item.discountValue),
+      });
+    } catch (error) {
+      throw new ValidationError({
+        [`items.${index}.discountValue`]: `Line ${index + 1}: ${
+          error instanceof Error ? error.message : 'check the discount.'
+        }`,
+      });
+    }
     return {
       partId: part.id,
       quantity,
       unitCost: item.unitCost,
       taxRate,
       taxCodeId: code?.id ?? null,
-      amounts: purchaseLineAmounts(quantity, item.unitCost, taxRate),
+      amounts,
     };
   });
+}
+
+type PreparedLine = Awaited<ReturnType<typeof prepareLines>>[number];
+
+/**
+ * The whole purchase priced: the bill discount shared across the lines to
+ * the fil and each line's VAT on what is left (the invoice engine,
+ * calculateDocument), and — only when there is any discount — each line's
+ * cost after both discounts, from which its stock is valued.
+ */
+export function pricePurchase(
+  lines: PreparedLine[],
+  bill: { type?: string | null; value?: string | null },
+) {
+  const discount = readDiscount(bill.type, bill.value);
+  let priced: ReturnType<typeof calculateDocument>;
+  try {
+    priced = calculateDocument(
+      lines.map((line) => line.amounts),
+      discount,
+    );
+  } catch (error) {
+    throw new DomainError(
+      error instanceof Error ? error.message : 'Check the bill discount.',
+      'billDiscountValue',
+    );
+  }
+  const discounted = Boolean(discount) || lines.some((line) => line.amounts.discountType);
+  // The same exact split calculateDocument made of the bill discount.
+  const shares = shareFils(
+    toFils(priced.totals.discountAmount),
+    lines.map((line) => line.amounts.lineTotalFils),
+  );
+  return {
+    lines: lines.map((line, index) => ({
+      ...line,
+      amounts: priced.lines[index],
+      netAmount: discounted ? filsToString(line.amounts.lineTotalFils - shares[index]) : null,
+    })),
+    totals: priced.totals,
+  };
 }
 
 async function assertSupplierInvoiceFree(
@@ -198,32 +341,51 @@ async function requireActiveSupplier(
   return supplier.id;
 }
 
-function headerData(
-  input: z.infer<typeof purchaseSchema>,
-  lines: Awaited<ReturnType<typeof prepareLines>>,
-) {
-  const totals = calculateTotals(lines.map((line) => line.amounts));
+type PricedPurchase = ReturnType<typeof pricePurchase>;
+
+/** A due date given on a form: a valid date, not before the bill's own date. */
+function readDueDate(value: string | undefined, billDate: Date | null) {
+  if (!value) return null;
+  const due = parseCalendarDate(value);
+  if (!due) throw new DomainError('Enter a valid due date.', 'dueDate');
+  if (billDate && due < billDate) {
+    throw new DomainError('The due date can’t be before the purchase date.', 'dueDate');
+  }
+  return due;
+}
+
+function headerData(input: z.infer<typeof purchaseSchema>, priced: PricedPurchase) {
+  const { totals } = priced;
+  const supplierInvoiceDate = input.supplierInvoiceDate
+    ? parseCalendarDate(input.supplierInvoiceDate)
+    : null;
   return {
     supplierInvoiceNumber: emptyToNull(input.supplierInvoiceNumber),
-    supplierInvoiceDate: input.supplierInvoiceDate
-      ? parseCalendarDate(input.supplierInvoiceDate)
-      : null,
+    supplierInvoiceDate,
     notes: emptyToNull(input.notes),
     subtotal: totals.subtotal,
     taxAmount: totals.taxAmount,
     totalAmount: totals.totalAmount,
+    billDiscountType: totals.discountType,
+    billDiscountValue: totals.discountValue,
+    billDiscountAmount: totals.discountAmount,
+    dueDate: readDueDate(input.dueDate, supplierInvoiceDate),
   };
 }
 
 /** Purchase lines for a nested create — the organization comes from the parent purchase. */
-function itemRows(lines: Awaited<ReturnType<typeof prepareLines>>) {
-  return lines.map((line) => ({
+function itemRows(priced: PricedPurchase) {
+  return priced.lines.map((line) => ({
     partId: line.partId,
     quantityOrdered: line.quantity,
     unitCost: line.unitCost,
     taxRate: line.taxRate,
     taxAmount: line.amounts.taxAmount,
     taxCodeId: line.taxCodeId,
+    discountType: line.amounts.discountType,
+    discountValue: line.amounts.discountValue,
+    discountAmount: line.amounts.discountAmount,
+    netAmount: line.netAmount,
   }));
 }
 
@@ -237,6 +399,10 @@ export async function createPurchase(
   options: { receive?: boolean } = {},
 ) {
   const input = parsePurchase(rawInput);
+  const settlement = parseSettlement(rawInput);
+  if (!options.receive && settlement.payment === 'now') {
+    throw new DomainError('A supplier is paid once the goods are received.', 'payment');
+  }
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'purchase.create');
@@ -244,8 +410,12 @@ export async function createPurchase(
     requirePermission(user, 'purchase.create', { branchId: branch.id });
     if (options.receive) requirePermission(user, 'purchase.approve', { branchId: branch.id });
     const supplierId = await requireActiveSupplier(tx, user.organizationId, input.supplierId);
-    const lines = await prepareLines(tx, user.organizationId, input.items);
-    const header = headerData(input, lines);
+    const priced = pricePurchase(await prepareLines(tx, user.organizationId, input.items), {
+      type: input.billDiscountType,
+      value: input.billDiscountValue,
+    });
+    const lines = priced.lines;
+    const header = headerData(input, priced);
     await assertSupplierInvoiceFree(
       tx,
       user.organizationId,
@@ -269,7 +439,7 @@ export async function createPurchase(
         ...header,
         createdByUserId: user.id,
         items: {
-          create: itemRows(lines),
+          create: itemRows(priced),
         },
       },
     });
@@ -286,6 +456,8 @@ export async function createPurchase(
         supplierInvoiceNumber: header.supplierInvoiceNumber,
         lines: lines.length,
         total: header.totalAmount,
+        ...discountAudit(priced),
+        dueDate: input.dueDate || null,
       },
     });
     if (input.scannedFields) {
@@ -305,10 +477,35 @@ export async function createPurchase(
         },
       });
     }
-    if (options.receive) await receiveInTransaction(tx, user, purchase.id, null);
+    if (options.receive) {
+      const receipt = await receiveInTransaction(tx, user, purchase.id, null);
+      await settleOnReceipt(tx, user, purchase.id, settlement, receipt.itemIds);
+    }
     await settleRequestKey(tx, user, rawInput, purchase.id);
     return purchase;
   }, RECEIPT_TRANSACTION);
+}
+
+/** The discounts on a purchase, for its audit entry — only when there are any. */
+function discountAudit(priced: PricedPurchase) {
+  const lineDiscounts = priced.lines.filter((line) => line.amounts.discountType);
+  if (!lineDiscounts.length && !priced.totals.discountType) return {};
+  return {
+    linesTotal: priced.totals.linesTotal,
+    billDiscount: priced.totals.discountType
+      ? {
+          type: priced.totals.discountType,
+          value: priced.totals.discountValue,
+          amount: priced.totals.discountAmount,
+        }
+      : null,
+    lineDiscounts: lineDiscounts.map((line) => ({
+      partId: line.partId,
+      type: line.amounts.discountType,
+      value: line.amounts.discountValue,
+      amount: line.amounts.discountAmount,
+    })),
+  };
 }
 
 /** Replaces a DRAFT purchase's header and lines. Nothing received yet, so nothing in stock changes. */
@@ -324,8 +521,12 @@ export async function updatePurchase(
     requirePermission(user, 'purchase.edit', { branchId: purchase.branchId });
     if (purchase.status !== 'DRAFT') throw new DomainError('Only a draft purchase can be edited.');
     const supplierId = await requireActiveSupplier(tx, user.organizationId, input.supplierId);
-    const lines = await prepareLines(tx, user.organizationId, input.items);
-    const header = headerData(input, lines);
+    const priced = pricePurchase(await prepareLines(tx, user.organizationId, input.items), {
+      type: input.billDiscountType,
+      value: input.billDiscountValue,
+    });
+    const lines = priced.lines;
+    const header = headerData(input, priced);
     await assertSupplierInvoiceFree(
       tx,
       user.organizationId,
@@ -343,7 +544,7 @@ export async function updatePurchase(
         supplierId,
         ...header,
         items: {
-          create: itemRows(lines),
+          create: itemRows(priced),
         },
       },
     });
@@ -358,7 +559,13 @@ export async function updatePurchase(
         supplierId: purchase.supplierId,
         total: purchase.totalAmount?.toString() ?? null,
       },
-      afterData: { supplierId, lines: lines.length, total: header.totalAmount },
+      afterData: {
+        supplierId,
+        lines: lines.length,
+        total: header.totalAmount,
+        ...discountAudit(priced),
+        dueDate: input.dueDate || null,
+      },
     });
   });
 }
@@ -411,14 +618,147 @@ export async function receivePurchase(
   user: AuthenticatedUser,
   purchaseId: string,
   quantities: Record<string, string> | null,
-  options: { requestKey?: string } = {},
+  options: { requestKey?: string } & SettlementInput = {},
 ) {
   const parsed = quantities ? parseInput(receiveSchema, quantities) : null;
+  const settlement = parseSettlement(options);
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, options, 'purchase.receipt');
-    return receiveInTransaction(tx, user, purchaseId, parsed);
+    const receipt = await receiveInTransaction(tx, user, purchaseId, parsed);
+    const payment = await settleOnReceipt(tx, user, purchaseId, settlement, receipt.itemIds);
+    return { status: receipt.status, received: receipt.received, payment };
   }, RECEIPT_TRANSACTION);
 }
+
+// ---------------------------------------------------------------------------
+// Settling on receipt: pay now or later, the due date, the part cost price
+// ---------------------------------------------------------------------------
+
+const settlementSchema = z.object({
+  /** "later" (the default) records nothing; "now" pays the supplier at once. */
+  payment: z.union([z.literal(''), z.enum(['later', 'now'])]).optional(),
+  /** Blank: everything owed on the purchase once these goods are in. */
+  payAmount: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || (/^\d+(\.\d{1,2})?$/.test(value) && Number(value) > 0),
+      'Enter an amount like 250 or 250.50.',
+    ),
+  method: z
+    .union([z.literal(''), z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'CHEQUE', 'ONLINE'])])
+    .optional(),
+  accountId: z.union([z.literal(''), z.uuid()]).optional(),
+  payReference: z.string().trim().max(100).optional(),
+  dueDate: DATE_FIELD,
+  /** "on": set each received part's cost price to its cost after discounts. */
+  updateCostPrice: z.string().optional(),
+});
+
+export type SettlementInput = Partial<Record<keyof z.input<typeof settlementSchema>, string>>;
+
+function parseSettlement(rawInput: unknown) {
+  const raw = (rawInput ?? {}) as Record<string, unknown>;
+  const pick = Object.fromEntries(
+    Object.keys(settlementSchema.shape).map((key) => [
+      key,
+      typeof raw[key] === 'string' ? raw[key] : undefined,
+    ]),
+  );
+  return parseInput(settlementSchema, pick);
+}
+
+const ON = new Set(['on', 'true', '1']);
+
+/**
+ * After a receipt, in its transaction: the due date, the part cost prices
+ * when asked, and — when paid now — the supplier payment, by the same
+ * function the Pay screen uses. Pay later books nothing.
+ */
+async function settleOnReceipt(
+  tx: Prisma.TransactionClient,
+  user: AuthenticatedUser,
+  purchaseId: string,
+  settlement: z.infer<typeof settlementSchema>,
+  receivedItemIds: string[],
+) {
+  const purchase = await tx.purchase.findUniqueOrThrow({
+    where: { id: purchaseId },
+    select: {
+      id: true,
+      branchId: true,
+      purchaseNumber: true,
+      supplierInvoiceDate: true,
+      dueDate: true,
+      items: {
+        where: { id: { in: receivedItemIds } },
+        select: {
+          id: true,
+          partId: true,
+          quantityOrdered: true,
+          unitCost: true,
+          taxRate: true,
+          taxAmount: true,
+          netAmount: true,
+          part: { select: { defaultCostPrice: true } },
+        },
+      },
+    },
+  });
+
+  const dueDate = readDueDate(settlement.dueDate, purchase.supplierInvoiceDate);
+  if (dueDate && dueDate.getTime() !== purchase.dueDate?.getTime()) {
+    await tx.purchase.update({ where: { id: purchase.id }, data: { dueDate } });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: purchase.branchId,
+      actorUserId: user.id,
+      action: 'purchase.due_date_set',
+      entityType: 'Purchase',
+      entityId: purchase.id,
+      beforeData: { dueDate: purchase.dueDate?.toISOString().slice(0, 10) ?? null },
+      afterData: { dueDate: settlement.dueDate, purchaseNumber: purchase.purchaseNumber },
+    });
+  }
+
+  if (ON.has(settlement.updateCostPrice ?? '')) {
+    // The same right as editing a part's cost in the catalogue.
+    requirePermission(user, 'inventory.create');
+    for (const item of purchase.items) {
+      const cost = unitCostAfterDiscount(item);
+      const before = item.part.defaultCostPrice?.toString() ?? null;
+      if (before !== null && toFils(before) === toFils(cost)) continue;
+      await tx.part.update({ where: { id: item.partId }, data: { defaultCostPrice: cost } });
+      await writeAuditLog(tx, {
+        organizationId: user.organizationId,
+        actorUserId: user.id,
+        action: 'part.updated',
+        entityType: 'Part',
+        entityId: item.partId,
+        beforeData: { defaultCostPrice: before },
+        afterData: { defaultCostPrice: cost },
+        metadata: { source: 'purchase_receipt', purchaseNumber: purchase.purchaseNumber },
+      });
+    }
+  }
+
+  if (settlement.payment !== 'now') return null;
+  if (!settlement.method) {
+    throw new DomainError('Choose how the supplier was paid.', 'method');
+  }
+  return takeSupplierPayment(tx, user, purchase.id, {
+    amountFils: settlement.payAmount ? toFils(settlement.payAmount) : null,
+    method: settlement.method,
+    accountId: settlement.accountId,
+    referenceNumber: settlement.payReference,
+    paidAt: new Date(),
+  });
+}
+
+/** Whether this user may pay the supplier as goods are received (the Pay screen's right). */
+export const canPayOnReceipt = (user: AuthenticatedUser) =>
+  hasPermission(user, 'supplier_payment.create');
 
 async function receiveInTransaction(
   tx: Prisma.TransactionClient,
@@ -437,6 +777,7 @@ async function receiveInTransaction(
   }
 
   const received: { sku: string; quantity: string; inventoryTransactionId: string }[] = [];
+  const itemIds: string[] = [];
   let complete = true;
   for (const item of purchase.items) {
     const outstanding = signedToMilli(item.quantityOrdered) - signedToMilli(item.quantityReceived);
@@ -468,6 +809,7 @@ async function receiveInTransaction(
         quantity: milliToString(now),
         inventoryTransactionId: movement.id,
       });
+      itemIds.push(item.id);
     }
     if (outstanding - now > 0) complete = false;
   }
@@ -489,7 +831,7 @@ async function receiveInTransaction(
     beforeData: { status: purchase.status },
     afterData: { status, received },
   });
-  return { status, received };
+  return { status, received, itemIds };
 }
 
 /** Cancels a purchase that has received nothing. Anything already received stays in stock and in the ledger. */
@@ -518,26 +860,8 @@ export async function cancelPurchase(user: AuthenticatedUser, purchaseId: string
 // Reads
 // ---------------------------------------------------------------------------
 
-/** Value of what has actually been received on a purchase (cost + VAT), in fils. */
-export function receivedValueFils(
-  items: {
-    quantityReceived: { toString(): string };
-    unitCost: { toString(): string };
-    taxRate: { toString(): string } | null;
-  }[],
-  defaultVat: string,
-) {
-  return items.reduce((sum, item) => {
-    const qty = signedToMilli(item.quantityReceived);
-    if (qty <= 0) return sum;
-    const amounts = purchaseLineAmounts(
-      milliToString(qty),
-      item.unitCost.toString(),
-      item.taxRate?.toString() ?? defaultVat,
-    );
-    return sum + amounts.lineTotalFils + amounts.taxFils;
-  }, 0);
-}
+/** Value of what has been received on a purchase — lib/inventory/purchase-value.ts. */
+export { receivedValueFils };
 
 export async function listPurchases(
   user: AuthenticatedUser,
@@ -603,6 +927,20 @@ export async function getPurchaseDetail(user: AuthenticatedUser, purchaseId: str
       supplier: true,
       createdBy: { select: { fullName: true } },
       receivedBy: { select: { fullName: true } },
+      supplierPayments: {
+        orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          supplierPaymentNumber: true,
+          amount: true,
+          status: true,
+          method: true,
+          referenceNumber: true,
+          reversalOfSupplierPaymentId: true,
+          paidAt: true,
+          paidBy: { select: { fullName: true } },
+        },
+      },
       items: {
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         include: {
@@ -635,16 +973,28 @@ export async function getPurchaseDetail(user: AuthenticatedUser, purchaseId: str
       receivedMilli,
       outstandingMilli: orderedMilli - receivedMilli,
       taxRate,
-      amounts: purchaseLineAmounts(milliToString(orderedMilli), item.unitCost.toString(), taxRate),
+      amounts: lineAmountsOf(item, taxRate),
       costDiffers:
         item.part.defaultCostPrice !== null &&
         toFils(item.part.defaultCostPrice.toString()) !== toFils(item.unitCost.toString()),
     };
   });
+  const receivedFils = receivedValueFils(purchase.items, defaultVat);
+  const paidFils = supplierPaidFils(purchase.supplierPayments);
   return {
     purchase,
     lines,
-    receivedValue: filsToString(receivedValueFils(purchase.items, defaultVat)),
+    receivedValue: filsToString(receivedFils),
+    /** What the purchase owes the supplier now — the supplier balance's own rule. */
+    paid: filsToString(paidFils),
+    owed: filsToString(Math.max(receivedFils - paidFils, 0)),
+    /** Quantity × cost of every line, before any discount. */
+    linesGross: filsToString(lines.reduce((sum, line) => sum + line.amounts.grossFils, 0)),
+    /** Every discount taken: the lines' own and the bill's. */
+    discountTotal: filsToString(
+      lines.reduce((sum, line) => sum + toFils(line.amounts.discountAmount), 0) +
+        toFils(purchase.billDiscountAmount.toString()),
+    ),
     receipts: lines.flatMap((line) =>
       line.inventoryTransactions.map((t) => ({ ...t, sku: line.part.sku, name: line.part.name })),
     ),

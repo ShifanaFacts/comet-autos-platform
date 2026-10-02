@@ -306,51 +306,66 @@ type PaymentLike = {
 };
 
 /**
- * Paid, credited, balance and state of an invoice — the one rule the staff
- * screens, customer pages and documents share:
- *
- *   due = total − credited (tax credit notes) − paid
- *
- * never below zero; anything paid beyond it is refunded under the credit
- * note that caused it.
+ * What settles an invoice besides its payments. Every reader of a balance
+ * must load both — they are required, so the compiler finds any that don't.
  */
-export function invoiceBalance(invoice: {
+export interface InvoiceSettlement {
   totalAmount: { toString(): string };
+  /** Taken back by tax credit notes. */
   creditedAmount: { toString(): string };
-  status: InvoiceStatus;
-  payments: PaymentLike[];
-}) {
+  /** Settled from customer advances (lib/billing/advances.ts). */
+  advanceAppliedAmount: { toString(): string };
+}
+
+/**
+ * Paid, credited, advance applied, balance and state of an invoice — the one
+ * rule the staff screens, customer pages and documents share:
+ *
+ *   due = total − credited (tax credit notes) − paid − advance applied
+ *
+ * never below zero; anything paid beyond it is returned to the customer's
+ * advance, or refunded, under the credit note that caused it. An advance
+ * applied settles the invoice without changing its revenue or VAT.
+ */
+export function invoiceBalance(
+  invoice: InvoiceSettlement & { status: InvoiceStatus; payments: PaymentLike[] },
+) {
   const paid = paidFils(invoice.payments);
   const total = toFils(invoice.totalAmount.toString());
   const credited = toFils(invoice.creditedAmount.toString());
+  const advanceApplied = toFils(invoice.advanceAppliedAmount.toString());
   return {
     total: filsToString(total),
     credited: filsToString(credited),
     paid: filsToString(paid),
-    balance: filsToString(Math.max(total - credited - paid, 0)),
+    advanceApplied: filsToString(advanceApplied),
+    balance: filsToString(Math.max(total - credited - advanceApplied - paid, 0)),
     state: paymentState(invoice.status),
   };
 }
 
 /**
- * An issued invoice's status from what has been paid and credited: settled
- * (PAID) once nothing is due, PARTIALLY_PAID once anything is paid.
+ * An issued invoice's status from what has been paid, credited and applied
+ * from advances: settled (PAID) once nothing is due, PARTIALLY_PAID once
+ * anything is paid or applied.
  */
-export function settlementStatus(
-  invoice: { totalAmount: { toString(): string }; creditedAmount: { toString(): string } },
-  paid: number,
-): InvoiceStatus {
+export function settlementStatus(invoice: InvoiceSettlement, paid: number): InvoiceStatus {
   if (dueFils(invoice, paid) === 0) return 'PAID';
-  return paid > 0 ? 'PARTIALLY_PAID' : 'ISSUED';
+  return paid > 0 || toFils(invoice.advanceAppliedAmount.toString()) > 0
+    ? 'PARTIALLY_PAID'
+    : 'ISSUED';
 }
 
-/** What is still due on an invoice, in fils: total − credited − paid, never below zero. */
-export function dueFils(
-  invoice: { totalAmount: { toString(): string }; creditedAmount: { toString(): string } },
-  paid: number,
-) {
+/**
+ * What is still due on an invoice, in fils: total − credited − advance
+ * applied − paid, never below zero.
+ */
+export function dueFils(invoice: InvoiceSettlement, paid: number) {
   return Math.max(
-    toFils(invoice.totalAmount.toString()) - toFils(invoice.creditedAmount.toString()) - paid,
+    toFils(invoice.totalAmount.toString()) -
+      toFils(invoice.creditedAmount.toString()) -
+      toFils(invoice.advanceAppliedAmount.toString()) -
+      paid,
     0,
   );
 }
@@ -361,11 +376,7 @@ export function dueFils(
  * order, are deducted first.
  */
 export function receiptBalances(
-  invoice: {
-    totalAmount: { toString(): string };
-    creditedAmount: { toString(): string };
-    payments: PaymentLike[];
-  },
+  invoice: InvoiceSettlement & { payments: PaymentLike[] },
   paymentId: string,
 ) {
   const ordered = [...invoice.payments].sort(
@@ -373,9 +384,11 @@ export function receiptBalances(
   );
   const index = ordered.findIndex((p) => p.id === paymentId);
   if (index < 0) throw new NotFoundError('payment');
-  // Credit notes come off the invoice before any payment is counted.
+  // Credit notes and advances applied come off the invoice before any payment is counted.
   const total =
-    toFils(invoice.totalAmount.toString()) - toFils(invoice.creditedAmount.toString());
+    toFils(invoice.totalAmount.toString()) -
+    toFils(invoice.creditedAmount.toString()) -
+    toFils(invoice.advanceAppliedAmount.toString());
   const paidBefore = paidFils(ordered.slice(0, index));
   const paidThrough = paidFils(ordered.slice(0, index + 1));
   return {
@@ -554,6 +567,7 @@ export async function getJobInvoice(user: AuthenticatedUser, jobCardId: string) 
   return {
     ...invoice,
     paidAmount: balance.paid,
+    advanceApplied: balance.advanceApplied,
     balanceDue: balance.balance,
     paymentState: balance.state,
   };
@@ -580,6 +594,7 @@ export async function getInvoiceDetail(user: AuthenticatedUser, invoiceId: strin
   return {
     ...invoice,
     paidAmount: balance.paid,
+    advanceApplied: balance.advanceApplied,
     balanceDue: balance.balance,
     paymentState: balance.state,
   };

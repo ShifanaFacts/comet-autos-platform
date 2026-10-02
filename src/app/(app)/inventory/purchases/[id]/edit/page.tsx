@@ -50,12 +50,17 @@ export default async function EditPurchasePage({ params }: { params: Promise<{ i
               ? purchase.supplierInvoiceDate.toISOString().slice(0, 10)
               : '',
             notes: purchase.notes ?? '',
+            billDiscountType: purchase.billDiscountType,
+            billDiscountValue: purchase.billDiscountValue?.toString() ?? '',
+            dueDate: purchase.dueDate ? purchase.dueDate.toISOString().slice(0, 10) : '',
             items: purchase.items.map((item) => ({
               partId: item.partId,
               quantity: formatMilli(signedToMilli(item.quantityOrdered)),
               unitCost: item.unitCost.toFixed(2),
               taxRate: item.taxRate?.toString() ?? options.defaultVat,
               taxCodeId: item.taxCodeId,
+              discountType: item.discountType,
+              discountValue: item.discountValue?.toString() ?? '',
             })),
           }}
           isNew={false}

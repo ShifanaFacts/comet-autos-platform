@@ -127,12 +127,20 @@ const CREDITED =
 const isCredited = (invoice: { creditedAmount?: { toString(): string } }) =>
   invoice.creditedAmount !== undefined && toFils(invoice.creditedAmount.toString()) > 0;
 
+/** Settled in part from a customer advance (lib/billing/advances.ts). */
+const hasAdvanceApplied = (invoice: { advanceAppliedAmount?: { toString(): string } }) =>
+  invoice.advanceAppliedAmount !== undefined && toFils(invoice.advanceAppliedAmount.toString()) > 0;
+
+const ADVANCE_APPLIED = (to: string) =>
+  `A customer advance has been applied to this invoice. Undo it on the invoice first to ${to}.`;
+
 /** Why an invoice can't be edited, or null when it can. Shared with the screens. */
 export function invoiceEditBlocker(invoice: {
   status: string;
   invoiceType?: string;
   paidAmount?: string;
   creditedAmount?: { toString(): string };
+  advanceAppliedAmount?: { toString(): string };
   items: { labourId: string | null; partUsageId: string | null }[];
 }): string | null {
   if (invoice.status === 'VOID' || invoice.status === 'CANCELLED') return 'This invoice is void.';
@@ -140,6 +148,7 @@ export function invoiceEditBlocker(invoice: {
     return 'An opening balance is changed on the Opening balances screen.';
   }
   if (isCredited(invoice)) return CREDITED;
+  if (hasAdvanceApplied(invoice)) return ADVANCE_APPLIED('change the invoice');
   if (
     invoice.status !== 'ISSUED' ||
     (invoice.paidAmount !== undefined && toFils(invoice.paidAmount) > 0)
@@ -171,6 +180,7 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
       invoiceType: invoice.invoiceType,
       paidAmount: filsToString(paidFils(invoice.payments)),
       creditedAmount: invoice.creditedAmount,
+      advanceAppliedAmount: invoice.advanceAppliedAmount,
       items: invoice.items,
     });
     if (blocker) throw new DomainError(blocker);
@@ -297,11 +307,13 @@ export function invoiceVoidBlocker(invoice: {
   status: string;
   paidAmount?: string;
   creditedAmount?: { toString(): string };
+  advanceAppliedAmount?: { toString(): string };
   jobCard: { status: string } | null;
 }): string | null {
   if (invoice.status === 'VOID' || invoice.status === 'CANCELLED')
     return 'This invoice is already void.';
   if (isCredited(invoice)) return CREDITED;
+  if (hasAdvanceApplied(invoice)) return ADVANCE_APPLIED('void the invoice');
   if (
     invoice.status !== 'ISSUED' ||
     (invoice.paidAmount !== undefined && toFils(invoice.paidAmount) > 0)
@@ -329,6 +341,7 @@ export async function voidInvoice(user: AuthenticatedUser, invoiceId: string, ra
       status: invoice.status,
       paidAmount: filsToString(paidFils(invoice.payments)),
       creditedAmount: invoice.creditedAmount,
+      advanceAppliedAmount: invoice.advanceAppliedAmount,
       jobCard: invoice.jobCard,
     });
     if (blocker) throw new DomainError(blocker);

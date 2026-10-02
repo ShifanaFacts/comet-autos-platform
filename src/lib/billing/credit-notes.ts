@@ -14,6 +14,7 @@ import { paidFils, settlementStatus } from '@/lib/billing/invoice';
 import { syncPosting } from '@/lib/accounting/journal';
 import { checkMoneyAccount } from '@/lib/accounting/chart';
 import { emptyToNull } from '@/lib/normalize';
+import { returnToAdvances, undoReturnsToAdvances } from '@/lib/billing/advances';
 
 /*
  * Tax credit notes — the only way an issued tax invoice is reduced once it
@@ -24,14 +25,18 @@ import { emptyToNull } from '@/lib/normalize';
  *
  *   The invoice          stays exactly as issued; its `creditedAmount` grows
  *                        by the note's total, so what is due becomes
- *                        total − credited − paid (lib/billing/invoice.ts).
+ *                        total − credited − paid − advance applied
+ *                        (lib/billing/invoice.ts).
  *   VAT                  the note reduces the supplies and output VAT of the
  *                        period it is issued in (lib/finance/vat.ts).
  *   The books            Dr income and VAT, Cr trade receivables — the
  *                        invoice's own entry, in part, undone
  *                        (lib/accounting/postings.ts).
- *   Money already paid   beyond what is now due is owed back to the customer:
- *                        the note records that refund when it is paid out.
+ *   Money already paid   beyond what is now due is owed back to the customer.
+ *                        What was settled from customer advances goes back
+ *                        to those advances first (lib/billing/advances.ts);
+ *                        only the rest is a cash refund, which the note
+ *                        records when it is paid out.
  *
  * Each note credits invoice lines by amount (before VAT). A line can never
  * be credited beyond what it was sold for, across all notes; a line credited
@@ -229,6 +234,7 @@ export async function getCreditableInvoice(user: AuthenticatedUser, invoiceId: s
       taxAmount: true,
       totalAmount: true,
       creditedAmount: true,
+      advanceAppliedAmount: true,
       jobCardId: true,
       customer: { select: { name: true } },
       items: INVOICE_LINES,
@@ -259,6 +265,7 @@ export async function getCreditableInvoice(user: AuthenticatedUser, invoiceId: s
     totalAmount: invoice.totalAmount.toString(),
     creditedAmount: invoice.creditedAmount.toString(),
     paid: filsToString(paidFils(invoice.payments)),
+    advanceApplied: invoice.advanceAppliedAmount.toString(),
     blocker: creditBlocker(invoice),
     lines,
   };
@@ -297,6 +304,7 @@ export async function createCreditNote(
         discountAmount: true,
         totalAmount: true,
         creditedAmount: true,
+        advanceAppliedAmount: true,
         items: INVOICE_LINES,
         payments: { select: { id: true, amount: true, status: true, reversalOfPaymentId: true } },
       },
@@ -368,8 +376,16 @@ export async function createCreditNote(
       throw new DomainError('That would credit more than the invoice was for.');
     }
     const paid = paidFils(invoice.payments);
-    // Money already received beyond what is now due goes back to the customer.
-    const refund = Math.min(Math.max(paid - (invoiceTotal - creditedBefore - total), 0), total);
+    const appliedBefore = fils(invoice.advanceAppliedAmount);
+    // What was settled beyond what is now due goes back to the customer: to
+    // their advances first, as far as advances settled it, and the rest as a
+    // cash refund.
+    const excess = Math.min(
+      Math.max(paid + appliedBefore - (invoiceTotal - creditedBefore - total), 0),
+      total,
+    );
+    const toAdvances = Math.min(excess, appliedBefore);
+    const refund = excess - toAdvances;
 
     const creditNoteNumber = await allocateDocumentNumber(
       tx,
@@ -398,15 +414,29 @@ export async function createCreditNote(
     await tx.creditNoteItem.createMany({
       data: items.map((item) => ({ ...item, creditNoteId: note.id })),
     });
+    const returned = await returnToAdvances(tx, user, {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      branchId: invoice.branchId,
+      creditNoteId: note.id,
+      creditNoteNumber,
+      issueDate,
+      fils: toAdvances,
+    });
 
     const invoiceAfter = {
       totalAmount: invoice.totalAmount,
       creditedAmount: filsToString(creditedBefore + total),
+      advanceAppliedAmount: filsToString(appliedBefore - returned),
     };
     const status = settlementStatus(invoiceAfter, paid);
     await tx.invoice.update({
       where: { id: invoice.id },
-      data: { creditedAmount: invoiceAfter.creditedAmount, status },
+      data: {
+        creditedAmount: invoiceAfter.creditedAmount,
+        advanceAppliedAmount: invoiceAfter.advanceAppliedAmount,
+        status,
+      },
     });
     await syncPosting(tx, user.organizationId, 'CREDIT_NOTE', note.id, user.id);
 
@@ -425,6 +455,7 @@ export async function createCreditNote(
         taxAmount: filsToString(taxTotal),
         totalAmount: filsToString(total),
         refundAmount: filsToString(refund),
+        returnedToAdvances: filsToString(returned),
         lines: items.map((item) => ({
           invoiceItemId: item.invoiceItemId,
           lineTotal: item.lineTotal,
@@ -445,6 +476,7 @@ export async function createCreditNote(
       creditNoteNumber,
       totalAmount: filsToString(total),
       refundAmount: filsToString(refund),
+      returnedToAdvances: filsToString(returned),
     };
   });
 }
@@ -595,6 +627,7 @@ export async function voidCreditNote(
             status: true,
             totalAmount: true,
             creditedAmount: true,
+            advanceAppliedAmount: true,
             payments: {
               select: { id: true, amount: true, status: true, reversalOfPaymentId: true },
             },
@@ -607,11 +640,19 @@ export async function voidCreditNote(
     if (blocker) throw new DomainError(blocker);
 
     const invoice = note.invoice;
+    // Money the note gave back to advances is applied to the invoice again.
+    const restored = await undoReturnsToAdvances(
+      tx,
+      user,
+      note.id,
+      `Credit note ${note.creditNoteNumber} voided: ${input.reason}`,
+    );
     const creditedAmount = filsToString(
       Math.max(fils(invoice.creditedAmount) - fils(note.totalAmount), 0),
     );
+    const advanceAppliedAmount = filsToString(fils(invoice.advanceAppliedAmount) + restored);
     const status = settlementStatus(
-      { totalAmount: invoice.totalAmount, creditedAmount },
+      { totalAmount: invoice.totalAmount, creditedAmount, advanceAppliedAmount },
       paidFils(invoice.payments),
     );
     const voidedAt = new Date();
@@ -619,7 +660,10 @@ export async function voidCreditNote(
       where: { id: note.id },
       data: { status: 'VOID', voidedAt, voidReason: input.reason },
     });
-    await tx.invoice.update({ where: { id: invoice.id }, data: { creditedAmount, status } });
+    await tx.invoice.update({
+      where: { id: invoice.id },
+      data: { creditedAmount, advanceAppliedAmount, status },
+    });
     await syncPosting(tx, user.organizationId, 'CREDIT_NOTE', note.id, user.id);
 
     await writeAuditLog(tx, {
@@ -636,6 +680,7 @@ export async function voidCreditNote(
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
         invoiceStatusAfter: status,
+        reappliedFromAdvances: filsToString(restored),
       },
     });
     await settleRequestKey(tx, user, rawInput, note.id);

@@ -55,6 +55,7 @@ export function CreditNoteForm({
   lines,
   today,
   due,
+  advanceApplied = '0.00',
 }: {
   invoiceId: string;
   lines: CreditableLine[];
@@ -62,6 +63,8 @@ export function CreditNoteForm({
   today: string;
   /** What the customer still owes on the invoice now. */
   due: string;
+  /** Settled from customer advances: any excess goes back to them first. */
+  advanceApplied?: string;
 }) {
   const router = useRouter();
   const requestKey = useRef(newRequestKey());
@@ -83,7 +86,10 @@ export function CreditNoteForm({
     vat += amount > 0 ? vatOn(line, amount) : 0;
   }
   const total = net + vat;
-  const refund = Math.max(total - toFils(due), 0);
+  const excess = Math.max(total - toFils(due), 0);
+  // Back to the customer's advances first, as far as advances settled it; the rest in cash.
+  const toAdvances = Math.min(excess, toFils(advanceApplied));
+  const refund = excess - toAdvances;
 
   function creditAll() {
     setAmounts(Object.fromEntries(open.map((line) => [line.id, line.remaining])));
@@ -120,7 +126,9 @@ export function CreditNoteForm({
         toast.success(
           toFils(result.data.refundAmount) > 0
             ? `Credit note issued. ${formatMoney(result.data.refundAmount)} is owed back to the customer.`
-            : 'Credit note issued',
+            : toFils(result.data.returnedToAdvances) > 0
+              ? `Credit note issued. ${formatMoney(result.data.returnedToAdvances)} is back on the customer's advance.`
+              : 'Credit note issued',
         );
         router.push(`/finance/credit-notes/${result.data.creditNoteId}`);
         return;
@@ -260,8 +268,18 @@ export function CreditNoteForm({
 
       {total > 0 ? (
         <p className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm">
-          {refund > 0
-            ? `The customer owes ${formatMoney(due)} now, so ${formatMoney(filsToString(refund))} of this credit is to be refunded to them. Record the refund on the credit note once it is paid.`
+          {excess > 0
+            ? [
+                `The customer owes ${formatMoney(due)} now.`,
+                toAdvances > 0
+                  ? `${formatMoney(filsToString(toAdvances))} of this credit goes back on the customer's advance, to use on another invoice or refund.`
+                  : null,
+                refund > 0
+                  ? `${formatMoney(filsToString(refund))} is to be refunded to them. Record the refund on the credit note once it is paid.`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' ')
             : `The customer will owe ${formatMoney(filsToString(toFils(due) - total))} on the invoice after this credit.`}
         </p>
       ) : null}

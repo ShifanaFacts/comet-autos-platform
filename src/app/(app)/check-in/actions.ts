@@ -22,6 +22,8 @@ export async function checkInAction(
     complaint: input.complaint,
     mileage: input.mileage,
     appointmentId: input.appointmentId,
+    arrivedOn: input.arrivedOn,
+    arrivedAt: input.arrivedAt,
   };
   // The customer's other vehicles arrive as one JSON field: [{ vehicleId, complaint, mileage }].
   let alsoVehicles: AdditionalVehicle[] = [];

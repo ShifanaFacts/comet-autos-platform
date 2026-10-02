@@ -63,6 +63,7 @@ export async function listInvoices(
       taxAmount: true,
       totalAmount: true,
       creditedAmount: true,
+      advanceAppliedAmount: true,
       customerName: true,
       items: { select: { discountAmount: true } },
       payments: {

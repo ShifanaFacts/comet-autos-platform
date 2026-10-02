@@ -17,7 +17,8 @@ import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
  *
  *   vehicles · appointments · job cards · quotations and their approvals ·
  *   invoices (with their receipts and opening balances) · credit notes ·
- *   signatures · status history · documents filed against the customer
+ *   customer advances · signatures · status history · documents filed
+ *   against the customer
  *
  * The books need no entry: a customer's balance is read from their
  * invoices, receipts and credit notes, so moving those moves the balance —
@@ -82,6 +83,7 @@ export async function mergeCustomers(
       approvals: (await tx.approval.updateMany({ where: from, data: to })).count,
       invoices: (await tx.invoice.updateMany({ where: from, data: to })).count,
       creditNotes: (await tx.creditNote.updateMany({ where: from, data: to })).count,
+      advances: (await tx.customerAdvance.updateMany({ where: from, data: to })).count,
       signatures: (await tx.signature.updateMany({ where: from, data: to })).count,
       statusHistory: (
         await tx.jobStatusHistory.updateMany({
@@ -150,15 +152,17 @@ export async function mergeCustomers(
 export async function getMergePreview(user: AuthenticatedUser, customerId: string) {
   requirePermission(user, 'customer.delete');
   const where = { organizationId: user.organizationId, customerId };
-  const [vehicles, jobCards, quotations, invoices, creditNotes, appointments] = await Promise.all([
-    prisma.vehicle.count({ where }),
-    prisma.jobCard.count({ where }),
-    prisma.estimate.count({ where }),
-    prisma.invoice.count({ where }),
-    prisma.creditNote.count({ where }),
-    prisma.appointment.count({ where }),
-  ]);
-  return { vehicles, jobCards, quotations, invoices, creditNotes, appointments };
+  const [vehicles, jobCards, quotations, invoices, creditNotes, advances, appointments] =
+    await Promise.all([
+      prisma.vehicle.count({ where }),
+      prisma.jobCard.count({ where }),
+      prisma.estimate.count({ where }),
+      prisma.invoice.count({ where }),
+      prisma.creditNote.count({ where }),
+      prisma.customerAdvance.count({ where }),
+      prisma.appointment.count({ where }),
+    ]);
+  return { vehicles, jobCards, quotations, invoices, creditNotes, advances, appointments };
 }
 
 export type MergePreview = Awaited<ReturnType<typeof getMergePreview>>;

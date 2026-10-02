@@ -95,6 +95,7 @@ export async function getFinanceSnapshot(organizationId: string) {
       select: {
         totalAmount: true,
         creditedAmount: true,
+        advanceAppliedAmount: true,
         status: true,
         payments: {
           select: {

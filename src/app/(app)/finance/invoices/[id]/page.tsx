@@ -16,11 +16,13 @@ import { NotFoundError } from '@/lib/errors';
 import { getInvoiceDetail } from '@/lib/billing/invoice';
 import { invoiceEditBlocker, invoiceVoidBlocker } from '@/lib/billing/invoice-changes';
 import { creditBlocker, listInvoiceCreditNotes } from '@/lib/billing/credit-notes';
+import { getInvoiceAdvances } from '@/lib/billing/advances';
 import { filsToString, toFils } from '@/lib/money';
 import {
   formatCalendarDate,
   formatDateTime,
   formatMoney,
+  localDateString,
   toLocalDateTimeInput,
 } from '@/lib/format';
 import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
@@ -32,6 +34,7 @@ import { getAccountChoices } from '@/lib/accounting/reports';
 import { StaffDocumentActions } from '@/components/documents/document-actions';
 import { InvoicePaymentForm } from '@/components/finance/invoice-payment-form';
 import { ReversePaymentButton, VoidInvoiceButton } from '@/components/finance/invoice-corrections';
+import { ApplyAdvanceForm, UndoApplicationButton } from '@/components/finance/advance-forms';
 
 /*
  * One invoice: what was billed, what has been paid, and the receipt for each
@@ -74,6 +77,16 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const canCredit = hasPermission(user, 'credit_note.create', branch) && !creditBlocker(invoice);
   const creditNotes = await listInvoiceCreditNotes(user, invoice.id);
   const credited = toFils(invoice.creditedAmount.toString());
+  const advanceApplied = toFils(invoice.advanceApplied);
+  const advances = await getInvoiceAdvances(user, { id: invoice.id, customerId: customer.id });
+  const canApplyAdvance =
+    !isVoid &&
+    advances !== null &&
+    advances.canApply &&
+    advances.available.length > 0 &&
+    invoice.invoiceType !== 'PROFORMA' &&
+    (invoice.status === 'ISSUED' || invoice.status === 'PARTIALLY_PAID') &&
+    toFils(invoice.balanceDue) > 0;
   const fullyCredited = credited > 0 && credited >= toFils(invoice.totalAmount.toString());
   // A reversed payment, and the payment it reversed, are not receipts.
   const reversals = new Map(
@@ -200,6 +213,9 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
                 ...(credited > 0
                   ? [{ label: 'Credit notes', amount: filsToString(-credited) }]
                   : []),
+                ...(advanceApplied > 0
+                  ? [{ label: 'Advance applied', amount: filsToString(-advanceApplied) }]
+                  : []),
                 { label: 'Paid', amount: invoice.paidAmount },
                 { label: 'Balance due', amount: invoice.balanceDue, strong: true },
               ]}
@@ -246,6 +262,94 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
                     </li>
                   ))}
                 </ul>
+              </Panel>
+            </Section>
+          ) : null}
+
+          {advances && (advances.applications.length > 0 || canApplyAdvance) ? (
+            <Section
+              title="Customer advances"
+              description="Money the customer paid before this invoice. Applying it settles the invoice like a payment — its sales and VAT stay exactly as issued."
+            >
+              <Panel padding="none">
+                <dl className="grid grid-cols-3 gap-4 px-4 py-4 text-sm sm:px-6">
+                  {[
+                    ['Advance available', advances.availableTotal],
+                    ['Advance applied', invoice.advanceApplied],
+                    ['Balance due', invoice.balanceDue],
+                  ].map(([label, amount]) => (
+                    <div key={label} className="flex flex-col gap-0.5">
+                      <dt className="text-xs text-muted-foreground">{label}</dt>
+                      <dd className="font-semibold tabular-nums">{formatMoney(amount)}</dd>
+                    </div>
+                  ))}
+                </dl>
+                {advances.applications.length > 0 ? (
+                  <ul className="divide-y divide-border border-t border-border">
+                    {advances.applications.map((row) => {
+                      const returned = row.amount.startsWith('-');
+                      return (
+                        <li
+                          key={row.id}
+                          className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6"
+                        >
+                          <span className="flex min-w-0 flex-col gap-0.5">
+                            <span
+                              className={
+                                row.reversedAt
+                                  ? 'text-sm text-muted-foreground line-through'
+                                  : 'text-sm font-medium'
+                              }
+                            >
+                              {returned ? 'Returned to ' : 'From '}
+                              <Link
+                                href={`/finance/advances/${row.advance.id}`}
+                                className="hover:underline"
+                              >
+                                {row.advance.advanceNumber}
+                              </Link>
+                              {` · ${formatMoney(returned ? row.amount.slice(1) : row.amount)}`}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {`${formatCalendarDate(row.allocatedOn)}${row.creditNote ? ` · by credit note ${row.creditNote.creditNoteNumber}` : ''} · ${row.createdBy}`}
+                              {row.reversedAt
+                                ? ` · undone${row.reversalReason ? ` — ${row.reversalReason}` : ''}`
+                                : ''}
+                            </span>
+                          </span>
+                          {advances.canApply && !isVoid && !row.reversedAt && !returned ? (
+                            <UndoApplicationButton
+                              allocationId={row.id}
+                              label={`${row.advance.advanceNumber} on ${invoice.invoiceNumber}`}
+                            />
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+                {canApplyAdvance ? (
+                  <div className="border-t border-border bg-muted/20 px-4 py-6 sm:px-6">
+                    <ApplyAdvanceForm
+                      key={invoice.balanceDue}
+                      side="invoice"
+                      fixedId={invoice.id}
+                      fixedMax={invoice.balanceDue}
+                      choices={advances.available.map((advance) => ({
+                        id: advance.id,
+                        label: `${advance.advanceNumber} · ${formatMoney(advance.left)} left`,
+                        hint: `Received ${formatCalendarDate(advance.receivedOn)}${advance.jobNumber ? ` · for ${advance.jobNumber}` : ''}`,
+                        max: advance.left,
+                      }))}
+                      defaultChoiceId={
+                        advances.available.find(
+                          (advance) => jobCard && advance.jobNumber === jobCard.jobNumber,
+                        )?.id
+                      }
+                      today={localDateString()}
+                    />
+                  </div>
+                ) : null}
               </Panel>
             </Section>
           ) : null}

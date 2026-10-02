@@ -45,3 +45,78 @@ describe('the current menu item', () => {
     assert.notEqual(activeNavHref('/customers', params(), hrefs), '/');
   });
 });
+
+describe('the sidebar sections', () => {
+  const sectionOf = (href: string) => {
+    const group = NAV_GROUPS.find((candidate) =>
+      candidate.items.some((item) => item.href === href),
+    );
+    return group?.parent ?? group?.label ?? null;
+  };
+
+  test('every page is listed once', () => {
+    assert.equal(new Set(hrefs).size, hrefs.length);
+  });
+
+  test('every page the menu has always offered is still there', () => {
+    for (const href of [
+      '/',
+      '/check-in',
+      '/job-cards',
+      '/appointments',
+      '/inspections',
+      '/approvals',
+      '/quotations',
+      '/finance/invoices',
+      '/finance/payments',
+      '/finance/credit-notes',
+      '/customers',
+      '/vehicles',
+      '/inventory/parts',
+      '/inventory/purchases',
+      '/inventory/suppliers',
+      '/inventory/movements',
+      '/finance',
+      '/finance/outstanding',
+      '/finance/statements',
+      '/finance/expenses',
+      '/finance/payables',
+      '/finance/owner-advances',
+      '/finance/vat',
+      '/reports',
+      '/finance/bank-reconciliation',
+      '/finance/fixed-assets',
+      '/finance/accounting/opening-balances',
+      '/finance/accounting/year-end',
+      '/finance/accounting/tax-codes',
+      '/finance/accounting/payment-modes',
+      '/hr/employees',
+      '/hr/attendance',
+      '/hr/leave',
+      '/hr/payroll',
+      '/settings',
+      '/settings/users',
+      '/settings/audit',
+      '/letterhead',
+    ]) {
+      assert.ok(hrefs.includes(href), `${href} is in the menu`);
+    }
+  });
+
+  test('pages sit in the section of their module; only Finance has sub-sections', () => {
+    assert.equal(sectionOf('/job-cards'), 'Workshop');
+    assert.equal(sectionOf('/finance/invoices'), 'Sales');
+    assert.equal(sectionOf('/vehicles'), 'Customers');
+    assert.equal(sectionOf('/inventory/purchases'), 'Inventory');
+    assert.equal(sectionOf('/finance/vat'), 'Finance');
+    assert.equal(sectionOf('/finance/accounting?view=journal'), 'Finance');
+    assert.equal(sectionOf('/hr/payroll'), 'HR');
+    assert.equal(sectionOf('/settings/users'), 'Settings');
+    const parents = new Set(NAV_GROUPS.map((group) => group.parent).filter(Boolean));
+    assert.deepEqual([...parents], ['Finance']);
+    assert.ok(
+      NAV_GROUPS.every((group) => !group.parent || group.label),
+      'a sub-section has a name',
+    );
+  });
+});

@@ -6,6 +6,7 @@ import { AuthError } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getSupplierPayables } from '@/lib/finance/supplier-payments';
 import { formatDate, formatMoney } from '@/lib/format';
+import { payableAgeLabel } from '@/lib/finance/supplier-balance';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { LinkButton } from '@/components/shared/link-button';
@@ -108,7 +109,7 @@ export default async function SupplierPayablesPage({
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {row.supplierInvoiceNumber ? `${row.supplierInvoiceNumber} · ` : ''}
-                        {formatDate(row.date)} · {row.ageDays} days old
+                        {formatDate(row.date)} · {payableAgeLabel(row)}
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {formatMoney(row.received)} received

@@ -296,6 +296,11 @@ export default async function StatementsPage({
             <p className="text-sm font-semibold">
               Unpaid today: {formatMoney(customerStatement.totalDue)}
             </p>
+            {customerStatement.advanceHeld !== '0.00' ? (
+              <p className="text-sm text-muted-foreground">
+                {`Paid in advance and held for the customer: ${formatMoney(customerStatement.advanceHeld)} — not yet applied to an invoice.`}
+              </p>
+            ) : null}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
               {customerStatement.ageing.map((bucket) => (
                 <div key={bucket.label} className="rounded-lg border border-border px-3 py-2">

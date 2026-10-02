@@ -18,7 +18,22 @@ import { useFormAction } from '@/components/forms/use-form-action';
 import { LinkButton } from '@/components/shared/link-button';
 import type { ActionResult } from '@/lib/errors';
 import { formatMoney } from '@/lib/format';
-import { calculateLine, calculateTotals, type LineAmounts } from '@/lib/money';
+import {
+  calculateDocument,
+  calculateLine,
+  filsToString,
+  readDiscount,
+  toFils,
+  type DiscountType,
+  type DocumentTotals,
+  type LineAmounts,
+} from '@/lib/money';
+import { DiscountInput } from '@/components/workshop/document-lines-editor';
+import {
+  ReceiptSettlementFields,
+  owedHint,
+  type ReceiptOptions,
+} from '@/components/inventory/receipt-settlement';
 
 export interface PurchasePart {
   id: string;
@@ -38,6 +53,9 @@ interface Line {
   taxRate: string;
   /** The purchase tax code chosen; blank where the rate was typed. */
   taxCodeId: string;
+  /** The line's own trade discount; a blank value is none. */
+  discountType: DiscountType;
+  discountValue: string;
 }
 
 /**
@@ -62,12 +80,18 @@ export interface PurchaseFormInitial {
   supplierInvoiceNumber: string;
   supplierInvoiceDate: string;
   notes: string;
+  /** The discount on the whole bill, as entered. */
+  billDiscountType?: DiscountType | null;
+  billDiscountValue?: string;
+  dueDate?: string;
   items: {
     partId: string;
     quantity: string;
     unitCost: string;
     taxRate: string;
     taxCodeId?: string | null;
+    discountType?: DiscountType | null;
+    discountValue?: string;
   }[];
 }
 
@@ -78,9 +102,20 @@ function preview(line: Line): LineAmounts | null {
       quantity: line.quantity,
       unitPrice: line.unitCost,
       taxRate: line.taxRate || '0',
+      discount: readDiscount(line.discountType, line.discountValue),
     });
   } catch {
     return null;
+  }
+}
+
+/** Quantity × cost before any discount, for the "lines" total. */
+function gross(line: Line): number {
+  try {
+    return calculateLine({ quantity: line.quantity, unitPrice: line.unitCost, taxRate: '0' })
+      .lineTotalFils;
+  } catch {
+    return 0;
   }
 }
 
@@ -96,6 +131,7 @@ export function PurchaseForm({
   cancelHref,
   taxCodes = [],
   hidden = {},
+  receipt,
 }: {
   action: (prev: ActionResult, formData: FormData) => Promise<ActionResult>;
   parts: PurchasePart[];
@@ -110,6 +146,8 @@ export function PurchaseForm({
   taxCodes?: TaxCodeOption[];
   /** Extra values sent with the form (Scan bill marks what the reader filled). */
   hidden?: Record<string, string>;
+  /** Paying the supplier as the goods are received ("Save & receive stock"). */
+  receipt?: ReceiptOptions;
 }) {
   const nextKey = useRef(initial?.items.length ?? 0);
   const intentRef = useRef<HTMLInputElement>(null);
@@ -122,9 +160,17 @@ export function PurchaseForm({
         ...item,
         taxRate: code ? code.rate : item.taxRate,
         taxCodeId: code?.id ?? '',
+        discountType: item.discountType ?? 'PERCENT',
+        discountValue: item.discountValue ?? '',
       };
     }),
   );
+  const [bill, setBill] = useState<{ type: DiscountType; value: string }>({
+    type: initial?.billDiscountType ?? 'PERCENT',
+    value: initial?.billDiscountValue ?? '',
+  });
+  const [payment, setPayment] = useState<'later' | 'now'>('later');
+  const [payAmount, setPayAmount] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(action, { ok: false });
   const errors = state.fieldErrors ?? {};
@@ -152,6 +198,8 @@ export function PurchaseForm({
         partId: part.id,
         quantity: '1',
         unitCost: part.cost,
+        discountType: 'PERCENT',
+        discountValue: '',
         ...(() => {
           const code = codeFor(taxCodes, undefined, part.taxRate || defaultVat);
           return code
@@ -168,15 +216,29 @@ export function PurchaseForm({
     );
 
   const amounts = lines.map(preview);
-  const totals =
-    amounts.every(Boolean) && amounts.length > 0 ? calculateTotals(amounts as LineAmounts[]) : null;
+  let totals: DocumentTotals | null = null;
+  let billError: string | null = null;
+  if (amounts.every(Boolean) && amounts.length > 0) {
+    try {
+      totals = calculateDocument(
+        amounts as LineAmounts[],
+        readDiscount(bill.type, bill.value),
+      ).totals;
+    } catch (error) {
+      billError = error instanceof Error ? error.message : 'Check the discount.';
+    }
+  }
+  const grossFils = lines.reduce((sum, line) => sum + gross(line), 0);
+  const discountFils = totals ? grossFils - toFils(totals.subtotal) : 0;
   const payload = JSON.stringify(
-    lines.map(({ partId, quantity, unitCost, taxRate, taxCodeId }) => ({
+    lines.map(({ partId, quantity, unitCost, taxRate, taxCodeId, discountType, discountValue }) => ({
       partId,
       quantity,
       unitCost,
       taxRate,
       taxCodeId,
+      discountType: discountValue.trim() ? discountType : '',
+      discountValue: discountValue.trim(),
     })),
   );
   const lineError = (index: number) =>
@@ -189,6 +251,8 @@ export function PurchaseForm({
         <input key={name} type="hidden" name={name} value={value} />
       ))}
       <input ref={intentRef} type="hidden" name="intent" defaultValue="draft" />
+      <input type="hidden" name="billDiscountType" value={bill.value.trim() ? bill.type : ''} />
+      <input type="hidden" name="billDiscountValue" value={bill.value.trim()} />
 
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <Field
@@ -229,6 +293,15 @@ export function PurchaseForm({
           max={today}
           defaultValue={initial?.supplierInvoiceDate ?? today}
           error={errors.supplierInvoiceDate}
+          className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
+        />
+        <TextField
+          label="Due date"
+          name="dueDate"
+          type="date"
+          defaultValue={initial?.dueDate}
+          error={errors.dueDate}
+          hint="Optional: when the supplier expects to be paid."
           className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
         />
       </div>
@@ -297,7 +370,7 @@ export function PurchaseForm({
                     <p className="font-mono text-xs text-muted-foreground">{part?.sku}</p>
                     {error ? <p className="mt-1 text-xs text-destructive">{error}</p> : null}
                   </div>
-                  <div className="grid grid-cols-[1fr_1fr_0.7fr_auto] items-end gap-2 lg:w-[30rem]">
+                  <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[1fr_1fr_auto_0.8fr_auto] lg:w-[40rem]">
                     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                       Qty ({part?.unit})
                       <NumberInput kind="quantity"
@@ -314,6 +387,21 @@ export function PurchaseForm({
                         className="h-11 text-right text-base tabular-nums md:text-sm"
                       />
                     </label>
+                    <span className="flex flex-col gap-1 text-xs text-muted-foreground">
+                      Discount
+                      <DiscountInput
+                        label={`${part?.sku ?? 'Line'} discount`}
+                        type={line.discountType}
+                        value={line.discountValue}
+                        large
+                        onChange={(discount) =>
+                          update(line.key, {
+                            discountType: discount.type,
+                            discountValue: discount.value,
+                          })
+                        }
+                      />
+                    </span>
                     {taxCodes.length ? (
                       <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                         Tax code
@@ -361,6 +449,11 @@ export function PurchaseForm({
                   </div>
                   <p className="text-right text-sm font-medium tabular-nums lg:w-28">
                     {amount ? formatMoney(amount.lineTotal) : '—'}
+                    {amount && toFils(amount.discountAmount) > 0 ? (
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        {`−${formatMoney(amount.discountAmount)} discount`}
+                      </span>
+                    ) : null}
                   </p>
                 </li>
               );
@@ -369,17 +462,47 @@ export function PurchaseForm({
         )}
         {errors.items ? <p className="text-sm text-destructive">{errors.items}</p> : null}
 
-        {totals ? (
-          <dl className="ml-auto grid w-full max-w-xs grid-cols-2 gap-y-1.5 text-sm">
-            <dt className="text-muted-foreground">Subtotal</dt>
-            <dd className="text-right tabular-nums">{formatMoney(totals.subtotal)}</dd>
-            <dt className="text-muted-foreground">VAT</dt>
-            <dd className="text-right tabular-nums">{formatMoney(totals.taxAmount)}</dd>
-            <dt className="border-t border-border pt-1.5 font-semibold">Total</dt>
-            <dd className="border-t border-border pt-1.5 text-right font-semibold tabular-nums">
-              {formatMoney(totals.totalAmount)}
+        {lines.length > 0 ? (
+          <dl className="ml-auto grid w-full max-w-sm grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1.5 text-sm">
+            <dt className="text-muted-foreground">Lines subtotal</dt>
+            <dd className="text-right tabular-nums">{formatMoney(filsToString(grossFils))}</dd>
+            <dt className="text-muted-foreground">Discount on the whole bill</dt>
+            <dd className="flex justify-end">
+              <DiscountInput
+                label="Discount on the whole bill"
+                type={bill.type}
+                value={bill.value}
+                onChange={setBill}
+              />
             </dd>
+            {billError || errors.billDiscountValue ? (
+              <p role="alert" className="col-span-2 text-right text-xs text-destructive">
+                {billError ?? errors.billDiscountValue}
+              </p>
+            ) : null}
+            {totals ? (
+              <>
+                <dt className="text-muted-foreground">Discount</dt>
+                <dd className="text-right tabular-nums">
+                  {discountFils > 0 ? `−${formatMoney(filsToString(discountFils))}` : '—'}
+                </dd>
+                <dt className="text-muted-foreground">Subtotal after discount</dt>
+                <dd className="text-right tabular-nums">{formatMoney(totals.subtotal)}</dd>
+                <dt className="text-muted-foreground">VAT</dt>
+                <dd className="text-right tabular-nums">{formatMoney(totals.taxAmount)}</dd>
+                <dt className="border-t border-border pt-1.5 font-semibold">Grand total</dt>
+                <dd className="border-t border-border pt-1.5 text-right font-semibold tabular-nums">
+                  {formatMoney(totals.totalAmount)}
+                </dd>
+              </>
+            ) : null}
           </dl>
+        ) : null}
+        {totals && discountFils > 0 ? (
+          <p className="text-right text-xs text-muted-foreground">
+            A supplier discount lowers what the parts cost you and the VAT you can claim back. It
+            is not income.
+          </p>
         ) : null}
       </div>
 
@@ -390,6 +513,24 @@ export function PurchaseForm({
         error={errors.notes}
         className="[&_textarea]:min-h-16"
       />
+      {isNew && canReceive && receipt ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs text-muted-foreground">
+            Used when you choose “Save & receive stock”.
+          </p>
+          <ReceiptSettlementFields
+            options={receipt}
+            errors={errors}
+            showDueDate={false}
+            amount={payAmount ?? totals?.totalAmount ?? ''}
+            onAmountChange={setPayAmount}
+            amountHint={owedHint(totals?.totalAmount ?? null)}
+            onPaymentChange={setPayment}
+            idPrefix="new-purchase"
+          />
+        </div>
+      ) : null}
+
       <FormError message={Object.keys(errors).length ? undefined : state.error} />
 
       <div className="flex flex-wrap gap-3 border-t border-border pt-6">
@@ -417,7 +558,9 @@ export function PurchaseForm({
               variant="outline"
               size="lg"
               className="h-11"
-              disabled={isPending}
+              // A draft has received nothing, so there is nothing to pay yet.
+              disabled={isPending || payment === 'now'}
+              title={payment === 'now' ? 'Choose “Pay later” to save a draft.' : undefined}
               onClick={() => intentRef.current && (intentRef.current.value = 'draft')}
             >
               <Save />

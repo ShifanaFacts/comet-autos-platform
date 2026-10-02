@@ -3,6 +3,7 @@ import { ArrowRight, HandCoins, Receipt, Truck } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { getCustomerOutstanding, getSupplierOutstanding } from '@/lib/finance/outstanding';
 import { formatDate, formatMoney } from '@/lib/format';
+import { payableAgeLabel } from '@/lib/finance/supplier-balance';
 import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -326,7 +327,10 @@ export default async function OutstandingPage({
                         { label: 'Received', value: formatDate(row.date) },
                         { label: 'Total', value: formatMoney(row.total) },
                         { label: 'Paid', value: formatMoney(row.paid) },
-                        { label: 'Age', value: `${row.ageDays} days` },
+                        {
+                          label: 'Age',
+                          value: row.dueDate ? payableAgeLabel(row) : `${row.ageDays} days`,
+                        },
                       ]}
                     >
                       <Link
@@ -386,7 +390,7 @@ export default async function OutstandingPage({
                             {formatDate(row.date)}
                           </td>
                           <td className="px-2 py-4 text-right tabular-nums whitespace-nowrap">
-                            {row.ageDays}d
+                            {row.dueDate ? payableAgeLabel(row) : `${row.ageDays}d`}
                           </td>
                           <td className="px-2 py-4 text-right tabular-nums whitespace-nowrap">
                             {formatMoney(row.total)}

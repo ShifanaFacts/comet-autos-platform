@@ -24,7 +24,10 @@ export default async function NewCreditNotePage({ params }: { params: Promise<{ 
   }
   const due = filsToString(
     Math.max(
-      toFils(invoice.totalAmount) - toFils(invoice.creditedAmount) - toFils(invoice.paid),
+      toFils(invoice.totalAmount) -
+        toFils(invoice.creditedAmount) -
+        toFils(invoice.advanceApplied) -
+        toFils(invoice.paid),
       0,
     ),
   );
@@ -54,6 +57,7 @@ export default async function NewCreditNotePage({ params }: { params: Promise<{ 
           lines={invoice.lines}
           today={localDateString()}
           due={due}
+          advanceApplied={invoice.advanceApplied}
         />
       )}
     </Stack>

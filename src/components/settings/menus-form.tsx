@@ -60,7 +60,7 @@ export function MenusForm({
         >
           {group.label ? (
             <p className="border-b border-border bg-muted/40 px-4 py-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase sm:px-6">
-              {group.label}
+              {group.parent ? `${group.parent}: ${group.label}` : group.label}
             </p>
           ) : null}
           <ul className="divide-y divide-border">

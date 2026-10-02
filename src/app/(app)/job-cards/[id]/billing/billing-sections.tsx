@@ -309,6 +309,7 @@ export function BillingSections({
               tax={invoice.taxAmount.toString()}
               total={invoice.totalAmount.toString()}
               paid={invoice.paidAmount}
+              advanceApplied={invoice.advanceApplied}
               balance={invoice.balanceDue}
             />
           </Panel>
@@ -468,6 +469,7 @@ function Totals({
   tax,
   total,
   paid,
+  advanceApplied,
   balance,
 }: {
   /** The lines' total and the bill discount, when there is one. */
@@ -476,6 +478,8 @@ function Totals({
   tax: string;
   total: string;
   paid?: string;
+  /** Settled from customer advances. */
+  advanceApplied?: string;
   balance?: string;
 }) {
   return (
@@ -500,6 +504,12 @@ function Totals({
       </div>
       {paid !== undefined && balance !== undefined ? (
         <>
+          {advanceApplied && advanceApplied !== '0.00' ? (
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Advance applied</dt>
+              <dd className="tabular-nums">{formatMoney(advanceApplied)}</dd>
+            </div>
+          ) : null}
           <div className="flex justify-between">
             <dt className="text-muted-foreground">Amount paid</dt>
             <dd className="tabular-nums">{formatMoney(paid)}</dd>

@@ -2,12 +2,13 @@ import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
-import { filsToString, milliToString, signedToMilli, toFils } from '@/lib/money';
-import { localDateString, parseCalendarDate } from '@/lib/format';
+import { filsToString, signedToMilli, toFils } from '@/lib/money';
+import { formatCalendarDate, localDateString, parseCalendarDate } from '@/lib/format';
 import { resolveDefaultVatRate } from '@/lib/tax';
-import { purchaseLineAmounts } from '@/lib/inventory/purchases';
+import { isDiscountedLine, movementValue, receivedBefore } from '@/lib/inventory/purchase-value';
 import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
 import { dueFils, paidFils } from '@/lib/billing/invoice';
+import { customerAdvanceHeld } from '@/lib/billing/advances';
 
 /*
  * Statements of account — what a customer owes the workshop, and what the
@@ -23,10 +24,19 @@ import { dueFils, paidFils } from '@/lib/billing/invoice';
  *   Payments reversed          debit
  *   Credit notes issued        credit  (void ones never counted)
  *   Refunds paid under them    debit
+ *   Customer advances applied  credit  (undone ones never counted: the
+ *                                       undoing is booked on the same day)
+ *   Returned to an advance     debit   by a credit note that left the
+ *                                       invoice over-settled
+ *   An advance still held for the customer is not owed by them — it is
+ *   shown beside the statement (advanceHeld), as the books keep it in
+ *   Customer advances, apart from trade receivables.
  *
  * SUPPLIER (credit = the workshop owes more)
- *   Parts received             credit  valued per delivery, VAT included —
- *   Parts returned             debit   exactly as the books value them
+ *   Parts received             credit  valued per delivery, VAT included,
+ *   Parts returned             debit   after any purchase discounts — exactly
+ *                                      as the books value them; the bill's due
+ *                                      date, when it has one, is shown
  *   Payments made              debit
  *   Payments reversed          credit
  *
@@ -150,7 +160,7 @@ export async function getCustomerStatement(
   });
   if (!customer) throw new NotFoundError('customer');
 
-  const [invoices, creditNotes] = await Promise.all([
+  const [invoices, creditNotes, allocations, advanceHeld] = await Promise.all([
     prisma.invoice.findMany({
       where: {
         organizationId,
@@ -166,6 +176,7 @@ export async function getCustomerStatement(
         dueDate: true,
         totalAmount: true,
         creditedAmount: true,
+        advanceAppliedAmount: true,
         jobCard: { select: { jobNumber: true } },
         vehicle: { select: { plateNumber: true } },
         payments: {
@@ -196,9 +207,44 @@ export async function getCustomerStatement(
         invoice: { select: { invoiceNumber: true } },
       },
     }),
+    prisma.customerAdvanceAllocation.findMany({
+      where: {
+        organizationId,
+        reversedAt: null,
+        invoice: { customerId, status: { notIn: ['DRAFT', 'VOID', 'CANCELLED'] } },
+      },
+      select: {
+        id: true,
+        amount: true,
+        allocatedOn: true,
+        advance: { select: { id: true, advanceNumber: true } },
+        invoice: { select: { invoiceNumber: true } },
+        creditNote: { select: { creditNoteNumber: true } },
+      },
+    }),
+    customerAdvanceHeld(prisma, organizationId, customerId),
   ]);
 
   const movements: Movement[] = [];
+  for (const allocation of allocations) {
+    // Signed: above zero applied to the invoice, below zero returned to the
+    // advance by a credit note (the customer owes that much more again).
+    const text = allocation.amount.toString();
+    const returned = text.startsWith('-');
+    const fils = toFils(returned ? text.slice(1) : text);
+    movements.push({
+      key: `advance-${allocation.id}`,
+      date: calendarDay(allocation.allocatedOn),
+      order: returned ? 3 : 2,
+      kind: returned ? 'Returned to advance' : 'Advance applied',
+      reference: allocation.advance.advanceNumber,
+      description: returned
+        ? `Returned to the customer's advance from ${allocation.invoice.invoiceNumber}${allocation.creditNote ? ` by credit note ${allocation.creditNote.creditNoteNumber}` : ''}`
+        : `Customer advance applied to ${allocation.invoice.invoiceNumber}`,
+      href: `/finance/advances/${allocation.advance.id}`,
+      fils: returned ? fils : -fils,
+    });
+  }
   for (const invoice of invoices) {
     const about = [invoice.vehicle?.plateNumber, invoice.jobCard?.jobNumber]
       .filter(Boolean)
@@ -293,6 +339,8 @@ export async function getCustomerStatement(
     openInvoices: open.map((invoice) => ({ ...invoice, due: filsToString(invoice.due) })),
     ageing: ageing.map((bucket) => ({ label: bucket.label, amount: filsToString(bucket.fils) })),
     totalDue: filsToString(open.reduce((sum, invoice) => sum + invoice.due, 0)),
+    /** Paid in advance and not yet applied or refunded: held for the customer. */
+    advanceHeld: filsToString(advanceHeld),
   };
 }
 
@@ -331,9 +379,19 @@ export async function getSupplierStatement(
         part: { select: { name: true } },
         purchaseItem: {
           select: {
+            id: true,
+            quantityOrdered: true,
+            unitCost: true,
             taxRate: true,
+            taxAmount: true,
+            netAmount: true,
             purchase: {
-              select: { id: true, purchaseNumber: true, supplierInvoiceNumber: true },
+              select: {
+                id: true,
+                purchaseNumber: true,
+                supplierInvoiceNumber: true,
+                dueDate: true,
+              },
             },
           },
         },
@@ -356,6 +414,14 @@ export async function getSupplierStatement(
     resolveDefaultVatRate(organizationId),
   ]);
 
+  // A discounted line values each delivery from the ones before it.
+  const before = await receivedBefore(
+    prisma,
+    organizationId,
+    movementsIn
+      .filter((row) => isDiscountedLine(row.purchaseItem))
+      .map((row) => row.purchaseItem!.id),
+  );
   // One line per purchase per day: a delivery of many parts reads as one bill.
   const deliveries = new Map<string, Movement>();
   for (const row of movementsIn) {
@@ -363,12 +429,14 @@ export async function getSupplierStatement(
     if (!purchase || !row.unitCost) continue;
     const qty = signedToMilli(row.quantity);
     if (qty === 0) continue;
-    const amounts = purchaseLineAmounts(
-      milliToString(Math.abs(qty)),
-      row.unitCost.toString(),
-      row.purchaseItem?.taxRate?.toString() ?? defaultVat,
-    );
-    const value = amounts.lineTotalFils + amounts.taxFils;
+    const valued = movementValue({
+      line: row.purchaseItem,
+      movementMilli: qty,
+      receivedBeforeMilli: before.get(row.id) ?? 0,
+      unitCost: row.unitCost.toString(),
+      taxRate: row.purchaseItem?.taxRate?.toString() ?? defaultVat,
+    });
+    const value = Math.abs(valued.netFils + valued.taxFils);
     const returned = row.transactionType === 'RETURN_TO_SUPPLIER' || qty < 0;
     const date = day(row.createdAt);
     const key = `${returned ? 'return' : 'receipt'}-${purchase.id}-${date}`;
@@ -378,9 +446,11 @@ export async function getSupplierStatement(
       order: returned ? 1 : 0,
       kind: returned ? 'Parts returned' : 'Parts received',
       reference: purchase.purchaseNumber,
-      description: purchase.supplierInvoiceNumber
-        ? `Supplier invoice ${purchase.supplierInvoiceNumber}`
-        : 'Delivery',
+      description: `${
+        purchase.supplierInvoiceNumber
+          ? `Supplier invoice ${purchase.supplierInvoiceNumber}`
+          : 'Delivery'
+      }${!returned && purchase.dueDate ? ` · due ${formatCalendarDate(purchase.dueDate)}` : ''}`,
       href: `/inventory/purchases/${purchase.id}`,
       fils: 0,
     };
