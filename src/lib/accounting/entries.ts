@@ -241,6 +241,10 @@ const LATER_SOURCES = [
   'FIXED_ASSET',
   'DEPRECIATION',
   'ASSET_DISPOSAL',
+  'MONEY_TRANSFER',
+  'CUSTOMER_ADVANCE',
+  'CUSTOMER_ADVANCE_ALLOCATION',
+  'CUSTOMER_ADVANCE_REFUND',
 ] as const;
 
 /** What is waiting to be booked, oldest first, by kind of record. */
@@ -261,6 +265,10 @@ async function unbooked(organizationId: string) {
     depreciations,
     bookedOther,
     reimbursements,
+    transfers,
+    advances,
+    allocations,
+    advanceRefunds,
   ] = await Promise.all([
     prisma.invoice.findMany({
       where: {
@@ -342,6 +350,26 @@ async function unbooked(organizationId: string) {
       orderBy: [{ paidOn: 'asc' }, { createdAt: 'asc' }],
       select: { id: true },
     }),
+    prisma.moneyTransfer.findMany({
+      where: { organizationId, status: 'POSTED' },
+      orderBy: [{ transferredOn: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true },
+    }),
+    prisma.customerAdvance.findMany({
+      where: { organizationId, status: { not: 'CANCELLED' } },
+      orderBy: [{ receivedOn: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true },
+    }),
+    prisma.customerAdvanceAllocation.findMany({
+      where: { organizationId, reversedAt: null },
+      orderBy: [{ allocatedOn: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true },
+    }),
+    prisma.customerAdvanceRefund.findMany({
+      where: { organizationId, reversedAt: null },
+      orderBy: [{ refundedOn: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true },
+    }),
   ]);
   const booked = new Set(bookedMovements.map((entry) => entry.sourceId));
   const paidBooked = new Set(bookedPayrollPayments.map((entry) => entry.sourceId));
@@ -381,6 +409,10 @@ async function unbooked(organizationId: string) {
       'ASSET_DISPOSAL',
     ),
     OWNER_REIMBURSEMENT: reimbursements.map((row) => row.id),
+    MONEY_TRANSFER: notBooked(transfers, 'MONEY_TRANSFER'),
+    CUSTOMER_ADVANCE: notBooked(advances, 'CUSTOMER_ADVANCE'),
+    CUSTOMER_ADVANCE_ALLOCATION: notBooked(allocations, 'CUSTOMER_ADVANCE_ALLOCATION'),
+    CUSTOMER_ADVANCE_REFUND: notBooked(advanceRefunds, 'CUSTOMER_ADVANCE_REFUND'),
   } satisfies Record<PostedSource, string[]>;
 }
 
@@ -416,6 +448,10 @@ export async function bookExistingRecords(user: AuthenticatedUser) {
     'VAT_FILING',
     'VAT_PAYMENT',
     'OWNER_REIMBURSEMENT',
+    'MONEY_TRANSFER',
+    'CUSTOMER_ADVANCE',
+    'CUSTOMER_ADVANCE_ALLOCATION',
+    'CUSTOMER_ADVANCE_REFUND',
   ];
   let booked = 0;
   const failed: string[] = [];

@@ -25,6 +25,11 @@ import { ADJUSTMENT_REASONS } from '@/lib/inventory/labels';
 import { formatMilli } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import {
+  ReceiptSettlementFields,
+  owedHint,
+  type ReceiptOptions,
+} from '@/components/inventory/receipt-settlement';
+import {
   adjustStockAction,
   cancelPurchaseAction,
   receivePurchaseAction,
@@ -222,14 +227,21 @@ export interface ReceiveLine {
 export function ReceivePurchaseForm({
   purchaseId,
   lines,
+  receipt,
 }: {
   purchaseId: string;
   lines: ReceiveLine[];
+  /** Paying the supplier as the goods come in, the due date, the cost price. */
+  receipt?: ReceiptOptions;
 }) {
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
     async (prev, formData) => {
       const result = await receivePurchaseAction(purchaseId, prev, formData);
-      if (result.ok) toast.success('Stock received');
+      if (result.ok) {
+        toast.success(
+          formData.get('payment') === 'now' ? 'Stock received and payment recorded' : 'Stock received',
+        );
+      }
       return result;
     },
     { ok: false },
@@ -270,6 +282,15 @@ export function ReceivePurchaseForm({
           </li>
         ))}
       </ul>
+      {receipt ? (
+        <ReceiptSettlementFields
+          options={receipt}
+          errors={errors}
+          showDueDate
+          amountHint={owedHint(null)}
+          idPrefix={`receive-${purchaseId}`}
+        />
+      ) : null}
       <FormError
         message={
           state.error && !Object.keys(errors).some((key) => key.startsWith('line:'))

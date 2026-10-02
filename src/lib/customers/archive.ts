@@ -8,6 +8,8 @@ import { DomainError, NotFoundError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { CLOSED_JOB_STATUSES } from '@/lib/workshop/stages';
+import { customerAdvanceHeld } from '@/lib/billing/advances';
+import { filsToString } from '@/lib/money';
 
 /*
  * Deleting customers and vehicles.
@@ -80,6 +82,13 @@ export async function archiveCustomer(
     if (unpaid) {
       throw new DomainError(
         `${customer.name} still owes money on invoice ${unpaid.invoiceNumber}. Settle or void it first.`,
+      );
+    }
+    // Money paid in advance is still owed to them.
+    const held = await customerAdvanceHeld(tx, user.organizationId, customer.id);
+    if (held > 0) {
+      throw new DomainError(
+        `${filsToString(held)} paid in advance is still held for ${customer.name}. Apply it to an invoice or refund it first.`,
       );
     }
     // Their cars go with them — and come back with them on restore.

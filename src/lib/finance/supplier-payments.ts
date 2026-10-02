@@ -18,6 +18,7 @@ import {
   PURCHASE_BALANCE_SELECT,
   RECEIVED_PURCHASE_STATUSES,
   purchaseBalance,
+  payableAge,
   supplierPaidFils,
 } from '@/lib/finance/supplier-balance';
 
@@ -80,10 +81,6 @@ const reversalSchema = z.object({
   requestKey: z.string().optional(),
 });
 
-/** Whole days since a date, floored at zero. */
-const ageInDays = (date: Date) =>
-  Math.max(0, Math.floor((Date.now() - date.getTime()) / 86_400_000));
-
 /** A user tied to one branch only ever sees and pays that branch's purchases. */
 const branchScope = (user: AuthenticatedUser) =>
   user.primaryBranchId ? { branchId: user.primaryBranchId } : {};
@@ -133,6 +130,7 @@ export async function getPayables(user: AuthenticatedUser, filters: PayableFilte
         purchaseNumber: true,
         supplierInvoiceNumber: true,
         supplierInvoiceDate: true,
+        dueDate: true,
         createdAt: true,
         branchId: true,
         supplier: { select: { id: true, name: true, phone: true } },
@@ -154,7 +152,7 @@ export async function getPayables(user: AuthenticatedUser, filters: PayableFilte
         date,
         supplier: purchase.supplier,
         ...money,
-        ageDays: ageInDays(date),
+        ...payableAge(date, purchase.dueDate),
       };
     })
     .filter((row) => row.balanceFils > 0)
@@ -184,8 +182,8 @@ export async function getPayables(user: AuthenticatedUser, filters: PayableFilte
       .reduce((sum, row) => sum + row.balanceFils, 0);
 
   const totalFils = rows.reduce((sum, row) => sum + row.balanceFils, 0);
-  // No supplier terms exist in the schema, so "overdue" can only mean age.
-  // 30 days is stated on the screen rather than implied.
+  // Without a due date, "overdue" means older than 30 days (stated on the
+  // screen); with one, past it (payableAge).
   const overdueFils = bucket(31);
 
   return {
@@ -249,6 +247,7 @@ export async function getSupplierPayables(user: AuthenticatedUser, supplierId: s
         purchaseNumber: true,
         supplierInvoiceNumber: true,
         supplierInvoiceDate: true,
+        dueDate: true,
         createdAt: true,
         status: true,
         ...PURCHASE_BALANCE_SELECT,
@@ -268,7 +267,7 @@ export async function getSupplierPayables(user: AuthenticatedUser, supplierId: s
       date,
       status: purchase.status,
       ...money,
-      ageDays: ageInDays(date),
+      ...payableAge(date, purchase.dueDate),
     };
   });
 
@@ -419,117 +418,152 @@ export async function recordSupplierPayment(
   const amount = toFils(input.amount);
   if (amount <= 0) throw new DomainError('Enter an amount greater than zero.', 'amount');
 
-  const defaultVat = await resolveDefaultVatRate(user.organizationId);
-
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'supplier_payment.record');
-
-    const purchase = await tx.purchase.findFirst({
-      where: { id: purchaseId, organizationId: user.organizationId },
-      select: {
-        id: true,
-        purchaseNumber: true,
-        branchId: true,
-        status: true,
-        receivedAt: true,
-        supplier: { select: { id: true, name: true } },
-      },
+    const result = await takeSupplierPayment(tx, user, purchaseId, {
+      amountFils: amount,
+      method: input.method,
+      accountId: input.accountId,
+      referenceNumber: input.referenceNumber,
+      paidAt,
     });
-    // Another organization's purchase is not found, never forbidden.
-    if (!purchase) throw new NotFoundError('purchase');
-    // A branch-scoped user pays only their own branch's bills.
-    if (user.primaryBranchId && purchase.branchId !== user.primaryBranchId) {
-      throw new NotFoundError('purchase');
-    }
-    if (!RECEIVED_PURCHASE_STATUSES.includes(purchase.status as 'RECEIVED')) {
-      throw new DomainError(
-        'Only a purchase that has been received can be paid. Receive the delivery first.',
-      );
-    }
-    if (purchase.receivedAt && paidAt.getTime() < purchase.receivedAt.getTime() - 60_000) {
-      throw new DomainError('A payment can’t be dated before the goods were received.', 'paidAt');
-    }
+    await settleRequestKey(tx, user, rawInput, result.id);
+    return result;
+  });
+}
 
-    // Serialise concurrent payments on this purchase.
-    await tx.$executeRaw`SELECT id FROM purchases WHERE id = ${purchase.id}::uuid FOR UPDATE`;
+export interface SupplierPaymentInput {
+  /** Fils; null pays everything still owed on the purchase. */
+  amountFils: number | null;
+  method: (typeof paymentSchema.shape.method.options)[number];
+  accountId?: string | null;
+  referenceNumber?: string | null;
+  paidAt: Date;
+}
 
-    const fresh = await tx.purchase.findUniqueOrThrow({
-      where: { id: purchase.id },
-      select: PURCHASE_BALANCE_SELECT,
-    });
-    const money = purchaseBalance(fresh, defaultVat);
-    if (money.balanceFils === 0) {
-      throw new DomainError('This purchase is already fully paid.');
-    }
-    if (amount > money.balanceFils) {
-      throw new DomainError(
-        `That is more than the ${money.balance} still owed on this purchase.`,
-        'amount',
-      );
-    }
+/**
+ * The supplier payment rules themselves, inside a transaction the caller
+ * holds — shared by a payment made on its own and one made as the goods are
+ * received ("paid now"), so both follow exactly the same rules: a received
+ * purchase, never more than is owed, never from card settlements, a payment
+ * number, its posting and an audit entry.
+ */
+export async function takeSupplierPayment(
+  tx: Prisma.TransactionClient,
+  user: AuthenticatedUser,
+  purchaseId: string,
+  input: SupplierPaymentInput,
+) {
+  requirePermission(user, 'supplier_payment.create');
+  const { paidAt } = input;
+  const defaultVat = await resolveDefaultVatRate(user.organizationId, tx);
 
-    const supplierPaymentNumber = await allocateDocumentNumber(
-      tx,
-      user.organizationId,
-      purchase.branchId,
-      'SUPPLIER_PAYMENT',
+  const purchase = await tx.purchase.findFirst({
+    where: { id: purchaseId, organizationId: user.organizationId },
+    select: {
+      id: true,
+      purchaseNumber: true,
+      branchId: true,
+      status: true,
+      receivedAt: true,
+      supplier: { select: { id: true, name: true } },
+    },
+  });
+  // Another organization's purchase is not found, never forbidden.
+  if (!purchase) throw new NotFoundError('purchase');
+  // A branch-scoped user pays only their own branch's bills.
+  if (user.primaryBranchId && purchase.branchId !== user.primaryBranchId) {
+    throw new NotFoundError('purchase');
+  }
+  if (!RECEIVED_PURCHASE_STATUSES.includes(purchase.status as 'RECEIVED')) {
+    throw new DomainError(
+      'Only a purchase that has been received can be paid. Receive the delivery first.',
     );
-    await refuseCardSettlementAccount(
-      tx,
-      user.organizationId,
-      input.method,
-      input.accountId || null,
-      'method',
-    );
-    const payment = await tx.supplierPayment.create({
-      data: {
-        organizationId: user.organizationId,
-        purchaseId: purchase.id,
-        supplierPaymentNumber,
-        amount: filsToString(amount),
-        method: input.method,
-        accountId: await checkMoneyAccount(tx, user.organizationId, input.accountId),
-        status: 'COMPLETED',
-        referenceNumber: emptyToNull(input.referenceNumber),
-        paidAt,
-        paidByUserId: user.id,
-      },
-      select: { id: true, supplierPaymentNumber: true, amount: true },
-    });
-    await syncPosting(tx, user.organizationId, 'SUPPLIER_PAYMENT', payment.id, user.id);
+  }
+  if (purchase.receivedAt && paidAt.getTime() < purchase.receivedAt.getTime() - 60_000) {
+    throw new DomainError('A payment can’t be dated before the goods were received.', 'paidAt');
+  }
 
-    const balanceAfter = money.balanceFils - amount;
-    await writeAuditLog(tx, {
+  // Serialise concurrent payments on this purchase.
+  await tx.$executeRaw`SELECT id FROM purchases WHERE id = ${purchase.id}::uuid FOR UPDATE`;
+
+  const fresh = await tx.purchase.findUniqueOrThrow({
+    where: { id: purchase.id },
+    select: PURCHASE_BALANCE_SELECT,
+  });
+  const money = purchaseBalance(fresh, defaultVat);
+  if (money.balanceFils === 0) {
+    throw new DomainError('This purchase is already fully paid.');
+  }
+  const amount = input.amountFils ?? money.balanceFils;
+  if (amount <= 0) throw new DomainError('Enter an amount greater than zero.', 'amount');
+  if (amount > money.balanceFils) {
+    throw new DomainError(
+      `That is more than the ${money.balance} still owed on this purchase.`,
+      'amount',
+    );
+  }
+
+  const supplierPaymentNumber = await allocateDocumentNumber(
+    tx,
+    user.organizationId,
+    purchase.branchId,
+    'SUPPLIER_PAYMENT',
+  );
+  await refuseCardSettlementAccount(
+    tx,
+    user.organizationId,
+    input.method,
+    input.accountId || null,
+    'method',
+  );
+  const payment = await tx.supplierPayment.create({
+    data: {
       organizationId: user.organizationId,
-      branchId: purchase.branchId,
-      actorUserId: user.id,
-      action: 'supplier_payment.recorded',
-      entityType: 'SupplierPayment',
-      entityId: payment.id,
-      afterData: {
-        supplierPaymentNumber,
-        purchaseId: purchase.id,
-        purchaseNumber: purchase.purchaseNumber,
-        supplierId: purchase.supplier.id,
-        supplierName: purchase.supplier.name,
-        amount: filsToString(amount),
-        method: input.method,
-        balanceBefore: money.balance,
-        balanceAfter: filsToString(balanceAfter),
-      },
-    });
-    await settleRequestKey(tx, user, rawInput, payment.id);
-
-    return {
-      id: payment.id,
+      purchaseId: purchase.id,
       supplierPaymentNumber,
       amount: filsToString(amount),
-      purchaseId: purchase.id,
-      supplierId: purchase.supplier.id,
-      balanceAfter: filsToString(balanceAfter),
-      fullySettled: balanceAfter === 0,
-    };
+      method: input.method,
+      accountId: await checkMoneyAccount(tx, user.organizationId, input.accountId),
+      status: 'COMPLETED',
+      referenceNumber: emptyToNull(input.referenceNumber),
+      paidAt,
+      paidByUserId: user.id,
+    },
+    select: { id: true, supplierPaymentNumber: true, amount: true },
   });
+  await syncPosting(tx, user.organizationId, 'SUPPLIER_PAYMENT', payment.id, user.id);
+
+  const balanceAfter = money.balanceFils - amount;
+  await writeAuditLog(tx, {
+    organizationId: user.organizationId,
+    branchId: purchase.branchId,
+    actorUserId: user.id,
+    action: 'supplier_payment.recorded',
+    entityType: 'SupplierPayment',
+    entityId: payment.id,
+    afterData: {
+      supplierPaymentNumber,
+      purchaseId: purchase.id,
+      purchaseNumber: purchase.purchaseNumber,
+      supplierId: purchase.supplier.id,
+      supplierName: purchase.supplier.name,
+      amount: filsToString(amount),
+      method: input.method,
+      balanceBefore: money.balance,
+      balanceAfter: filsToString(balanceAfter),
+    },
+  });
+
+  return {
+    id: payment.id,
+    supplierPaymentNumber,
+    amount: filsToString(amount),
+    purchaseId: purchase.id,
+    supplierId: purchase.supplier.id,
+    balanceAfter: filsToString(balanceAfter),
+    fullySettled: balanceAfter === 0,
+  };
 }
 
 /**

@@ -19,6 +19,7 @@ import { OwedToOwnerLine } from '@/components/finance/owed-to-owner-line';
 import { getFinanceDashboard, type FinanceDashboard } from '@/lib/finance/dashboard';
 import { getWorkshopFlow } from '@/lib/data/dashboard';
 import { formatDate, formatMoney } from '@/lib/format';
+import { payableAgeLabel } from '@/lib/finance/supplier-balance';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -296,7 +297,7 @@ export default async function FinanceOverviewPage({
                         party={row.party.name}
                         reference={row.number}
                         amount={formatMoney(row.balance)}
-                        meta={`${row.ageDays} days old`}
+                        meta={payableAgeLabel(row)}
                       />
                     ))}
                   </ul>

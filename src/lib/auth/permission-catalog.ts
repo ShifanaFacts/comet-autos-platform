@@ -210,6 +210,28 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     },
   },
   {
+    key: 'money',
+    label: 'Money',
+    description:
+      'Cash on hand, petty cash, bank and card accounts: what is in each, and moving money between them.',
+    actions: {
+      view: 'See how much is in each cash, bank and card account, and every movement in and out.',
+      create: 'Move money between the workshop’s own accounts, e.g. cash on hand into petty cash.',
+      delete: 'Void a money transfer entered by mistake.',
+    },
+  },
+  {
+    key: 'customer_advance',
+    label: 'Customer advances',
+    description: 'Money customers pay before their invoice, applied to invoices later.',
+    actions: {
+      view: 'See customer advances, what is left of each and where it was applied.',
+      create: 'Receive an advance from a customer.',
+      edit: 'Apply an advance to an invoice, or undo an application.',
+      delete: 'Refund an advance to the customer, reverse a refund, or cancel an advance.',
+    },
+  },
+  {
     key: 'vat',
     label: 'VAT returns',
     description: 'The VAT return and filings.',

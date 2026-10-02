@@ -1,5 +1,6 @@
 import { filsToString, toFils } from '@/lib/money';
-import { receivedValueFils } from '@/lib/inventory/purchases';
+import { formatCalendarDate } from '@/lib/format';
+import { receivedValueFils, type ValuedLine } from '@/lib/inventory/purchase-value';
 
 /*
  * What the workshop owes on a purchase — the one definition.
@@ -13,6 +14,9 @@ import { receivedValueFils } from '@/lib/inventory/purchases';
  * The rule:
  *
  *   owed = value of stock actually received  −  the payments that count
+ *
+ * "Value" is after any purchase discounts, valued by the same rule as the
+ * books (lib/inventory/purchase-value.ts).
  *
  * Measured from the purchase, never from stock on hand: parts already fitted
  * to a customer's car are still owed for. All arithmetic is integer fils.
@@ -69,11 +73,7 @@ export interface PurchaseBalance {
  */
 export function purchaseBalance(
   purchase: {
-    items: {
-      quantityReceived: { toString(): string };
-      unitCost: { toString(): string };
-      taxRate: { toString(): string } | null;
-    }[];
+    items: (ValuedLine & { quantityReceived: { toString(): string } })[];
     supplierPayments: SupplierPaymentLike[];
   },
   defaultVat: string,
@@ -94,11 +94,57 @@ export function purchaseBalance(
 
 /** The `select` every caller needs for `purchaseBalance` to be computable. */
 export const PURCHASE_BALANCE_SELECT = {
-  items: { select: { quantityReceived: true, unitCost: true, taxRate: true } },
+  items: {
+    select: {
+      quantityReceived: true,
+      quantityOrdered: true,
+      unitCost: true,
+      taxRate: true,
+      taxAmount: true,
+      netAmount: true,
+    },
+  },
   supplierPayments: {
     select: { id: true, amount: true, status: true, reversalOfSupplierPaymentId: true },
   },
 } as const;
+
+/**
+ * How old a supplier's bill is, for Suppliers owed — one rule for every
+ * screen that ages them.
+ *
+ * Without a due date: whole days since the bill's date, exactly as before
+ * (the screens treat 31 days and more as overdue).
+ *
+ * With a due date (the supplier's "pay later" terms): aged from it, on the
+ * same buckets — counted so the day after it is due is day 31, the first
+ * overdue day — and `daysOverdue` says by how much in plain days.
+ */
+export function payableAge(billDate: Date, dueDate: Date | null, now = Date.now()) {
+  const daysSince = (date: Date) => Math.floor((now - date.getTime()) / 86_400_000);
+  if (!dueDate) {
+    return { ageDays: Math.max(0, daysSince(billDate)), dueDate: null, daysOverdue: null };
+  }
+  const pastDue = daysSince(dueDate);
+  return {
+    ageDays: Math.max(0, pastDue + 30),
+    dueDate,
+    daysOverdue: Math.max(0, pastDue),
+  };
+}
+
+/** A bill's age in words: "12 days old", or with a due date "due 30 Oct 2026" / "5 days overdue". */
+export function payableAgeLabel(row: {
+  ageDays: number;
+  dueDate: Date | null;
+  daysOverdue: number | null;
+}) {
+  if (!row.dueDate) return `${row.ageDays} days old`;
+  if (row.daysOverdue && row.daysOverdue > 0) {
+    return `${row.daysOverdue} day${row.daysOverdue === 1 ? '' : 's'} overdue`;
+  }
+  return `due ${formatCalendarDate(row.dueDate)}`;
+}
 
 /** A purchase owes money only once something has been received. */
 export const RECEIVED_PURCHASE_STATUSES = ['RECEIVED', 'PARTIALLY_RECEIVED'] as const;

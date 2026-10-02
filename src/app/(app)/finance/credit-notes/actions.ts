@@ -39,16 +39,22 @@ export async function createCreditNoteAction(
     lines: { invoiceItemId: string; amount: string; quantity?: string }[];
     requestKey: string;
   },
-): Promise<ActionResult<{ creditNoteId: string; refundAmount: string }>> {
+): Promise<
+  ActionResult<{ creditNoteId: string; refundAmount: string; returnedToAdvances: string }>
+> {
   const user = await requireUser();
   const result = await runAction(() => createCreditNote(user, invoiceId, input));
   if (result.ok) await refresh(invoiceId, result.data!.creditNoteId);
   // A double-submitted form already issued it: open that one.
-  const issued = result.data ?? (result.duplicateOf ? { creditNoteId: result.duplicateOf, refundAmount: '0.00' } : null);
+  const issued = result.data ?? (result.duplicateOf ? { creditNoteId: result.duplicateOf, refundAmount: '0.00', returnedToAdvances: '0.00' } : null);
   return {
     ...toClientResult(result),
     data: issued
-      ? { creditNoteId: issued.creditNoteId, refundAmount: issued.refundAmount }
+      ? {
+          creditNoteId: issued.creditNoteId,
+          refundAmount: issued.refundAmount,
+          returnedToAdvances: issued.returnedToAdvances,
+        }
       : undefined,
   };
 }

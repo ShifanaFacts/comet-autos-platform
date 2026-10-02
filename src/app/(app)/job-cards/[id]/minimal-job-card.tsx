@@ -28,6 +28,7 @@ import { JobDetailsEditor } from '@/components/workshop/job-details-editor';
 import { Grid, Panel, Section, Stack } from '@/components/layout/primitives';
 import { JobHero } from '@/components/workshop/job-hero';
 import { JobQuickActions } from '@/components/workshop/job-quick-actions';
+import { JobAdvances } from '@/components/finance/job-advances';
 import { CancelJobButton } from '@/components/workshop/cancel-job-button';
 import { CompleteJobButton } from '@/components/workshop/complete-job-button';
 import { canMarkCompleted } from '@/lib/workshop/job-status';
@@ -313,6 +314,8 @@ export async function MinimalJobCard({
               </JobDetailsEditor>
             </Panel>
           </Section>
+
+          <JobAdvances user={user} jobCard={jobCard} open={!isFinished} />
 
           {estimate || invoice ? (
             <Section title="Paperwork">

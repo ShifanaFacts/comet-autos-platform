@@ -3,7 +3,8 @@ import { ArrowRight, ChevronRight, HandCoins, Receipt, TriangleAlert } from 'luc
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { AuthError } from '@/lib/auth/authorize';
 import { getPayables, type Payables } from '@/lib/finance/supplier-payments';
-import { formatDate, formatMoney } from '@/lib/format';
+import { formatCalendarDate, formatDate, formatMoney } from '@/lib/format';
+import { payableAgeLabel } from '@/lib/finance/supplier-balance';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -41,7 +42,24 @@ function Figure({
   );
 }
 
-function AgeBadge({ days }: { days: number }) {
+function AgeBadge({
+  days,
+  dueDate,
+  daysOverdue,
+}: {
+  days: number;
+  dueDate: Date | null;
+  daysOverdue: number | null;
+}) {
+  // A bill with a due date reads against it: "due …" until then, then overdue.
+  if (dueDate) {
+    if (!daysOverdue) {
+      return <StatusPill tone="neutral">{payableAgeLabel({ ageDays: days, dueDate, daysOverdue })}</StatusPill>;
+    }
+    return (
+      <StatusPill tone={daysOverdue <= 30 ? 'warning' : 'danger'}>{daysOverdue}d overdue</StatusPill>
+    );
+  }
   if (days <= 30) return <StatusPill tone="neutral">{days}d</StatusPill>;
   if (days <= 60) return <StatusPill tone="warning">{days}d</StatusPill>;
   return <StatusPill tone="danger">{days}d</StatusPill>;
@@ -166,7 +184,7 @@ export default async function PayablesPage({
                           <span className="text-base font-semibold tabular-nums">
                             {formatMoney(row.balance)}
                           </span>
-                          <AgeBadge days={row.ageDays} />
+                          <AgeBadge days={row.ageDays} dueDate={row.dueDate} daysOverdue={row.daysOverdue} />
                         </span>
                         <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
                       </Link>
@@ -208,6 +226,11 @@ export default async function PayablesPage({
                             </td>
                             <td className="px-2 py-4 whitespace-nowrap text-muted-foreground">
                               {formatDate(row.date)}
+                              {row.dueDate ? (
+                                <span className="block text-xs">
+                                  due {formatCalendarDate(row.dueDate)}
+                                </span>
+                              ) : null}
                             </td>
                             <td className="px-2 py-4 text-right tabular-nums text-muted-foreground">
                               {formatMoney(row.received)}
@@ -219,7 +242,7 @@ export default async function PayablesPage({
                               {formatMoney(row.balance)}
                             </td>
                             <td className="px-6 py-4">
-                              <AgeBadge days={row.ageDays} />
+                              <AgeBadge days={row.ageDays} dueDate={row.dueDate} daysOverdue={row.daysOverdue} />
                             </td>
                           </tr>
                         ))}

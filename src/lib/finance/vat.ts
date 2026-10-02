@@ -9,9 +9,10 @@ const TREATMENT_ORDER: VatTreatment[] = ['STANDARD', 'ZERO_RATED', 'EXEMPT', 'OU
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
-import { calculateLine, filsToString, milliToString, signedToMilli, toFils } from '@/lib/money';
+import { filsToString, signedToMilli, toFils } from '@/lib/money';
 import { parseCalendarDate } from '@/lib/format';
 import { getVatSettings } from '@/lib/tax';
+import { isDiscountedLine, movementValue, receivedBefore } from '@/lib/inventory/purchase-value';
 import { resolvePeriod, type ResolvedPeriod } from '@/lib/finance/dashboard';
 
 /*
@@ -146,13 +147,18 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
       },
       orderBy: { createdAt: 'asc' },
       select: {
+        id: true,
         quantity: true,
         unitCost: true,
         createdAt: true,
         purchaseItem: {
           select: {
+            id: true,
+            quantityOrdered: true,
             unitCost: true,
             taxRate: true,
+            taxAmount: true,
+            netAmount: true,
             purchase: {
               select: {
                 id: true,
@@ -263,15 +269,24 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
       vat: number;
     }
   >();
+  // A discounted line values each delivery from the ones before it, even
+  // those in an earlier period.
+  const before = await receivedBefore(
+    prisma,
+    organizationId,
+    receipts.filter((r) => isDiscountedLine(r.purchaseItem)).map((r) => r.purchaseItem!.id),
+  );
   for (const receipt of receipts) {
     const item = receipt.purchaseItem;
     const qty = signedToMilli(receipt.quantity);
     if (!item || qty === 0) continue;
-    // Returns carry a negative quantity; priced exactly as the books price them.
-    const sign = qty < 0 ? -1 : 1;
-    const amounts = calculateLine({
-      quantity: milliToString(Math.abs(qty)),
-      unitPrice: (receipt.unitCost ?? item.unitCost).toString(),
+    // Returns carry a negative quantity; priced exactly as the books price
+    // them, after any purchase discounts (lib/inventory/purchase-value.ts).
+    const valued = movementValue({
+      line: item,
+      movementMilli: qty,
+      receivedBeforeMilli: before.get(receipt.id) ?? 0,
+      unitCost: (receipt.unitCost ?? item.unitCost).toString(),
       taxRate: item.taxRate?.toString() ?? defaultRate,
     });
     const purchase = item.purchase;
@@ -284,8 +299,8 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
       net: 0,
       vat: 0,
     };
-    entry.net += sign * amounts.lineTotalFils;
-    entry.vat += sign * amounts.taxFils;
+    entry.net += valued.netFils;
+    entry.vat += valued.taxFils;
     entry.date = receipt.createdAt;
     byPurchase.set(purchase.id, entry);
   }

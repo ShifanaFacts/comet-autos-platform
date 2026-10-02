@@ -30,6 +30,7 @@ function describe(preview: MergePreview) {
     [preview.quotations, 'quotation'],
     [preview.invoices, 'invoice'],
     [preview.creditNotes, 'credit note'],
+    [preview.advances, 'customer advance'],
     [preview.appointments, 'appointment'],
   ] as const;
   const text = parts

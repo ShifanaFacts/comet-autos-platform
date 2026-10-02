@@ -19,6 +19,7 @@ import {
 } from '@/components/inventory/purchase-form';
 import { createScannedPurchaseAction } from '@/app/(app)/inventory/actions';
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
+import type { ReceiptOptions } from '@/components/inventory/receipt-settlement';
 import type { BillDraft } from '@/lib/bill-reader/read';
 import type { ActionResult } from '@/lib/errors';
 
@@ -61,6 +62,7 @@ export function ScanPurchase({
   initial,
   canReceive,
   cancelHref,
+  receipt,
 }: {
   /** The usual create action, used when nothing was scanned. */
   action: (prev: ActionResult, formData: FormData) => Promise<ActionResult>;
@@ -72,6 +74,8 @@ export function ScanPurchase({
   initial?: PurchaseFormInitial;
   canReceive: boolean;
   cancelHref: string;
+  /** Paying the supplier as the goods are received. */
+  receipt?: ReceiptOptions;
 }) {
   const router = useRouter();
   const { phase, scan, reset } = useBillScan('purchase');
@@ -85,6 +89,7 @@ export function ScanPurchase({
     isNew: true,
     canReceive,
     cancelHref,
+    receipt,
   };
 
   if (!scanned) {

@@ -53,6 +53,12 @@ export const SYSTEM_ACCOUNTS: SystemAccount[] = [
   { role: 'INVENTORY', code: '1200', name: 'Inventory — spare parts', type: 'ASSET' },
   { role: 'VAT_INPUT', code: '1300', name: 'Input VAT recoverable', type: 'ASSET' },
   { role: 'ACCOUNTS_PAYABLE', code: '2000', name: 'Trade payables', type: 'LIABILITY' },
+  {
+    role: 'CUSTOMER_ADVANCES',
+    code: '2030',
+    name: 'Customer advances (unearned revenue)',
+    type: 'LIABILITY',
+  },
   { role: 'VAT_OUTPUT', code: '2100', name: 'Output VAT payable', type: 'LIABILITY' },
   { role: 'VAT_SETTLEMENT', code: '2105', name: 'VAT due to FTA', type: 'LIABILITY' },
   { role: 'SALARIES_PAYABLE', code: '2200', name: 'Salaries & wages payable', type: 'LIABILITY' },
@@ -97,7 +103,6 @@ export const STANDARD_ACCOUNTS: ChartAccount[] = [
   // Liabilities
   { code: '2010', name: 'Accrued expenses', type: 'LIABILITY' },
   { code: '2020', name: 'Post-dated cheques issued (PDC payable)', type: 'LIABILITY' },
-  { code: '2030', name: 'Customer advances (unearned revenue)', type: 'LIABILITY' },
   { code: '2110', name: 'Corporate tax payable', type: 'LIABILITY' },
   { code: '2500', name: 'Provision for end-of-service benefits', type: 'LIABILITY' },
   { code: '2510', name: 'Bank loans', type: 'LIABILITY' },

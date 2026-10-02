@@ -682,7 +682,7 @@ function AccountSelect({
  * A discount box: the value, and a switch between a percentage and an AED
  * amount beside it. Blank means no discount.
  */
-function DiscountInput({
+export function DiscountInput({
   label,
   type,
   value,

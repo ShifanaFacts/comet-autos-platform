@@ -3,9 +3,12 @@ import { notFound } from 'next/navigation';
 import { PackageCheck, Pencil } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
-import { getPurchaseDetail } from '@/lib/inventory/purchases';
+import { canPayOnReceipt, getPurchaseDetail } from '@/lib/inventory/purchases';
+import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
+import { getAccountChoices } from '@/lib/accounting/reports';
+import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
 import { formatCalendarDate, formatDateTime, formatMoney } from '@/lib/format';
-import { formatMilli, signedToMilli } from '@/lib/money';
+import { formatMilli, signedToMilli, toFils } from '@/lib/money';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LinkButton } from '@/components/shared/link-button';
@@ -34,7 +37,15 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
     if (error instanceof NotFoundError) notFound();
     throw error;
   }
-  const { purchase, lines, receivedValue, receipts } = detail;
+  const { purchase, lines, receivedValue, receipts, paid, owed, linesGross, discountTotal } =
+    detail;
+  const hasDiscount = toFils(discountTotal) > 0;
+  const billDiscount = toFils(purchase.billDiscountAmount.toString());
+  // A reversal and the payment it reversed are not payments.
+  const reversed = new Set(
+    purchase.supplierPayments.map((payment) => payment.reversalOfSupplierPaymentId).filter(Boolean),
+  );
+  const payments = purchase.supplierPayments.filter((payment) => !payment.reversalOfSupplierPaymentId);
   const bills = (await listAttachments(user, 'Purchase', [purchase.id])).get(purchase.id) ?? [];
   const receivable = ['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED'].includes(purchase.status);
   const canReceive =
@@ -46,6 +57,13 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
   const canCancel =
     purchase.status === 'DRAFT' &&
     hasPermission(user, 'purchase.delete', { branchId: purchase.branchId });
+  const canPay = canReceive && canPayOnReceipt(user);
+  const [modes, accounts] = canPay
+    ? await Promise.all([
+        getPaymentModeOptions(user.organizationId, 'spending'),
+        getAccountChoices(user),
+      ])
+    : [[], null];
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -78,6 +96,7 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
             {purchase.supplierInvoiceDate
               ? ` · ${formatCalendarDate(purchase.supplierInvoiceDate)}`
               : ''}
+            {purchase.dueDate ? ` · due ${formatCalendarDate(purchase.dueDate)}` : ''}
           </>
         }
         actions={
@@ -110,12 +129,18 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {formatMoney(purchase.subtotal ?? 0)} + VAT {formatMoney(purchase.taxAmount ?? 0)}
+            {hasDiscount ? ` · after ${formatMoney(discountTotal)} discount` : ''}
           </p>
         </Panel>
         <Panel>
-          <p className="text-sm text-muted-foreground">Received so far</p>
-          <p className="mt-2 text-2xl font-semibold tabular-nums">{formatMoney(receivedValue)}</p>
-          <p className="mt-1 text-xs text-muted-foreground">Cost + VAT of quantities received</p>
+          <p className="text-sm text-muted-foreground">Still owed to the supplier</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums">{formatMoney(owed)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {formatMoney(receivedValue)} received (cost + VAT) · {formatMoney(paid)} paid
+            {purchase.dueDate && toFils(owed) > 0
+              ? ` · due ${formatCalendarDate(purchase.dueDate)}`
+              : ''}
+          </p>
         </Panel>
         <Panel>
           <p className="text-sm text-muted-foreground">Entered</p>
@@ -153,6 +178,12 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
               // Remount after each receipt so every line defaults to what is still outstanding.
               key={lines.map((line) => line.receivedMilli).join(':')}
               purchaseId={purchase.id}
+              receipt={{
+                modes,
+                moneyAccounts: accounts?.money ?? [],
+                canPay,
+                canUpdateCost: hasPermission(user, 'inventory.create'),
+              }}
               lines={lines.map((line) => ({
                 id: line.id,
                 sku: line.part.sku,
@@ -177,6 +208,7 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
                   <TableHead className="text-right">Ordered</TableHead>
                   <TableHead className="text-right">Received</TableHead>
                   <TableHead className="text-right">Unit cost</TableHead>
+                  {hasDiscount ? <TableHead className="text-right">Discount</TableHead> : null}
                   <TableHead className="text-right">VAT</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                 </TableRow>
@@ -215,6 +247,18 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
                     <TableCell className="text-right tabular-nums">
                       {formatMoney(line.unitCost)}
                     </TableCell>
+                    {hasDiscount ? (
+                      <TableCell className="text-right tabular-nums">
+                        {toFils(line.amounts.discountAmount) > 0
+                          ? `−${formatMoney(line.amounts.discountAmount)}`
+                          : '—'}
+                        {line.amounts.discountType === 'PERCENT' && line.amounts.discountValue ? (
+                          <span className="block text-xs text-muted-foreground">
+                            {`${Number(line.amounts.discountValue)}%`}
+                          </span>
+                        ) : null}
+                      </TableCell>
+                    ) : null}
                     <TableCell className="text-right tabular-nums">
                       {line.amounts.taxAmount}{' '}
                       <span className="text-xs text-muted-foreground">
@@ -222,15 +266,35 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
                       </span>
                     </TableCell>
                     <TableCell className="text-right font-medium tabular-nums">
-                      {formatMoney(line.amounts.lineTotal)}
+                      {formatMoney(line.amounts.net)}
+                      {billDiscount > 0 && line.amounts.net !== line.amounts.lineTotal ? (
+                        <span className="block text-xs font-normal text-muted-foreground">
+                          after its share of the bill discount
+                        </span>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-          <dl className="ml-auto grid max-w-xs grid-cols-2 gap-y-1.5 border-t border-border p-4 text-sm sm:p-6">
-            <dt className="text-muted-foreground">Subtotal</dt>
+          <dl className="ml-auto grid max-w-sm grid-cols-[1fr_auto] gap-x-6 gap-y-1.5 border-t border-border p-4 text-sm sm:p-6">
+            {hasDiscount ? (
+              <>
+                <dt className="text-muted-foreground">Lines subtotal</dt>
+                <dd className="text-right tabular-nums">{formatMoney(linesGross)}</dd>
+                <dt className="text-muted-foreground">
+                  Discount
+                  {billDiscount > 0
+                    ? ` (incl. ${formatMoney(purchase.billDiscountAmount)} on the whole bill${purchase.billDiscountType === 'PERCENT' && purchase.billDiscountValue ? `, ${Number(purchase.billDiscountValue)}%` : ''})`
+                    : ''}
+                </dt>
+                <dd className="text-right tabular-nums">−{formatMoney(discountTotal)}</dd>
+              </>
+            ) : null}
+            <dt className="text-muted-foreground">
+              {hasDiscount ? 'Subtotal after discount' : 'Subtotal'}
+            </dt>
             <dd className="text-right tabular-nums">{formatMoney(purchase.subtotal ?? 0)}</dd>
             <dt className="text-muted-foreground">VAT</dt>
             <dd className="text-right tabular-nums">{formatMoney(purchase.taxAmount ?? 0)}</dd>
@@ -238,9 +302,53 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
             <dd className="text-right font-semibold tabular-nums">
               {formatMoney(purchase.totalAmount ?? 0)}
             </dd>
+            {toFils(paid) > 0 ? (
+              <>
+                <dt className="text-muted-foreground">Paid</dt>
+                <dd className="text-right tabular-nums">−{formatMoney(paid)}</dd>
+                <dt className="font-semibold">Still owed</dt>
+                <dd className="text-right font-semibold tabular-nums">{formatMoney(owed)}</dd>
+              </>
+            ) : null}
           </dl>
+          {hasDiscount ? (
+            <p className="border-t border-border px-4 py-3 text-xs text-muted-foreground sm:px-6">
+              The supplier’s discount lowers what these parts cost and the VAT claimed back. Stock is
+              valued at the cost after discount.
+            </p>
+          ) : null}
         </Panel>
       </Section>
+
+      {payments.length > 0 && hasPermission(user, 'supplier_payment.view') ? (
+        <Section
+          title="Payments to the supplier"
+          description="Money paid against this purchase, whether as the goods arrived or later from Suppliers owed."
+        >
+          <Panel padding="none">
+            <ul className="divide-y divide-border">
+              {payments.map((payment) => {
+                const isReversed = reversed.has(payment.id) || payment.status !== 'COMPLETED';
+                return (
+                  <li
+                    key={payment.id}
+                    className="flex flex-col gap-0.5 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-6"
+                  >
+                    <span
+                      className={isReversed ? 'text-muted-foreground line-through' : 'font-medium'}
+                    >
+                      {`${formatMoney(payment.amount.toString())} · ${PAYMENT_METHOD_LABEL[payment.method]}`}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {`${payment.supplierPaymentNumber ?? ''} · ${formatDateTime(payment.paidAt)} · ${payment.paidBy.fullName}${payment.referenceNumber ? ` · ref ${payment.referenceNumber}` : ''}${isReversed ? ' · reversed' : ''}`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </Panel>
+        </Section>
+      ) : null}
 
       <Section
         title="Stock received"

@@ -439,6 +439,9 @@ function invoiceModel(invoice: InvoiceRecord, seller: DocumentSeller): CustomerD
       ...(toFils(balance.credited) > 0
         ? [{ label: 'Credit notes', amount: filsToString(-toFils(balance.credited)) }]
         : []),
+      ...(toFils(balance.advanceApplied) > 0
+        ? [{ label: 'Advance applied', amount: filsToString(-toFils(balance.advanceApplied)) }]
+        : []),
       { label: 'Amount paid', amount: balance.paid },
       { label: 'Balance due', amount: balance.balance, emphasis: 'balance' },
     ],

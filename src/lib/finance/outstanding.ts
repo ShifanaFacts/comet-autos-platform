@@ -7,6 +7,7 @@ import { invoiceBalance } from '@/lib/billing/invoice';
 import {
   PURCHASE_BALANCE_SELECT,
   RECEIVED_PURCHASE_STATUSES as RECEIVED_STATUSES,
+  payableAge,
   purchaseBalance,
 } from '@/lib/finance/supplier-balance';
 import { resolveDefaultVatRate } from '@/lib/tax';
@@ -91,6 +92,7 @@ export async function getCustomerOutstanding(
       status: true,
       totalAmount: true,
       creditedAmount: true,
+      advanceAppliedAmount: true,
       customer: { select: { id: true, name: true, phone: true } },
       jobCard: { select: { id: true, jobNumber: true } },
       payments: {
@@ -170,6 +172,7 @@ export async function getSupplierOutstanding(
       purchaseNumber: true,
       supplierInvoiceNumber: true,
       supplierInvoiceDate: true,
+      dueDate: true,
       createdAt: true,
       status: true,
       supplier: { select: { id: true, name: true, phone: true } },
@@ -194,7 +197,8 @@ export async function getSupplierOutstanding(
         balance: money.balance,
         balanceFils: money.balanceFils,
         state: money.state,
-        ageDays: ageInDays(date),
+        // Aged from the due date when the supplier gave one.
+        ...payableAge(date, purchase.dueDate),
       };
     })
     .filter((row) => row.balanceFils > 0)

@@ -7,7 +7,9 @@
  *  - never handed over without an invoice;
  *  - one check-in opens a job card for each of a customer's vehicles, each
  *    with its own mileage and, when it differs, its own work — and refuses
- *    another customer's vehicle or the same vehicle twice, opening nothing.
+ *    another customer's vehicle or the same vehicle twice, opening nothing;
+ *  - a job entered after the fact opens on the day the vehicle arrived,
+ *    never in the future, and never winds the odometer back.
  *
  * Every record is made in a throwaway test organization.
  *
@@ -133,6 +135,43 @@ describe("checking in several of a customer's vehicles", () => {
       await prisma.jobCard.count({ where: { vehicleId: vehicleIds[3] } }),
       0,
       'the first vehicle was not checked in either',
+    );
+  });
+});
+
+describe('a job entered after the fact', () => {
+  test('opens on the day the vehicle really arrived, with an older mileage', async () => {
+    // A reading recorded since: the old job's lower mileage is still accepted.
+    await prisma.vehicle.update({ where: { id: vehicleIds[3] }, data: { lastMileage: 80000 } });
+    const { jobCardId } = await checkInVehicle(a.owner, {
+      mode: 'existing',
+      vehicleId: vehicleIds[3],
+      visit: {
+        complaint: 'Brake pads',
+        mileage: '75000',
+        arrivedOn: '2026-09-24',
+        arrivedAt: '08:15',
+      },
+    });
+    const job = await prisma.jobCard.findUniqueOrThrow({ where: { id: jobCardId } });
+    assert.equal(job.openedAt.toISOString(), '2026-09-24T04:15:00.000Z', '08:15 Dubai time');
+    assert.equal(job.odometerReading, 75000);
+    const history = await prisma.jobStatusHistory.findFirstOrThrow({
+      where: { jobCardId, toStatus: 'ARRIVED' },
+    });
+    assert.equal(history.changedAt.toISOString(), job.openedAt.toISOString());
+    const vehicle = await prisma.vehicle.findUniqueOrThrow({ where: { id: vehicleIds[3] } });
+    assert.equal(vehicle.lastMileage, 80000, 'the odometer never goes backwards');
+  });
+
+  test('never in the future', async () => {
+    await expectDomainError(
+      checkInVehicle(a.owner, {
+        mode: 'existing',
+        vehicleId: otherCustomersVehicleId,
+        visit: { complaint: 'Service', arrivedOn: '2999-01-01' },
+      }),
+      /future/,
     );
   });
 });

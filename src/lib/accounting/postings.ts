@@ -3,7 +3,7 @@ import type { AccountRole, JournalSource } from '@/generated/prisma/enums';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { milliToString, multiplyQuantity, signedToMilli, toFils } from '@/lib/money';
 import { withNetQuantities } from '@/lib/inventory/stock';
-import { purchaseLineAmounts } from '@/lib/inventory/purchases';
+import { movementValue, receivedBefore } from '@/lib/inventory/purchase-value';
 import { getVatSettings, resolveDefaultVatRate } from '@/lib/tax';
 import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
 
@@ -82,6 +82,19 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  *   Dr Output VAT payable             the VAT
  *   Cr Trade receivables              the total
  *   its refund, on the day paid       Dr Trade receivables / Cr the account paid from
+ *
+ * CUSTOMER ADVANCE (money paid before any invoice; nothing once cancelled)
+ *   received                          Dr the cash, bank or card account
+ *                                     Cr Customer advances
+ *   applied to an invoice             Dr Customer advances
+ *                                     Cr Trade receivables — the invoice's
+ *                                     revenue and VAT are untouched
+ *   returned to it by a credit note   Dr Trade receivables
+ *                                     Cr Customer advances
+ *   refunded                          Dr Customer advances
+ *                                     Cr the account paid from
+ *   VAT: none on the advance while its treatment awaits the accountant's
+ *   confirmation; VAT is on the invoice, as for any sale.
  *
  * FIXED ASSET
  *   bought                            Dr the asset account    its cost
@@ -361,7 +374,12 @@ const postStockMovement: Poster = async (tx, organizationId, movementId, account
       part: { select: { sku: true, name: true } },
       purchaseItem: {
         select: {
+          id: true,
+          quantityOrdered: true,
+          unitCost: true,
           taxRate: true,
+          taxAmount: true,
+          netAmount: true,
           purchase: { select: { purchaseNumber: true, supplier: { select: { name: true } } } },
         },
       },
@@ -384,14 +402,22 @@ const postStockMovement: Poster = async (tx, organizationId, movementId, account
     movement.transactionType === 'RETURN_TO_SUPPLIER'
   ) {
     // Priced exactly as the supplier balance prices it, so what is owed in
-    // the books is what the payables screen shows.
-    const rate =
-      movement.purchaseItem?.taxRate?.toString() ??
-      (await resolveDefaultVatRate(organizationId, tx));
-    const amounts = purchaseLineAmounts(quantity, movement.unitCost.toString(), rate);
+    // the books is what the payables screen shows — after any purchase
+    // discounts (lib/inventory/purchase-value.ts).
+    const line = movement.purchaseItem;
+    const rate = line?.taxRate?.toString() ?? (await resolveDefaultVatRate(organizationId, tx));
+    const before =
+      line?.netAmount !== null && line?.netAmount !== undefined
+        ? ((await receivedBefore(tx, organizationId, [line.id])).get(movementId) ?? 0)
+        : 0;
+    const { netFils: net, taxFils: vat } = movementValue({
+      line,
+      movementMilli: milli,
+      receivedBeforeMilli: before,
+      unitCost: movement.unitCost.toString(),
+      taxRate: rate,
+    });
     const recoverable = await isVatRegistered(tx, organizationId);
-    const net = sign * amounts.lineTotalFils;
-    const vat = sign * amounts.taxFils;
     const purchase = movement.purchaseItem?.purchase;
     return {
       ...base,
@@ -461,6 +487,41 @@ const postSupplierPayment: Poster = async (tx, organizationId, paymentId, accoun
       ? `Supplier payment ${payment.reversalOf.supplierPaymentNumber ?? ''} reversed — ${to}`
       : `Supplier payment ${payment.supplierPaymentNumber ?? ''} — ${to}`,
     lines: lines.build(),
+  };
+};
+
+// ─── Money moved between the workshop's own accounts ───────────────────────
+
+/**
+ * Cash on hand into the petty-cash box, takings into the bank: the money is
+ * the workshop's either side, so nothing is earned or spent.
+ *   Dr the account it went to      Cr the account it came from
+ * A void transfer books nothing (its entry is reversed).
+ */
+const postMoneyTransfer: Poster = async (tx, organizationId, transferId) => {
+  const transfer = await tx.moneyTransfer.findFirst({
+    where: { id: transferId, organizationId },
+    select: {
+      status: true,
+      transferNumber: true,
+      amount: true,
+      transferredOn: true,
+      fromAccountId: true,
+      toAccountId: true,
+      fromAccount: { select: { accountName: true } },
+      toAccount: { select: { accountName: true } },
+    },
+  });
+  if (!transfer || transfer.status !== 'POSTED') return null;
+  const amount = fils(transfer.amount);
+  return {
+    date: transfer.transferredOn,
+    branchId: null,
+    description: `Money moved ${transfer.transferNumber}: ${transfer.fromAccount.accountName} to ${transfer.toAccount.accountName}`,
+    lines: new Lines()
+      .debit(transfer.toAccountId, amount)
+      .credit(transfer.fromAccountId, amount)
+      .build(),
   };
 };
 
@@ -654,6 +715,98 @@ const postCreditNoteRefund: Poster = async (tx, organizationId, creditNoteId, ac
   };
 };
 
+// ─── Customer advances ──────────────────────────────────────────────────────
+
+const postCustomerAdvance: Poster = async (tx, organizationId, advanceId, accounts) => {
+  const advance = await tx.customerAdvance.findFirst({
+    where: { id: advanceId, organizationId },
+    select: {
+      status: true,
+      advanceNumber: true,
+      branchId: true,
+      amount: true,
+      receivedOn: true,
+      method: true,
+      accountId: true,
+      vatTreatment: true,
+      customer: { select: { name: true } },
+    },
+  });
+  if (!advance || advance.status === 'CANCELLED') return null;
+  if (advance.vatTreatment === 'VAT_ON_RECEIPT') {
+    // Not switched on until the accountant confirms it: never book a guess.
+    throw new Error('VAT on receipt of customer advances is not enabled.');
+  }
+  const amount = fils(advance.amount);
+  const moneyAccount = advance.accountId ?? accounts[METHOD_ACCOUNT_ROLE[advance.method]];
+  return {
+    date: advance.receivedOn,
+    branchId: advance.branchId,
+    description: `Customer advance ${advance.advanceNumber} received — ${advance.customer.name}`,
+    lines: new Lines()
+      .debit(moneyAccount, amount)
+      .credit(accounts.CUSTOMER_ADVANCES, amount)
+      .build(),
+  };
+};
+
+const postAdvanceAllocation: Poster = async (tx, organizationId, allocationId, accounts) => {
+  const allocation = await tx.customerAdvanceAllocation.findFirst({
+    where: { id: allocationId, organizationId },
+    select: {
+      amount: true,
+      allocatedOn: true,
+      reversedAt: true,
+      advance: { select: { advanceNumber: true, branchId: true } },
+      invoice: { select: { invoiceNumber: true, customerName: true } },
+      creditNote: { select: { creditNoteNumber: true } },
+    },
+  });
+  if (!allocation || allocation.reversedAt) return null;
+  // Signed: above zero applies the advance, below zero returns money to it.
+  const amount = fils(allocation.amount);
+  const who = allocation.invoice.customerName ? ` — ${allocation.invoice.customerName}` : '';
+  return {
+    date: allocation.allocatedOn,
+    branchId: allocation.advance.branchId,
+    description: allocation.creditNote
+      ? `Returned to customer advance ${allocation.advance.advanceNumber} from ${allocation.invoice.invoiceNumber} by credit note ${allocation.creditNote.creditNoteNumber}${who}`
+      : `Customer advance ${allocation.advance.advanceNumber} applied to ${allocation.invoice.invoiceNumber}${who}`,
+    lines: new Lines()
+      .debit(accounts.CUSTOMER_ADVANCES, amount)
+      .credit(accounts.ACCOUNTS_RECEIVABLE, amount)
+      .build(),
+  };
+};
+
+const postAdvanceRefund: Poster = async (tx, organizationId, refundId, accounts) => {
+  const refund = await tx.customerAdvanceRefund.findFirst({
+    where: { id: refundId, organizationId },
+    select: {
+      amount: true,
+      refundedOn: true,
+      method: true,
+      accountId: true,
+      reversedAt: true,
+      advance: {
+        select: { advanceNumber: true, branchId: true, customer: { select: { name: true } } },
+      },
+    },
+  });
+  if (!refund || refund.reversedAt) return null;
+  const amount = fils(refund.amount);
+  const moneyAccount = refund.accountId ?? accounts[METHOD_ACCOUNT_ROLE[refund.method]];
+  return {
+    date: refund.refundedOn,
+    branchId: refund.advance.branchId,
+    description: `Customer advance ${refund.advance.advanceNumber} refunded — ${refund.advance.customer.name}`,
+    lines: new Lines()
+      .debit(accounts.CUSTOMER_ADVANCES, amount)
+      .credit(moneyAccount, amount)
+      .build(),
+  };
+};
+
 // ─── Fixed assets ───────────────────────────────────────────────────────────
 
 const postFixedAsset: Poster = async (tx, organizationId, assetId, accounts) => {
@@ -783,4 +936,8 @@ export const POSTING_RULES: Record<
   DEPRECIATION: postDepreciation,
   ASSET_DISPOSAL: postAssetDisposal,
   OWNER_REIMBURSEMENT: postOwnerReimbursement,
+  MONEY_TRANSFER: postMoneyTransfer,
+  CUSTOMER_ADVANCE: postCustomerAdvance,
+  CUSTOMER_ADVANCE_ALLOCATION: postAdvanceAllocation,
+  CUSTOMER_ADVANCE_REFUND: postAdvanceRefund,
 };

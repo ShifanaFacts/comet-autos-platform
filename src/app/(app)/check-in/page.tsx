@@ -5,6 +5,7 @@ import { getVehicleSummaries, type VehicleSummary } from '@/lib/vehicles/summary
 import { getOpenAppointment } from '@/lib/appointments/service';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { LinkButton } from '@/components/shared/link-button';
+import { localDateString } from '@/lib/format';
 import { CheckInForm, type AppointmentContext } from './check-in-form';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -63,7 +64,11 @@ export default async function CheckInPage({
         }
       />
       <Panel className="w-full sm:p-8">
-        <CheckInForm initialVehicle={vehicle ?? null} initialAppointment={appointment} />
+        <CheckInForm
+          initialVehicle={vehicle ?? null}
+          initialAppointment={appointment}
+          today={localDateString()}
+        />
       </Panel>
     </Stack>
   );

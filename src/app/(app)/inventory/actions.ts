@@ -105,6 +105,8 @@ export async function createPurchaseAction(
   const id = result.data?.id ?? (result.duplicate ? result.duplicateOf : null);
   if (!result.ok || !id) return toClientResult(result);
   refreshInventory();
+  revalidatePath('/finance/payables', 'layout');
+  revalidatePath('/finance/money', 'layout');
   redirect(`/inventory/purchases/${id}`);
 }
 
@@ -160,8 +162,23 @@ export async function receivePurchaseAction(
     if (key.startsWith('line:')) quantities[key.slice(5)] = value;
   }
   const result = await runAction(() =>
-    receivePurchase(user, purchaseId, quantities, { requestKey: input.requestKey }),
+    receivePurchase(user, purchaseId, quantities, {
+      requestKey: input.requestKey,
+      payment: input.payment,
+      payAmount: input.payAmount,
+      method: input.method,
+      accountId: input.accountId,
+      payReference: input.payReference,
+      dueDate: input.dueDate,
+      updateCostPrice: input.updateCostPrice,
+    }),
   );
+  if (result.ok) {
+    // Paid now: the supplier screens change too.
+    revalidatePath('/finance/payables', 'layout');
+    revalidatePath('/finance/outstanding');
+    revalidatePath('/finance/money', 'layout');
+  }
   if (result.ok) refreshInventory();
   const client = toClientResult(result);
   // Line errors are keyed by purchase line id; surface them on the matching input.

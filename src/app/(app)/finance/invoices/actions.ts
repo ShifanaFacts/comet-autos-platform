@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma';
 import { createDirectInvoice } from '@/lib/billing/direct-invoice';
 import { recordInvoicePayment } from '@/lib/billing/invoice';
 import { reverseInvoicePayment, updateInvoice, voidInvoice } from '@/lib/billing/invoice-changes';
+import { getHeldAdvances, type HeldAdvances } from '@/lib/billing/advances';
 
 /*
  * Invoices as documents in their own right. Both actions call the shared
@@ -33,6 +34,13 @@ async function refreshInvoice(invoiceId: string) {
     revalidatePath(`/job-cards/${invoice.jobCardId}`, 'layout');
     revalidatePath('/job-cards');
   }
+}
+
+/** The customer's advances with money left, for the new invoice form (null: not allowed). */
+export async function heldAdvancesAction(customerId: string): Promise<HeldAdvances | null> {
+  const user = await requireUser();
+  if (!/^[0-9a-f-]{36}$/i.test(customerId)) return null;
+  return getHeldAdvances(user, customerId);
 }
 
 export async function createDirectInvoiceAction(

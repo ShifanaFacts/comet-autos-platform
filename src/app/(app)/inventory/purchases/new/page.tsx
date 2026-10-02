@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
-import { getPurchaseFormOptions } from '@/lib/inventory/purchases';
+import { canPayOnReceipt, getPurchaseFormOptions } from '@/lib/inventory/purchases';
+import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
+import { getAccountChoices } from '@/lib/accounting/reports';
 import { localDateString } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { ScanPurchase } from '@/components/inventory/scan-purchase';
@@ -14,6 +16,13 @@ export default async function NewPurchasePage({
   const user = await requireUser();
   const { supplier } = await searchParams;
   const options = await getPurchaseFormOptions(user);
+  const canPay = canPayOnReceipt(user);
+  const [modes, accounts] = canPay
+    ? await Promise.all([
+        getPaymentModeOptions(user.organizationId, 'spending'),
+        getAccountChoices(user),
+      ])
+    : [[], null];
   const preselected = options.suppliers.some((s) => s.id === supplier) ? supplier! : '';
 
   return (
@@ -51,6 +60,12 @@ export default async function NewPurchasePage({
           }
           canReceive={hasPermission(user, 'purchase.approve')}
           cancelHref="/inventory/purchases"
+          receipt={{
+            modes,
+            moneyAccounts: accounts?.money ?? [],
+            canPay,
+            canUpdateCost: hasPermission(user, 'inventory.create'),
+          }}
         />
       </Panel>
     </Stack>

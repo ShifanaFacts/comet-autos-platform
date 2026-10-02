@@ -247,7 +247,8 @@ export interface EntrySource {
   href: string | null;
 }
 
-async function sourceLinks(
+/** The screen behind each entry's record, for linking from the ledger and money pages. */
+export async function sourceLinks(
   organizationId: string,
   entries: { sourceType: JournalSource; sourceId: string | null }[],
 ) {
@@ -261,6 +262,21 @@ async function sourceLinks(
       })
     : [];
   const invoiceOfPayment = new Map(payments.map((p) => [p.id, p.invoiceId]));
+  // An application or refund of an advance opens the advance it belongs to.
+  const [allocations, refunds] = await Promise.all(
+    (['CUSTOMER_ADVANCE_ALLOCATION', 'CUSTOMER_ADVANCE_REFUND'] as const).map((type) => {
+      const ids = entries
+        .filter((e) => e.sourceType === type && e.sourceId)
+        .map((e) => e.sourceId!);
+      if (!ids.length) return Promise.resolve([] as { id: string; advanceId: string }[]);
+      const where = { organizationId, id: { in: ids } };
+      const select = { id: true, advanceId: true };
+      return type === 'CUSTOMER_ADVANCE_ALLOCATION'
+        ? prisma.customerAdvanceAllocation.findMany({ where, select })
+        : prisma.customerAdvanceRefund.findMany({ where, select });
+    }),
+  );
+  const advanceOf = new Map([...allocations, ...refunds].map((row) => [row.id, row.advanceId]));
   return (source: JournalSource, id: string | null): EntrySource => {
     const href = !id
       ? null
@@ -284,7 +300,15 @@ async function sourceLinks(
                       ? '/finance/fixed-assets'
                       : source === 'VAT_FILING' || source === 'VAT_PAYMENT'
                         ? '/finance/vat'
-                        : null;
+                        : source === 'MONEY_TRANSFER'
+                          ? '/finance/money/transfers'
+                          : source === 'CUSTOMER_ADVANCE'
+                            ? `/finance/advances/${id}`
+                            : (source === 'CUSTOMER_ADVANCE_ALLOCATION' ||
+                                  source === 'CUSTOMER_ADVANCE_REFUND') &&
+                                advanceOf.get(id)
+                              ? `/finance/advances/${advanceOf.get(id)}`
+                              : null;
     return { type: source, id, href };
   };
 }
