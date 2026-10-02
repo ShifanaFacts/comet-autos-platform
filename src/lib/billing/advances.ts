@@ -343,106 +343,203 @@ export async function applyCustomerAdvance(
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'advance.apply');
-    const invoice = await lockInvoice(tx, user.organizationId, input.invoiceId);
-    requirePermission(user, 'customer_advance.edit', { branchId: invoice.branchId });
-    const advance = await lockAdvance(tx, user.organizationId, advanceId);
-
-    if (advance.status === 'CANCELLED') throw new DomainError('This advance is cancelled.');
-    if (invoice.customerId !== advance.customerId) {
-      throw new DomainError('That invoice is for a different customer.', 'invoiceId');
-    }
-    if (invoice.invoiceType === 'PROFORMA') {
-      throw new DomainError(
-        'A pro-forma invoice is not owed. Apply it to the tax invoice.',
-        'invoiceId',
-      );
-    }
-    if (invoice.status === 'PAID')
-      throw new DomainError('That invoice is already fully paid.', 'invoiceId');
-    if (invoice.status !== 'ISSUED' && invoice.status !== 'PARTIALLY_PAID') {
-      throw new DomainError('That invoice cannot be settled.', 'invoiceId');
-    }
-    const left = advanceFigures(advance).left;
-    if (amount > left) {
-      throw new DomainError(`Only ${filsToString(left)} is left on this advance.`, 'amount');
-    }
-    const paid = paidFils(invoice.payments);
-    const due = dueFils(invoice, paid);
-    if (amount > due) {
-      throw new DomainError(
-        `Only ${filsToString(due)} is due on ${invoice.invoiceNumber}.`,
-        'amount',
-      );
-    }
-    if (applied.day < dayOf(advance.receivedOn)) {
-      throw new DomainError('It cannot be applied before the advance was received.', 'allocatedOn');
-    }
-    if (applied.day < dayOf(invoice.issueDate)) {
-      throw new DomainError('It cannot be applied before the invoice was issued.', 'allocatedOn');
-    }
-
-    const allocation = await tx.customerAdvanceAllocation.create({
-      data: {
-        organizationId: user.organizationId,
-        advanceId: advance.id,
-        invoiceId: invoice.id,
-        amount: filsToString(amount),
-        allocatedOn: applied.date,
-        createdByUserId: user.id,
-      },
-      select: { id: true },
+    const result = await applyAdvanceInTransaction(tx, user, {
+      advanceId,
+      invoiceId: input.invoiceId,
+      amountFils: amount,
+      applied,
     });
-    const advanceAppliedAmount = filsToString(
-      toFils(invoice.advanceAppliedAmount.toString()) + amount,
-    );
-    const status = settlementStatus({ ...invoice, advanceAppliedAmount }, paid);
-    await tx.invoice.update({ where: { id: invoice.id }, data: { advanceAppliedAmount, status } });
-    await syncPosting(
-      tx,
-      user.organizationId,
-      'CUSTOMER_ADVANCE_ALLOCATION',
-      allocation.id,
-      user.id,
-    );
-    const advanceStatus = await refreshAdvanceStatus(tx, advance.id);
-
-    if (
-      status === 'PAID' &&
-      invoice.jobCard &&
-      normalizeStatus(invoice.jobCard.status) === 'INVOICED'
-    ) {
-      await applyJobStatusChange(tx, {
-        organizationId: user.organizationId,
-        jobCardId: invoice.jobCard.id,
-        toStatus: 'PAID',
-        actor: { userId: user.id },
-        source: 'workflow',
-        metadata: { invoiceId: invoice.id, advanceId: advance.id },
-      });
-    }
-    await writeAuditLog(tx, {
-      organizationId: user.organizationId,
-      branchId: invoice.branchId,
-      actorUserId: user.id,
-      action: 'customer_advance.applied',
-      entityType: 'CustomerAdvanceAllocation',
-      entityId: allocation.id,
-      afterData: {
-        advanceNumber: advance.advanceNumber,
-        invoiceNumber: invoice.invoiceNumber,
-        amount: filsToString(amount),
-        allocatedOn: applied.day,
-        invoiceStatus: status,
-        invoiceBalanceAfter: filsToString(due - amount),
-        advanceLeftAfter: filsToString(left - amount),
-        advanceStatus,
-      },
-      metadata: { advanceId: advance.id, invoiceId: invoice.id },
-    });
-    await settleRequestKey(tx, user, rawInput, allocation.id);
-    return { allocationId: allocation.id, invoiceId: invoice.id, advanceId: advance.id };
+    await settleRequestKey(tx, user, rawInput, result.allocationId);
+    return result;
   });
 }
+
+/**
+ * The rules of applying an advance, inside a transaction the caller holds —
+ * shared by applying one from the advance or invoice screens and applying
+ * the customer's advances as a new invoice is issued, so both follow exactly
+ * the same rules.
+ */
+async function applyAdvanceInTransaction(
+  tx: Tx,
+  user: AuthenticatedUser,
+  input: {
+    advanceId: string;
+    invoiceId: string;
+    amountFils: number;
+    applied: { day: string; date: Date };
+  },
+) {
+  const { advanceId, applied } = input;
+  const amount = input.amountFils;
+  const invoice = await lockInvoice(tx, user.organizationId, input.invoiceId);
+  requirePermission(user, 'customer_advance.edit', { branchId: invoice.branchId });
+  const advance = await lockAdvance(tx, user.organizationId, advanceId);
+
+  if (advance.status === 'CANCELLED') throw new DomainError('This advance is cancelled.');
+  if (invoice.customerId !== advance.customerId) {
+    throw new DomainError('That invoice is for a different customer.', 'invoiceId');
+  }
+  if (invoice.invoiceType === 'PROFORMA') {
+    throw new DomainError(
+      'A pro-forma invoice is not owed. Apply it to the tax invoice.',
+      'invoiceId',
+    );
+  }
+  if (invoice.status === 'PAID')
+    throw new DomainError('That invoice is already fully paid.', 'invoiceId');
+  if (invoice.status !== 'ISSUED' && invoice.status !== 'PARTIALLY_PAID') {
+    throw new DomainError('That invoice cannot be settled.', 'invoiceId');
+  }
+  const left = advanceFigures(advance).left;
+  if (amount > left) {
+    throw new DomainError(`Only ${filsToString(left)} is left on this advance.`, 'amount');
+  }
+  const paid = paidFils(invoice.payments);
+  const due = dueFils(invoice, paid);
+  if (amount > due) {
+    throw new DomainError(
+      `Only ${filsToString(due)} is due on ${invoice.invoiceNumber}.`,
+      'amount',
+    );
+  }
+  if (applied.day < dayOf(advance.receivedOn)) {
+    throw new DomainError('It cannot be applied before the advance was received.', 'allocatedOn');
+  }
+  if (applied.day < dayOf(invoice.issueDate)) {
+    throw new DomainError('It cannot be applied before the invoice was issued.', 'allocatedOn');
+  }
+
+  const allocation = await tx.customerAdvanceAllocation.create({
+    data: {
+      organizationId: user.organizationId,
+      advanceId: advance.id,
+      invoiceId: invoice.id,
+      amount: filsToString(amount),
+      allocatedOn: applied.date,
+      createdByUserId: user.id,
+    },
+    select: { id: true },
+  });
+  const advanceAppliedAmount = filsToString(
+    toFils(invoice.advanceAppliedAmount.toString()) + amount,
+  );
+  const status = settlementStatus({ ...invoice, advanceAppliedAmount }, paid);
+  await tx.invoice.update({ where: { id: invoice.id }, data: { advanceAppliedAmount, status } });
+  await syncPosting(tx, user.organizationId, 'CUSTOMER_ADVANCE_ALLOCATION', allocation.id, user.id);
+  const advanceStatus = await refreshAdvanceStatus(tx, advance.id);
+
+  if (
+    status === 'PAID' &&
+    invoice.jobCard &&
+    normalizeStatus(invoice.jobCard.status) === 'INVOICED'
+  ) {
+    await applyJobStatusChange(tx, {
+      organizationId: user.organizationId,
+      jobCardId: invoice.jobCard.id,
+      toStatus: 'PAID',
+      actor: { userId: user.id },
+      source: 'workflow',
+      metadata: { invoiceId: invoice.id, advanceId: advance.id },
+    });
+  }
+  await writeAuditLog(tx, {
+    organizationId: user.organizationId,
+    branchId: invoice.branchId,
+    actorUserId: user.id,
+    action: 'customer_advance.applied',
+    entityType: 'CustomerAdvanceAllocation',
+    entityId: allocation.id,
+    afterData: {
+      advanceNumber: advance.advanceNumber,
+      invoiceNumber: invoice.invoiceNumber,
+      amount: filsToString(amount),
+      allocatedOn: applied.day,
+      invoiceStatus: status,
+      invoiceBalanceAfter: filsToString(due - amount),
+      advanceLeftAfter: filsToString(left - amount),
+      advanceStatus,
+    },
+    metadata: { advanceId: advance.id, invoiceId: invoice.id },
+  });
+  return { allocationId: allocation.id, invoiceId: invoice.id, advanceId: advance.id };
+}
+
+/**
+ * As a new invoice is issued, in its transaction: applies up to `amountFils`
+ * of the customer's advances to it, oldest advance first, each by the usual
+ * rules. Returns how much was applied (no more than is held or due).
+ */
+export async function applyHeldAdvances(
+  tx: Tx,
+  user: AuthenticatedUser,
+  invoice: { id: string; customerId: string },
+  amountFils: number,
+) {
+  if (amountFils <= 0) return 0;
+  const advances = await tx.customerAdvance.findMany({
+    where: {
+      organizationId: user.organizationId,
+      customerId: invoice.customerId,
+      status: { in: ['OPEN', 'PARTIALLY_APPLIED'] },
+    },
+    orderBy: [{ receivedOn: 'asc' }, { createdAt: 'asc' }],
+    include: STANDING_ROWS,
+  });
+  const held = advances.reduce((sum, advance) => sum + advanceFigures(advance).left, 0);
+  if (amountFils > held) {
+    throw new DomainError(
+      `Only ${filsToString(held)} is held for this customer in advances.`,
+      'advanceAmount',
+    );
+  }
+  const today = localDateString();
+  let left = amountFils;
+  for (const advance of advances) {
+    if (left === 0) break;
+    const take = Math.min(advanceFigures(advance).left, left);
+    if (take <= 0) continue;
+    await applyAdvanceInTransaction(tx, user, {
+      advanceId: advance.id,
+      invoiceId: invoice.id,
+      amountFils: take,
+      applied: { day: today, date: parseCalendarDate(today)! },
+    });
+    left -= take;
+  }
+  return amountFils - left;
+}
+
+/**
+ * The customer's advances with money left, for a new invoice's form — or
+ * null when the user may not see advances.
+ */
+export async function getHeldAdvances(user: AuthenticatedUser, customerId: string) {
+  if (!hasPermission(user, 'customer_advance.view')) return null;
+  const advances = await prisma.customerAdvance.findMany({
+    where: {
+      organizationId: user.organizationId,
+      customerId,
+      status: { in: ['OPEN', 'PARTIALLY_APPLIED'] },
+    },
+    orderBy: [{ receivedOn: 'asc' }, { createdAt: 'asc' }],
+    include: { ...STANDING_ROWS, jobCard: { select: { jobNumber: true } } },
+  });
+  const rows = advances
+    .map((advance) => ({
+      advanceNumber: advance.advanceNumber,
+      jobNumber: advance.jobCard?.jobNumber ?? null,
+      left: advanceFigures(advance).left,
+    }))
+    .filter((row) => row.left > 0);
+  return {
+    advances: rows.map((row) => ({ ...row, left: filsToString(row.left) })),
+    total: filsToString(rows.reduce((sum, row) => sum + row.left, 0)),
+    canApply: hasPermission(user, 'customer_advance.edit'),
+  };
+}
+
+export type HeldAdvances = NonNullable<Awaited<ReturnType<typeof getHeldAdvances>>>;
 
 const reasonSchema = z.object({ reason: REASON, requestKey: z.string().optional() });
 

@@ -14,6 +14,9 @@
  *  - a credit note that over-settles an invoice gives the money back to the
  *    advance first; voiding it reapplies the money, unless it was used since;
  *  - an invoice with an advance applied can't be voided until it is undone;
+ *  - the new invoice form: the customer's advance applied as the invoice is
+ *    issued, a sale paid on the spot taking only what is left; a quotation
+ *    changed on the form billed as changed, still linked to the quotation;
  *  - the statement, the balance sheet and the unbooked count agree.
  *
  * Every record is made in a throwaway test organization.
@@ -45,6 +48,12 @@ import { voidInvoice } from '@/lib/billing/invoice-changes';
 import { createCreditNote, getCreditableInvoice, voidCreditNote } from '@/lib/billing/credit-notes';
 import { getCustomerStatement } from '@/lib/finance/statements';
 import { checkInVehicle } from '@/lib/workshop/check-in';
+import {
+  createQuotation,
+  recordCustomerDecision,
+  saveEstimateDraft,
+  sendEstimate,
+} from '@/lib/workshop/estimates';
 import { filsToString, toFils } from '@/lib/money';
 import { localDateString, toLocalDateTimeInput } from '@/lib/format';
 import { createTestOrg, expectDomainError, RUN, type TestOrg } from './support';
@@ -510,6 +519,85 @@ describe('refunds and cancelling', () => {
       applyCustomerAdvance(a.owner, spare.id, { invoiceId, amount: '1' }),
       /cancelled/,
     );
+  });
+});
+
+describe('the new invoice form', () => {
+  test('the advance applied as it is issued, and only the rest taken as payment', async () => {
+    const heldBefore = await customerAdvanceHeld(prisma, a.organizationId, customerId);
+    await receiveCustomerAdvance(a.owner, {
+      customerId,
+      amount: '100',
+      receivedOn: today(),
+      method: 'CASH',
+    });
+    // Labour 300 + VAT 15 = 315: 100 from the advance, 215 paid on the spot.
+    const { invoiceId, paymentId } = await createDirectInvoice(a.owner, {
+      customerId,
+      items: [{ itemType: 'LABOUR', description: 'Service', quantity: '1', unitPrice: '300' }],
+      applyAdvance: '1',
+      advanceAmount: '100',
+      payNow: '1',
+      paymentMethod: 'CASH',
+    });
+    const invoice = await invoiceOf(invoiceId);
+    assert.equal(invoice.taxAmount.toString(), '15', 'VAT on the full sale');
+    assert.equal(invoice.totalAmount.toString(), '315');
+    assert.equal(invoice.advanceAppliedAmount.toString(), '100');
+    assert.equal(invoice.status, 'PAID');
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId! } });
+    assert.equal(payment.amount.toString(), '215');
+    // Applied oldest advance first; 100 in and 100 out leaves what was held before.
+    assert.equal(await customerAdvanceHeld(prisma, a.organizationId, customerId), heldBefore);
+  });
+
+  test('never more than is held, nor more than the invoice', async () => {
+    await expectDomainError(
+      createDirectInvoice(a.owner, {
+        customerId,
+        items: [{ itemType: 'LABOUR', description: 'Wash', quantity: '1', unitPrice: '20' }],
+        applyAdvance: '1',
+        advanceAmount: '22',
+      }),
+      /more than the invoice total/,
+    );
+    await expectDomainError(
+      createDirectInvoice(a.owner, {
+        customerId: strangerId,
+        items: [{ itemType: 'LABOUR', description: 'Wash', quantity: '1', unitPrice: '20' }],
+        applyAdvance: '1',
+        advanceAmount: '5',
+      }),
+      /Only 0\.00 is held/,
+    );
+  });
+
+  test('a quotation changed on the form is billed as changed, still linked to it', async () => {
+    const quote = await createQuotation(a.owner, { customerId, vehicleId });
+    await saveEstimateDraft(a.owner, quote.id, {
+      validUntil: localDateString(new Date(Date.now() + 7 * 86400000)),
+      items: [{ itemType: 'LABOUR', description: 'Alignment', quantity: '1', unitPrice: '200' }],
+    });
+    await sendEstimate(a.owner, quote.id);
+    await recordCustomerDecision(a.owner, quote.id, { decision: 'APPROVED', method: 'PHONE' });
+    // Agreed on the day: 180 instead of 200, and 10% off the bill.
+    const { invoiceId } = await createDirectInvoice(a.owner, {
+      customerId,
+      estimateId: quote.id,
+      items: [{ itemType: 'LABOUR', description: 'Alignment', quantity: '1', unitPrice: '180' }],
+      discountType: 'PERCENT',
+      discount: '10',
+    });
+    const invoice = await invoiceOf(invoiceId);
+    assert.equal(invoice.subtotal.toString(), '162', '180 less 10%');
+    assert.equal(invoice.taxAmount.toString(), '8.1');
+    assert.equal(invoice.totalAmount.toString(), '170.1');
+    const issued = await prisma.auditLog.findFirstOrThrow({
+      where: { entityId: invoiceId, action: 'invoice.issued' },
+    });
+    const metadata = issued.metadata as { origin?: string; estimateId?: string };
+    assert.equal(metadata.origin, 'quotation_edited');
+    assert.equal(metadata.estimateId, quote.id);
   });
 });
 

@@ -6,6 +6,8 @@ import { prisma } from '@/lib/prisma';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { getAccountChoices } from '@/lib/accounting/reports';
 import { getCustomerOptions, type CustomerOption } from '@/lib/customers/picker';
+import { editableBill, editableLine } from '@/lib/billing/editable-lines';
+import { getHeldAdvances } from '@/lib/billing/advances';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { NewInvoiceForm, type QuotationChoice } from './invoice-form';
 
@@ -52,7 +54,10 @@ export default async function NewInvoicePage({
         customerId: true,
         vehicleId: true,
         jobCardId: true,
+        discountType: true,
+        discountValue: true,
         customer: { select: { name: true } },
+        items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
         _count: { select: { items: true } },
       },
     });
@@ -67,6 +72,9 @@ export default async function NewInvoicePage({
       customerName: estimate.customer.name,
       vehicleId: estimate.vehicleId,
       jobCardId: estimate.jobCardId,
+      // Its lines and discount, as the form edits them; billed as quoted unless changed.
+      lines: estimate.items.map((item, index) => editableLine(item, `quoted-${index}`, '0')),
+      bill: editableBill(estimate),
     };
   }
 
@@ -79,6 +87,7 @@ export default async function NewInvoicePage({
   if (customerId) {
     [initialCustomer = null] = await getCustomerOptions(user, [customerId]);
   }
+  const initialAdvances = initialCustomer ? await getHeldAdvances(user, initialCustomer.id) : null;
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -87,7 +96,7 @@ export default async function NewInvoicePage({
         title={params.pay === 'now' ? 'New sales receipt' : 'New invoice'}
         description={
           quotation
-            ? 'Billing an approved quotation — the lines and VAT are carried across as the customer saw them.'
+            ? 'Billing a quotation — its lines and discounts are filled in below. Change anything before issuing; left as they are, they are billed exactly as quoted.'
             : 'Bill a customer for work done. A job card is not needed — link one only if you want to.'
         }
       />
@@ -105,6 +114,7 @@ export default async function NewInvoicePage({
           })}
           incomeAccounts={hasPermission(user, 'accounting.view') ? accounts.income : undefined}
           moneyAccounts={accounts.money}
+          initialAdvances={initialAdvances}
         />
       </Panel>
     </Stack>

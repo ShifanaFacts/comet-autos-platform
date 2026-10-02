@@ -22,8 +22,9 @@ import {
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { emptyToNull } from '@/lib/normalize';
-import { toFils } from '@/lib/money';
-import { takePayment } from '@/lib/billing/invoice';
+import { filsToString, toFils } from '@/lib/money';
+import { dueFils, takePayment } from '@/lib/billing/invoice';
+import { applyHeldAdvances, customerAdvanceHeld } from '@/lib/billing/advances';
 import { syncPosting } from '@/lib/accounting/journal';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 import { CLOSED_JOB_STATUSES } from '@/lib/workshop/stages';
@@ -41,6 +42,14 @@ import { resolveTaxCodes } from '@/lib/accounting/tax-codes';
  * quotation he already priced into the invoice for it. Same VAT rules
  * (lib/tax + lib/money), same numbering (lib/numbering), same payment and
  * balance rules (lib/billing/invoice) — only the source of the lines differs.
+ *
+ * A quotation is billed exactly as quoted unless its lines are changed on
+ * the form; then the lines sent are priced like any typed invoice, and the
+ * invoice still records which quotation it came from.
+ *
+ * The customer's advances can be applied as it is issued (lib/billing/
+ * advances.ts, the same rules as applying one later); a sale paid on the
+ * spot then takes only what is still due.
  */
 
 const directInvoiceSchema = z.object({
@@ -49,9 +58,23 @@ const directInvoiceSchema = z.object({
   vehicleId: z.union([z.literal(''), z.uuid()]).optional(),
   /** Optional: bills an open job card, which then counts as invoiced. */
   jobCardId: z.union([z.literal(''), z.uuid()]).optional(),
-  /** Optional: copies the quotation's lines instead of typing them. */
+  /**
+   * Optional: bills a quotation. With no `items`, its lines are copied as
+   * quoted; with `items` (changed on the form), those are billed.
+   */
   estimateId: z.union([z.literal(''), z.uuid()]).optional(),
   items: z.array(lineSchema).max(100, 'An invoice can have at most 100 lines.').optional(),
+  /** "1": apply the customer's advances as the invoice is issued. */
+  applyAdvance: z.string().optional(),
+  /** How much of them; blank applies as much as is held, up to the total. */
+  advanceAmount: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || /^\d+(\.\d{1,2})?$/.test(value),
+      'Enter an amount like 250 or 250.50.',
+    ),
   /** A discount on the whole bill, after the lines' own. */
   ...discountFields,
   /** YYYY-MM-DD; blank means due on the day it is issued. */
@@ -137,6 +160,16 @@ async function linesFromEstimate(
   };
 }
 
+/** What is held for the customer in advances, up to `cap` fils. */
+async function heldUpTo(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  customerId: string,
+  cap: number,
+) {
+  return Math.min(await customerAdvanceHeld(tx, organizationId, customerId), cap);
+}
+
 export interface DirectInvoiceResult {
   invoiceId: string;
   invoiceNumber: string;
@@ -171,6 +204,10 @@ export async function createDirectInvoice(
     if (!input.paymentMethod) {
       throw new DomainError('Choose how the customer paid.', 'paymentMethod');
     }
+  }
+  const useAdvance = ON.has(input.applyAdvance ?? '');
+  if (useAdvance) {
+    requirePermission(user, 'customer_advance.edit', { branchId: user.primaryBranchId });
   }
 
   const defaultVatRate = await resolveDefaultVatRate(user.organizationId);
@@ -270,14 +307,17 @@ export async function createDirectInvoice(
       }
     }
 
+    // A quotation changed on the form is billed as changed.
+    const edited = Boolean(source) && (input.items ?? []).length > 0;
     const { lines, totals } =
-      source ??
-      priceDocument(
-        input.items ?? [],
-        defaultVatRate,
-        input,
-        await resolveTaxCodes(tx, user.organizationId, input.items ?? []),
-      );
+      source && !edited
+        ? source
+        : priceDocument(
+            input.items ?? [],
+            defaultVatRate,
+            input,
+            await resolveTaxCodes(tx, user.organizationId, input.items ?? []),
+          );
     await assertIncomeAccounts(tx, user.organizationId, lines);
 
     const organization = await tx.organization.findUniqueOrThrow({
@@ -351,17 +391,43 @@ export async function createDirectInvoice(
       });
     }
 
-    // A sales receipt: the whole total received now, under the same payment
-    // rules as any other payment. Nothing to take on a zero-total bill.
+    // The customer's advances first: they settle the invoice like a
+    // payment, without changing its sales or VAT.
+    const totalFils = toFils(totals.totalAmount);
+    let advanceApplied = 0;
+    if (useAdvance && totalFils > 0) {
+      const wanted = input.advanceAmount ? toFils(input.advanceAmount) : null;
+      if (wanted !== null && wanted > totalFils) {
+        throw new DomainError(
+          `The advance applied can't be more than the invoice total (${totals.totalAmount}).`,
+          'advanceAmount',
+        );
+      }
+      // Never more than is held: applyHeldAdvances refuses it, and applies oldest first.
+      advanceApplied = await applyHeldAdvances(
+        tx,
+        user,
+        { id: invoice.id, customerId: customer.id },
+        wanted ?? (await heldUpTo(tx, user.organizationId, customer.id, totalFils)),
+      );
+    }
+
+    // A sales receipt: what is still due received now, under the same
+    // payment rules as any other payment. Nothing to take when nothing is due.
+    const settled = await tx.invoice.findUniqueOrThrow({
+      where: { id: invoice.id },
+      select: { totalAmount: true, creditedAmount: true, advanceAppliedAmount: true, status: true },
+    });
+    const stillDue = dueFils(settled, 0);
     const payment =
-      payNow && toFils(totals.totalAmount) > 0
+      payNow && stillDue > 0
         ? await takePayment(
             tx,
             user,
             invoice.id,
             jobCard ? { id: jobCard.id, status: 'INVOICED' } : null,
             {
-              amount: totals.totalAmount,
+              amount: filsToString(stillDue),
               method: input.paymentMethod!,
               referenceNumber: input.paymentReference,
               notes: undefined,
@@ -390,11 +456,12 @@ export async function createDirectInvoice(
         totalAmount: totals.totalAmount,
       },
       metadata: {
-        origin: source ? 'quotation' : 'direct',
+        origin: source ? (edited ? 'quotation_edited' : 'quotation') : 'direct',
         estimateId: source?.estimate.id ?? null,
         estimateNumber: source?.estimate.estimateNumber ?? null,
         standalone: jobCard === null,
         paidOnTheSpot: payment !== null,
+        ...(advanceApplied > 0 ? { advanceApplied: filsToString(advanceApplied) } : {}),
       },
     });
 

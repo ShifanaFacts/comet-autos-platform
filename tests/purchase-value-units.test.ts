@@ -221,7 +221,7 @@ describe('a discounted line', () => {
     const { lines } = priceDiscounted();
     assert.equal(unitCostAfterDiscount(plain), '33.33', 'no discount: the unit cost');
     // 950.00 less its share of the bill discount, over 10 units.
-    // Half-up to the fil, in whole fils (no floating point): 940.96 / 10 = 94.096 → 94.10.
+    // Half-up to the fil, in whole fils (no floating point): 940.95 / 10 = 94.095 → 94.10.
     const perUnit = filsToString(Math.round(toFils(lines[0].netAmount!.toString()) / 10));
     assert.equal(unitCostAfterDiscount(lines[0]), perUnit);
     // Half a litre ordered: the price of a whole one.
