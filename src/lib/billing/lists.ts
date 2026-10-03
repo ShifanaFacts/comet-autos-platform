@@ -64,6 +64,7 @@ export async function listInvoices(
       totalAmount: true,
       creditedAmount: true,
       advanceAppliedAmount: true,
+      settlementDiscount: true,
       customerName: true,
       items: { select: { discountAmount: true } },
       payments: {

@@ -43,6 +43,7 @@ describe('an invoice with no advance applied is exactly as before', () => {
         totalAmount: sample.total,
         creditedAmount: sample.credited,
         advanceAppliedAmount: '0',
+        settlementDiscount: '0',
       };
       assert.equal(dueFils(invoice, sample.paid), old, JSON.stringify(sample));
     }
@@ -54,6 +55,7 @@ describe('an invoice with no advance applied is exactly as before', () => {
         totalAmount: sample.total,
         creditedAmount: sample.credited,
         advanceAppliedAmount: '0',
+        settlementDiscount: '0',
       };
       const old =
         Math.max(toFils(sample.total) - toFils(sample.credited) - sample.paid, 0) === 0
@@ -68,7 +70,12 @@ describe('an invoice with no advance applied is exactly as before', () => {
 
 describe('an advance applied', () => {
   test('comes off what is due, like a payment', () => {
-    const invoice = { totalAmount: '1050', creditedAmount: '0', advanceAppliedAmount: '600' };
+    const invoice = {
+      totalAmount: '1050',
+      creditedAmount: '0',
+      advanceAppliedAmount: '600',
+      settlementDiscount: '0',
+    };
     assert.equal(dueFils(invoice, 0), toFils('450'));
     assert.equal(dueFils(invoice, toFils('450')), 0);
     assert.equal(dueFils(invoice, toFils('500')), 0, 'never below zero');
@@ -77,21 +84,36 @@ describe('an advance applied', () => {
   test('part-settles the invoice even with nothing paid; settles it with the rest', () => {
     assert.equal(
       settlementStatus(
-        { totalAmount: '1050', creditedAmount: '0', advanceAppliedAmount: '600' },
+        {
+          totalAmount: '1050',
+          creditedAmount: '0',
+          advanceAppliedAmount: '600',
+          settlementDiscount: '0',
+        },
         0,
       ),
       'PARTIALLY_PAID',
     );
     assert.equal(
       settlementStatus(
-        { totalAmount: '1050', creditedAmount: '0', advanceAppliedAmount: '1050' },
+        {
+          totalAmount: '1050',
+          creditedAmount: '0',
+          advanceAppliedAmount: '1050',
+          settlementDiscount: '0',
+        },
         0,
       ),
       'PAID',
     );
     assert.equal(
       settlementStatus(
-        { totalAmount: '525', creditedAmount: '105', advanceAppliedAmount: '395' },
+        {
+          totalAmount: '525',
+          creditedAmount: '105',
+          advanceAppliedAmount: '395',
+          settlementDiscount: '0',
+        },
         toFils('25'),
       ),
       'PAID',
@@ -103,6 +125,7 @@ describe('an advance applied', () => {
       totalAmount: '525.00',
       creditedAmount: '0',
       advanceAppliedAmount: '500.00',
+      settlementDiscount: '0',
       status: 'PARTIALLY_PAID',
       payments: [payment('p1', '20.00', 1)],
     });
@@ -116,6 +139,7 @@ describe('an advance applied', () => {
       totalAmount: '525.00',
       creditedAmount: '0',
       advanceAppliedAmount: '500.00',
+      settlementDiscount: '0',
       payments: [payment('p1', '10.00', 1), payment('p2', '15.00', 2)],
     };
     assert.deepEqual(receiptBalances(invoice, 'p2'), {

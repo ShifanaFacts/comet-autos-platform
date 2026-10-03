@@ -231,15 +231,17 @@ export function PurchaseForm({
   const grossFils = lines.reduce((sum, line) => sum + gross(line), 0);
   const discountFils = totals ? grossFils - toFils(totals.subtotal) : 0;
   const payload = JSON.stringify(
-    lines.map(({ partId, quantity, unitCost, taxRate, taxCodeId, discountType, discountValue }) => ({
-      partId,
-      quantity,
-      unitCost,
-      taxRate,
-      taxCodeId,
-      discountType: discountValue.trim() ? discountType : '',
-      discountValue: discountValue.trim(),
-    })),
+    lines.map(
+      ({ partId, quantity, unitCost, taxRate, taxCodeId, discountType, discountValue }) => ({
+        partId,
+        quantity,
+        unitCost,
+        taxRate,
+        taxCodeId,
+        discountType: discountValue.trim() ? discountType : '',
+        discountValue: discountValue.trim(),
+      }),
+    ),
   );
   const lineError = (index: number) =>
     Object.entries(errors).find(([key]) => key.startsWith(`items.${index}.`))?.[1];
@@ -373,7 +375,8 @@ export function PurchaseForm({
                   <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[1fr_1fr_auto_0.8fr_auto] lg:w-[40rem]">
                     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                       Qty ({part?.unit})
-                      <NumberInput kind="quantity"
+                      <NumberInput
+                        kind="quantity"
                         value={line.quantity}
                         onChange={(event) => update(line.key, { quantity: event.target.value })}
                         className="h-11 text-right text-base tabular-nums md:text-sm"
@@ -393,6 +396,8 @@ export function PurchaseForm({
                         label={`${part?.sku ?? 'Line'} discount`}
                         type={line.discountType}
                         value={line.discountValue}
+                        base={gross(line)}
+                        computed={amount?.discountAmount ?? '0.00'}
                         large
                         onChange={(discount) =>
                           update(line.key, {
@@ -472,6 +477,8 @@ export function PurchaseForm({
                 label="Discount on the whole bill"
                 type={bill.type}
                 value={bill.value}
+                base={totals ? toFils(totals.linesTotal) : undefined}
+                computed={totals?.discountAmount}
                 onChange={setBill}
               />
             </dd>
@@ -500,8 +507,8 @@ export function PurchaseForm({
         ) : null}
         {totals && discountFils > 0 ? (
           <p className="text-right text-xs text-muted-foreground">
-            A supplier discount lowers what the parts cost you and the VAT you can claim back. It
-            is not income.
+            A supplier discount lowers what the parts cost you and the VAT you can claim back. It is
+            not income.
           </p>
         ) : null}
       </div>

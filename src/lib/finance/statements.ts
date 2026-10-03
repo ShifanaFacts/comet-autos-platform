@@ -177,6 +177,8 @@ export async function getCustomerStatement(
         totalAmount: true,
         creditedAmount: true,
         advanceAppliedAmount: true,
+        settlementDiscount: true,
+        settlementDiscountOn: true,
         jobCard: { select: { jobNumber: true } },
         vehicle: { select: { plateNumber: true } },
         payments: {
@@ -259,6 +261,19 @@ export async function getCustomerStatement(
       href: `/finance/invoices/${invoice.id}`,
       fils: toFils(invoice.totalAmount.toString()),
     });
+    // A discount given after the invoice: off what is owed, on the day given.
+    if (invoice.settlementDiscountOn && toFils(invoice.settlementDiscount.toString()) > 0) {
+      movements.push({
+        key: `discount-${invoice.id}`,
+        date: calendarDay(invoice.settlementDiscountOn),
+        order: 1,
+        kind: 'Discount',
+        reference: invoice.invoiceNumber,
+        description: `Discount on ${invoice.invoiceNumber}`,
+        href: `/finance/invoices/${invoice.id}`,
+        fils: -toFils(invoice.settlementDiscount.toString()),
+      });
+    }
     const numbers = new Map(invoice.payments.map((p) => [p.id, p.paymentNumber]));
     for (const payment of invoice.payments) {
       const amount = toFils(payment.amount.toString());

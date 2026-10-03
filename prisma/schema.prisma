@@ -188,6 +188,9 @@ enum AccountRole {
   /// "Customer advances": money a customer paid before their invoice,
   /// owed to them in work (or back) until applied to an invoice.
   CUSTOMER_ADVANCES
+  /// "Rounding adjustments": the round-off on an invoice (e.g. −0.50 to
+  /// make 3,654.50 into 3,654.00). Outside VAT.
+  ROUNDING
 }
 
 /// The kind of record a journal entry books.
@@ -232,6 +235,8 @@ enum JournalSource {
   CUSTOMER_ADVANCE_ALLOCATION
   /// Part of a customer advance paid back to the customer.
   CUSTOMER_ADVANCE_REFUND
+  /// A discount given after an invoice, off its total (VAT unchanged).
+  INVOICE_DISCOUNT
 }
 
 enum ApprovalStatus {
@@ -1637,6 +1642,16 @@ model Invoice {
   /// Settled from customer advances: the applications standing against it
   /// (undone ones excluded). Kept equal to them by a database check.
   advanceAppliedAmount Decimal       @default(0) @map("advance_applied_amount") @db.Decimal(14, 2)
+  /// A round-off after VAT, plus or minus, at most 5.00 either way — outside
+  /// VAT, booked to Rounding adjustments. total = subtotal + VAT + this.
+  roundingAdjustment   Decimal       @default(0) @map("rounding_adjustment") @db.Decimal(14, 2)
+  /// A discount given after the invoice, off its total ("3,654 — the customer
+  /// paid 3,500"): the total and VAT stay as invoiced (only a tax credit note
+  /// reduces VAT). What the customer owes is total − credited − this − paid −
+  /// advance applied. Booked as its own entry: Dr Sales discounts, Cr
+  /// receivables, on the day it was given.
+  settlementDiscount   Decimal       @default(0) @map("settlement_discount") @db.Decimal(14, 2)
+  settlementDiscountOn DateTime?     @map("settlement_discount_on") @db.Date
   notes                String?
   /// The customer's own purchase order (LPO) number, printed on the invoice.
   customerReference    String?       @map("customer_reference")
@@ -2078,6 +2093,9 @@ model CreditNote {
   subtotal         Decimal          @db.Decimal(14, 2)
   taxAmount        Decimal          @map("tax_amount") @db.Decimal(14, 2)
   totalAmount      Decimal          @map("total_amount") @db.Decimal(14, 2)
+  /// The invoice's round-off, taken back by the note that credits the last
+  /// of its lines. total = subtotal + VAT + this.
+  roundingAmount   Decimal          @default(0) @map("rounding_amount") @db.Decimal(14, 2)
   /// What is paid back to the customer: the credit beyond what they still owed.
   refundAmount     Decimal          @default(0) @map("refund_amount") @db.Decimal(14, 2)
   refundedOn       DateTime?        @map("refunded_on") @db.Date

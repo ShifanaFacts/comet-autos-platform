@@ -12,6 +12,7 @@ import {
   billDiscountPayload,
   linesPayload,
   useLineTotals,
+  withRoundOff,
   type BillDiscount,
   type EditableLine,
 } from '@/components/workshop/document-lines-editor';
@@ -31,8 +32,11 @@ export function EditInvoiceForm({
   defaultVatRate,
   incomeAccounts,
   taxCodes,
+  rounding: initialRounding = '',
 }: {
   invoiceId: string;
+  /** The round-off after VAT, as stored ("-0.50"); blank for none. */
+  rounding?: string;
   /** Income accounts a line can book to; omitted, every line uses the default. */
   incomeAccounts?: AccountChoice[];
   lines: EditableLine[];
@@ -52,6 +56,7 @@ export function EditInvoiceForm({
   );
   const [lines, setLines] = useState<EditableLine[]>(initialLines);
   const [bill, setBill] = useState<BillDiscount>(initialBill);
+  const [rounding, setRounding] = useState(initialRounding);
   const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate, bill);
   const errors = state.fieldErrors ?? {};
   const payload = JSON.stringify(linesPayload(lines));
@@ -72,7 +77,10 @@ export function EditInvoiceForm({
           defaultVatRate={defaultVatRate}
           incomeAccounts={incomeAccounts}
           taxCodes={taxCodes}
+          rounding={rounding}
+          onRoundingChange={setRounding}
         />
+        <input type="hidden" name="roundingAdjustment" value={rounding} />
       </section>
 
       <div className="grid gap-6 sm:grid-cols-2">
@@ -104,7 +112,9 @@ export function EditInvoiceForm({
         className="[&_textarea]:min-h-16"
       />
 
-      <FormError message={state.error ?? errors.items ?? errors.discount} />
+      <FormError
+        message={state.error ?? errors.items ?? errors.discount ?? errors.roundingAdjustment}
+      />
 
       <div className="flex flex-col gap-3 border-t border-border pt-6 sm:flex-row sm:items-center">
         <SubmitButton
@@ -116,7 +126,9 @@ export function EditInvoiceForm({
         >
           <Save />
           Save invoice
-          {count > 0 && !incomplete ? ` · ${formatMoney(totals.totalAmount)}` : ''}
+          {count > 0 && !incomplete
+            ? ` · ${formatMoney(withRoundOff(totals.totalAmount, rounding))}`
+            : ''}
         </SubmitButton>
         <Link
           href={`/finance/invoices/${invoiceId}`}
