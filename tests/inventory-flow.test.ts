@@ -526,6 +526,57 @@ describe('inventory management', () => {
     );
   });
 
+  test('parts without a number get an automatic code; a part without a selling price is priced on the job', async () => {
+    const first = await createPart(a.owner, {
+      sku: '',
+      name: 'Unbranded clip',
+      unitOfMeasure: 'piece',
+      costPrice: '2',
+      openingStock: '10',
+    });
+    assert.match(first.sku, /^P-\d{4,}$/);
+    assert.equal(first.defaultSellingPrice, null);
+    const second = await createPart(a.owner, {
+      name: 'Unbranded bolt',
+      unitOfMeasure: 'piece',
+      costPrice: '1',
+      sellingPrice: '',
+    });
+    assert.equal(
+      Number(second.sku.slice(2)),
+      Number(first.sku.slice(2)) + 1,
+      'automatic codes run in sequence',
+    );
+    const edited = await updatePart(a.owner, first.id, {
+      sku: '',
+      name: 'Unbranded clip',
+      unitOfMeasure: 'piece',
+      costPrice: '2',
+    });
+    assert.equal(edited.sku, first.sku, 'saving with the code left empty keeps the automatic one');
+
+    const clipJob = await jobInRepair(a, '3', { description: 'Clips', quantity: '2', price: '7.50' });
+    await expectDomainError(
+      recordPartUsage(a.owner, clipJob.jobCardId, {
+        partId: first.id,
+        quantity: '2',
+        employeeId: a.technicianIds[0],
+        estimateItemId: clipJob.partLine,
+      }),
+      /no selling price/,
+    );
+    const usage = await recordPartUsage(a.owner, clipJob.jobCardId, {
+      partId: first.id,
+      quantity: '2',
+      employeeId: a.technicianIds[0],
+      estimateItemId: clipJob.partLine,
+      unitPrice: '7.50',
+    });
+    assert.equal(usage.unitPrice.toString(), '7.5');
+    assert.equal(usage.unitCost.toString(), '2');
+    assert.equal(await stock(a, first.id), 8000);
+  });
+
   let job: Awaited<ReturnType<typeof jobInRepair>>;
   let usageId: string;
 

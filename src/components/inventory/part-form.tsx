@@ -58,12 +58,11 @@ export function PartForm({
           <TextField
             label="Part number / SKU"
             name="sku"
-            required
             defaultValue={initial?.sku}
             error={errors.sku}
             autoFocus={isNew}
             autoCapitalize="characters"
-            hint="Stored in capitals. Must be unique."
+            hint="Optional — leave empty and a code like P-0001 is given. Must be unique."
             className={`${INPUT} [&_input]:font-mono`}
           />
           <TextField
@@ -134,10 +133,10 @@ export function PartForm({
           <TextField
             label="Selling price (AED)"
             name="sellingPrice"
-            required
             numeric="money"
             defaultValue={initial?.sellingPrice}
             error={errors.sellingPrice}
+            hint="Optional — if empty, you enter the price when the part goes on a job."
             className={INPUT}
           />
           <TextField

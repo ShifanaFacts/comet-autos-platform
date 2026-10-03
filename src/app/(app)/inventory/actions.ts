@@ -13,6 +13,7 @@ import {
   createPurchase,
   receivePurchase,
   updatePurchase,
+  updatePurchaseDetails,
 } from '@/lib/inventory/purchases';
 
 import { removeAttachment } from '@/lib/documents/attachments';
@@ -147,6 +148,20 @@ export async function updatePurchaseAction(
   if (!result.ok) return toClientResult(result);
   refreshInventory();
   redirect(`/inventory/purchases/${purchaseId}`);
+}
+
+/** Corrects a received purchase's invoice number, date, due date and notes. */
+export async function updatePurchaseDetailsAction(
+  purchaseId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() =>
+    updatePurchaseDetails(user, purchaseId, formDataToObject(formData)),
+  );
+  if (result.ok) refreshInventory();
+  return toClientResult(result);
 }
 
 /** Receives the quantities typed per line (fields named `line:<purchaseItemId>`). */

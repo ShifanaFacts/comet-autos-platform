@@ -134,21 +134,26 @@ export function PartUsageForm({
   const [partId, setPartId] = useState('');
   const [lineId, setLineId] = useState(approvedLines.find((l) => !l.done)?.id ?? '');
   const [quantity, setQuantity] = useState('1');
+  // Asked for only when the part has no selling price; starts at the approved line's price.
+  const linePrice = (id: string) => approvedLines.find((l) => l.id === id)?.unitPrice ?? '';
+  const [price, setPrice] = useState(linePrice(lineId));
   const { formRef, state, onSubmit, isPending } = useResettingAction(
     recordPartUsageAction.bind(null, jobCardId),
     'Part recorded and issued from stock',
     () => {
       setPartId('');
       setQuantity('1');
+      setPrice(linePrice(lineId));
     },
   );
   const errors = state.fieldErrors ?? {};
   const part = parts.find((p) => p.id === partId);
+  const needsPrice = part !== undefined && part.sellingPrice === null;
+  const unitPrice = part?.sellingPrice ?? (/^\d+(\.\d{1,2})?$/.test(price) ? price : null);
   const preview = useMemo(() => {
-    if (!part?.sellingPrice || !/^\d+(\.\d{1,3})?$/.test(quantity) || Number(quantity) <= 0)
-      return null;
-    return filsToString(multiplyQuantity(quantity, part.sellingPrice));
-  }, [part, quantity]);
+    if (!unitPrice || !/^\d+(\.\d{1,3})?$/.test(quantity) || Number(quantity) <= 0) return null;
+    return filsToString(multiplyQuantity(quantity, unitPrice));
+  }, [unitPrice, quantity]);
 
   return (
     <form ref={formRef} onSubmit={onSubmit} className="flex flex-col gap-6">
@@ -185,7 +190,10 @@ export function PartUsageForm({
             id="estimateItemId"
             name="estimateItemId"
             value={lineId}
-            onChange={(e) => setLineId(e.target.value)}
+            onChange={(e) => {
+              setLineId(e.target.value);
+              setPrice(linePrice(e.target.value));
+            }}
             className="h-11 text-base md:text-sm"
           >
             {approvedLines.map((line) => (
@@ -212,19 +220,36 @@ export function PartUsageForm({
           label="Fitted by"
           error={errors.employeeId}
         />
+        {needsPrice ? (
+          <TextField
+            label="Selling price (AED)"
+            name="unitPrice"
+            required
+            numeric="money"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            error={errors.unitPrice}
+            hint="This part has no selling price — enter the price to charge for each."
+            className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
+          />
+        ) : null}
       </div>
       {lineId === '' ? <AdditionalWarning /> : null}
       <FormError
         message={
-          errors.partId || errors.quantity || errors.estimateItemId || errors.employeeId
+          errors.partId ||
+          errors.quantity ||
+          errors.estimateItemId ||
+          errors.employeeId ||
+          errors.unitPrice
             ? undefined
             : state.error
         }
       />
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-4">
         <p className="text-sm text-muted-foreground">
-          {part && preview
-            ? `${formatMoney(part.sellingPrice!)} each · ${formatMoney(preview)} at today's price. Stock is issued immediately.`
+          {unitPrice && preview
+            ? `${formatMoney(unitPrice)} each · ${formatMoney(preview)} at today's price. Stock is issued immediately.`
             : 'Price and cost are taken from the part now and kept with this record.'}
         </p>
         <SubmitButton pending={isPending} size="lg" className="h-11" pendingLabel="Recording…">

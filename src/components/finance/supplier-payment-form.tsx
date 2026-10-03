@@ -10,7 +10,8 @@ import { ArrowLeft, Banknote, CheckCircle2, TriangleAlert, Wallet } from 'lucide
 import { toast } from 'sonner';
 import type { PaymentMethod } from '@/generated/prisma/enums';
 import { Button } from '@/components/ui/button';
-import { Field, FormError, NativeSelect, TextField } from '@/components/forms/fields';
+import { Field, FormError, NativeSelect } from '@/components/forms/fields';
+import { ReferenceField } from '@/components/forms/reference-field';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import { Panel } from '@/components/layout/primitives';
@@ -297,7 +298,7 @@ export function SupplierPaymentForm({
             </Field>
           </div>
 
-          <TextField
+          <ReferenceField
             label="Reference"
             name="reference-display"
             value={reference}

@@ -210,6 +210,52 @@ function readDetails(
   };
 }
 
+/**
+ * One bill is entered once: the same vendor's bill number may not be on
+ * another live expense, nor on a stock purchase from a supplier of that
+ * name. Without a vendor the number alone proves nothing, so it isn't checked.
+ */
+async function assertBillFree(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  vendorName: string | null,
+  billNumber: string | null,
+  exceptExpenseId?: string,
+) {
+  if (!vendorName || !billNumber) return;
+  const expense = await tx.expense.findFirst({
+    where: {
+      organizationId,
+      status: 'RECORDED',
+      billNumber: { equals: billNumber, mode: 'insensitive' },
+      vendorName: { equals: vendorName, mode: 'insensitive' },
+      ...(exceptExpenseId ? { id: { not: exceptExpenseId } } : {}),
+    },
+    select: { expenseNumber: true },
+  });
+  if (expense) {
+    throw new DomainError(
+      `Bill ${billNumber} from ${vendorName} is already entered as ${expense.expenseNumber ?? 'another expense'}.`,
+      'billNumber',
+    );
+  }
+  const purchase = await tx.purchase.findFirst({
+    where: {
+      organizationId,
+      status: { not: 'CANCELLED' },
+      supplierInvoiceNumber: { equals: billNumber, mode: 'insensitive' },
+      supplier: { name: { equals: vendorName, mode: 'insensitive' } },
+    },
+    select: { purchaseNumber: true },
+  });
+  if (purchase) {
+    throw new DomainError(
+      `Bill ${billNumber} from ${vendorName} is already entered as purchase ${purchase.purchaseNumber}.`,
+      'billNumber',
+    );
+  }
+}
+
 async function assertCategory(organizationId: string, categoryId: string | null) {
   if (!categoryId) return;
   const account = await prisma.chartOfAccount.findFirst({
@@ -233,6 +279,12 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'expense.record');
+    await assertBillFree(
+      tx,
+      user.organizationId,
+      emptyToNull(input.vendorName),
+      emptyToNull(input.billNumber),
+    );
     const { paidPersonallyBy, ...payer } = await readPayer(tx, user.organizationId, input);
     const details = readDetails(input, payer);
     // EXP-000123: the voucher number it is filed and found under.
@@ -327,6 +379,13 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
     });
     if (!before) throw new NotFoundError('expense');
     if (before.status === 'VOID') throw new DomainError('A voided expense cannot be changed.');
+    await assertBillFree(
+      tx,
+      user.organizationId,
+      emptyToNull(input.vendorName),
+      emptyToNull(input.billNumber),
+      before.id,
+    );
     const { paidPersonallyBy, ...payer } = await readPayer(tx, user.organizationId, input);
 
     const data = {

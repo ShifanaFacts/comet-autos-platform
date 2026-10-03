@@ -5,7 +5,8 @@ import { Ban, HandCoins } from 'lucide-react';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Field, FormError, NativeSelect, TextField } from '@/components/forms/fields';
+import { Field, FormError, NativeSelect } from '@/components/forms/fields';
+import { ReferenceField } from '@/components/forms/reference-field';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import { ReasonAction } from '@/components/shared/reason-action';
@@ -97,7 +98,7 @@ export function CreditNoteRefundForm({
             error={errors.accountId}
           />
         ) : null}
-        <TextField
+        <ReferenceField
           label="Reference"
           name="reference"
           error={errors.reference}

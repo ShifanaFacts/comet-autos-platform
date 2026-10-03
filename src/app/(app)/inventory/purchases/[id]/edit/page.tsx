@@ -52,6 +52,9 @@ export default async function EditPurchasePage({ params }: { params: Promise<{ i
             notes: purchase.notes ?? '',
             billDiscountType: purchase.billDiscountType,
             billDiscountValue: purchase.billDiscountValue?.toString() ?? '',
+            roundingAdjustment: purchase.roundingAdjustment.isZero()
+              ? ''
+              : purchase.roundingAdjustment.toFixed(2),
             dueDate: purchase.dueDate ? purchase.dueDate.toISOString().slice(0, 10) : '',
             items: purchase.items.map((item) => ({
               partId: item.partId,

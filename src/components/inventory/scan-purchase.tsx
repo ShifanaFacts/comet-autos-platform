@@ -135,57 +135,59 @@ export function ScanPurchase({
           Discard
         </Button>
       </div>
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="flex min-w-0 flex-col gap-6">
-          <BillNotices draft={draft} />
-          {!draft.supplier ? (
-            <p className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">
-              <Info className="mt-0.5 size-4 shrink-0" />
-              <span>
-                {draft.supplierName
-                  ? `“${draft.supplierName}” isn’t a supplier on file.`
-                  : 'The supplier couldn’t be read.'}{' '}
-                Choose one below, or{' '}
-                <Link
-                  href="/inventory/suppliers/new"
-                  target="_blank"
-                  className="font-medium underline"
-                >
-                  add the supplier
-                </Link>{' '}
-                (with their TRN{draft.supplierTrn ? ` ${draft.supplierTrn}` : ''}) and scan again.
-              </span>
-            </p>
-          ) : null}
-          {unmatched.length > 0 ? (
-            <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">
-              <p className="font-medium">
-                {unmatched.length} row{unmatched.length === 1 ? '' : 's'} on the bill didn’t match a
-                part on file — add {unmatched.length === 1 ? 'it' : 'them'} below:
+      {/* The bill beside the purchase's details; the parts below get the whole width. */}
+      <PurchaseForm
+        key={previewUrl}
+        action={save}
+        initial={toInitial(draft, initial, today)}
+        hidden={{ scannedFields: draft.filled.join(',') || 'none' }}
+        aside={<BillPreview file={file} previewUrl={previewUrl} />}
+        intro={
+          <>
+            <BillNotices draft={draft} />
+            {!draft.supplier ? (
+              <p className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">
+                <Info className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  {draft.supplierName
+                    ? `“${draft.supplierName}” isn’t a supplier on file.`
+                    : 'The supplier couldn’t be read.'}{' '}
+                  Choose one below, or{' '}
+                  <Link
+                    href="/inventory/suppliers/new"
+                    target="_blank"
+                    className="font-medium underline"
+                  >
+                    add the supplier
+                  </Link>{' '}
+                  (with their TRN{draft.supplierTrn ? ` ${draft.supplierTrn}` : ''}) and scan again.
+                </span>
               </p>
-              <ul className="mt-2 flex flex-col gap-1 text-muted-foreground">
-                {unmatched.map((line, index) => (
-                  <li key={index} className="tabular-nums">
-                    {line.description} — {line.quantity} × {line.unitPrice} = {line.amount}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : draft.lines.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              The item rows couldn’t be read reliably, so none were filled in. Add the parts below.
-            </p>
-          ) : null}
-          <PurchaseForm
-            key={previewUrl}
-            action={save}
-            initial={toInitial(draft, initial, today)}
-            hidden={{ scannedFields: draft.filled.join(',') || 'none' }}
-            {...form}
-          />
-        </div>
-        <BillPreview file={file} previewUrl={previewUrl} />
-      </div>
+            ) : null}
+            {unmatched.length > 0 ? (
+              <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">
+                <p className="font-medium">
+                  {unmatched.length} row{unmatched.length === 1 ? '' : 's'} on the bill didn’t match
+                  a part on file — add {unmatched.length === 1 ? 'it' : 'them'} below:
+                </p>
+                <ul className="mt-2 flex flex-col gap-1 text-muted-foreground">
+                  {unmatched.map((line, index) => (
+                    <li key={index} className="tabular-nums">
+                      {line.description} — {line.quantity} × {line.unitPrice} = {line.amount}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : draft.lines.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                The item rows couldn’t be read reliably, so none were filled in. Add the parts
+                below.
+              </p>
+            ) : null}
+          </>
+        }
+        {...form}
+      />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { Ban, HandCoins, Link2, Undo2, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Field, FormError, NativeSelect, TextField } from '@/components/forms/fields';
+import { ReferenceField } from '@/components/forms/reference-field';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import { ReasonAction } from '@/components/shared/reason-action';
@@ -170,7 +171,7 @@ export function ReceiveAdvanceForm({
             accountLabel="Deposited into"
             errors={errors}
           />
-          <TextField
+          <ReferenceField
             label="Reference"
             name="reference"
             error={errors.reference}
@@ -417,7 +418,7 @@ export function RefundAdvanceForm({
           accountLabel="Paid from"
           errors={errors}
         />
-        <TextField
+        <ReferenceField
           label="Reference"
           name="reference"
           error={errors.reference}

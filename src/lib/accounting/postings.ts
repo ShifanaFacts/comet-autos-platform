@@ -58,6 +58,11 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  *   parts fitted to or taken back from a job: nothing here — they are costed
  *   on the job's invoice (above), matched to the sale.
  *
+ * PURCHASE ROUND-OFF (the supplier's "adjusted amount", outside VAT; once
+ * the whole purchase is received, on the day it was)
+ *   round-off down (−)                Dr Accounts payable / Cr Rounding adjustments
+ *   round-off up (+)                  Dr Rounding adjustments / Cr Accounts payable
+ *
  * SUPPLIER PAYMENT                    Dr Accounts payable
  *                                     Cr the cash or bank account
  *   its reversal                      the same, the other way round
@@ -316,6 +321,37 @@ const postInvoiceDiscount: Poster = async (tx, organizationId, invoiceId, accoun
     lines: new Lines()
       .debit(accounts.SALES_DISCOUNTS, amount)
       .credit(accounts.ACCOUNTS_RECEIVABLE, amount)
+      .build(),
+  };
+};
+
+/**
+ * A purchase's round-off — the supplier's small adjustment after VAT — once
+ * the whole purchase is received, on the day it was. Signed: a round-off
+ * down lowers what is owed and is a gain; up raises it and is a cost.
+ */
+const postPurchaseRounding: Poster = async (tx, organizationId, purchaseId, accounts) => {
+  const purchase = await tx.purchase.findFirst({
+    where: { id: purchaseId, organizationId },
+    select: {
+      status: true,
+      purchaseNumber: true,
+      supplierInvoiceNumber: true,
+      branchId: true,
+      receivedAt: true,
+      roundingAdjustment: true,
+      supplier: { select: { name: true } },
+    },
+  });
+  if (!purchase || purchase.status !== 'RECEIVED' || !purchase.receivedAt) return null;
+  const rounding = fils(purchase.roundingAdjustment);
+  return {
+    date: accountingDay(purchase.receivedAt),
+    branchId: purchase.branchId,
+    description: `Round-off on ${purchase.purchaseNumber}${purchase.supplierInvoiceNumber ? ` (supplier invoice ${purchase.supplierInvoiceNumber})` : ''} — ${purchase.supplier.name}`,
+    lines: new Lines()
+      .credit(accounts.ACCOUNTS_PAYABLE, rounding)
+      .debit(accounts.ROUNDING, rounding)
       .build(),
   };
 };
@@ -987,4 +1023,5 @@ export const POSTING_RULES: Record<
   CUSTOMER_ADVANCE_ALLOCATION: postAdvanceAllocation,
   CUSTOMER_ADVANCE_REFUND: postAdvanceRefund,
   INVOICE_DISCOUNT: postInvoiceDiscount,
+  PURCHASE_ROUNDING: postPurchaseRounding,
 };

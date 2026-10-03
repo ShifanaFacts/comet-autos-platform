@@ -237,6 +237,8 @@ enum JournalSource {
   CUSTOMER_ADVANCE_REFUND
   /// A discount given after an invoice, off its total (VAT unchanged).
   INVOICE_DISCOUNT
+  /// A purchase's round-off, once the whole purchase is received.
+  PURCHASE_ROUNDING
 }
 
 enum ApprovalStatus {
@@ -1469,6 +1471,11 @@ model Purchase {
   billDiscountType      DiscountType?  @map("bill_discount_type")
   billDiscountValue     Decimal?       @map("bill_discount_value") @db.Decimal(14, 2)
   billDiscountAmount    Decimal        @default(0) @map("bill_discount_amount") @db.Decimal(14, 2)
+  /// The supplier's round-off after VAT ("adjusted amount" on the bill), plus
+  /// or minus, at most 5.00 either way — outside VAT. total = subtotal + VAT +
+  /// this. Owed, and booked to Rounding adjustments, once the whole purchase
+  /// is received.
+  roundingAdjustment    Decimal        @default(0) @map("rounding_adjustment") @db.Decimal(14, 2)
   /// When the supplier expects to be paid ("pay later"). Suppliers owed ages
   /// the bill from it; without one, from the bill's date as before.
   dueDate               DateTime?      @map("due_date") @db.Date

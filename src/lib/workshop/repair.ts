@@ -118,12 +118,23 @@ const partUsageSchema = z.object({
     .refine((value) => Number(value) <= 10000, 'That quantity is not realistic.'),
   employeeId: z.uuid('Choose who fitted the part.'),
   estimateItemId: z.union([z.literal(''), z.uuid()]).optional(),
+  /** Only used when the part has no selling price of its own. */
+  unitPrice: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || /^\d+(\.\d{1,2})?$/.test(value),
+      'The selling price must be an amount like 45 or 45.50.',
+    )
+    .refine((value) => !value || Number(value) <= 1_000_000, 'The selling price is not realistic.'),
 });
 
 /**
  * Records a part fitted to the vehicle: one PartUsage (cost and selling
  * price snapshotted from the part now, so later price changes never rewrite
- * history) plus one JOB_CONSUMPTION stock-out, in one transaction.
+ * history) plus one JOB_CONSUMPTION stock-out, in one transaction. A part
+ * with no selling price takes the price entered with the usage.
  */
 export async function recordPartUsage(user: AuthenticatedUser, jobCardId: string, rawInput: unknown) {
   const input = parseInput(partUsageSchema, rawInput);
@@ -141,8 +152,12 @@ export async function recordPartUsage(user: AuthenticatedUser, jobCardId: string
       where: { id: input.partId, organizationId: user.organizationId, isActive: true },
     });
     if (!part) throw new DomainError('Choose a part from the inventory.', 'partId');
-    if (part.defaultSellingPrice === null || part.defaultCostPrice === null) {
-      throw new DomainError(`${part.name} has no cost or selling price set, so it can't be issued yet.`, 'partId');
+    if (part.defaultCostPrice === null) {
+      throw new DomainError(`${part.name} has no cost price set, so it can't be issued yet.`, 'partId');
+    }
+    const unitPrice = part.defaultSellingPrice?.toString() ?? input.unitPrice;
+    if (!unitPrice) {
+      throw new DomainError(`${part.name} has no selling price — enter the price to charge.`, 'unitPrice');
     }
     const employeeId = await requireEmployee(tx, user.organizationId, input.employeeId, 'Choose who fitted the part.');
     const estimateItemId = await requireApprovedLine(tx, user.organizationId, jobCard.id, input.estimateItemId || null, 'PART');
@@ -157,7 +172,7 @@ export async function recordPartUsage(user: AuthenticatedUser, jobCardId: string
         estimateItemId,
         quantity: milliToString(quantityMilli),
         unitCost: part.defaultCostPrice.toString(),
-        unitPrice: part.defaultSellingPrice.toString(),
+        unitPrice,
       },
     });
     const ledger = await issueStockToJob(tx, {

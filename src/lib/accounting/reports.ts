@@ -292,23 +292,25 @@ export async function sourceLinks(
               ? '/finance/payables'
               : source === 'STOCK_MOVEMENT'
                 ? '/inventory/movements'
-                : source === 'CREDIT_NOTE' || source === 'CREDIT_NOTE_REFUND'
-                  ? `/finance/credit-notes/${id}`
-                  : source === 'FIXED_ASSET' || source === 'ASSET_DISPOSAL'
-                    ? `/finance/fixed-assets/${id}`
-                    : source === 'DEPRECIATION'
-                      ? '/finance/fixed-assets'
-                      : source === 'VAT_FILING' || source === 'VAT_PAYMENT'
-                        ? '/finance/vat'
-                        : source === 'MONEY_TRANSFER'
-                          ? '/finance/money/transfers'
-                          : source === 'CUSTOMER_ADVANCE'
-                            ? `/finance/advances/${id}`
-                            : (source === 'CUSTOMER_ADVANCE_ALLOCATION' ||
-                                  source === 'CUSTOMER_ADVANCE_REFUND') &&
-                                advanceOf.get(id)
-                              ? `/finance/advances/${advanceOf.get(id)}`
-                              : null;
+                : source === 'PURCHASE_ROUNDING'
+                  ? `/inventory/purchases/${id}`
+                  : source === 'CREDIT_NOTE' || source === 'CREDIT_NOTE_REFUND'
+                    ? `/finance/credit-notes/${id}`
+                    : source === 'FIXED_ASSET' || source === 'ASSET_DISPOSAL'
+                      ? `/finance/fixed-assets/${id}`
+                      : source === 'DEPRECIATION'
+                        ? '/finance/fixed-assets'
+                        : source === 'VAT_FILING' || source === 'VAT_PAYMENT'
+                          ? '/finance/vat'
+                          : source === 'MONEY_TRANSFER'
+                            ? '/finance/money/transfers'
+                            : source === 'CUSTOMER_ADVANCE'
+                              ? `/finance/advances/${id}`
+                              : (source === 'CUSTOMER_ADVANCE_ALLOCATION' ||
+                                    source === 'CUSTOMER_ADVANCE_REFUND') &&
+                                  advanceOf.get(id)
+                                ? `/finance/advances/${advanceOf.get(id)}`
+                                : null;
     return { type: source, id, href };
   };
 }
