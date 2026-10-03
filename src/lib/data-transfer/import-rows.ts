@@ -55,3 +55,18 @@ export function fail(outcome: ImportOutcome, index: number, error: unknown) {
         : 'This row could not be read. Check the columns against the template.';
   outcome.errors.push({ row: rowNumber(index), message });
 }
+
+/**
+ * An account named in a cell however it was written — its code ("5240"), its
+ * name ("Printing & stationery"), or both ("5240 Printing & stationery",
+ * "5240 - Printing") — found in a map keyed by lower-case code and name.
+ */
+export function lookupAccount(byCodeOrName: Map<string, string>, text: string) {
+  const value = text.trim().toLowerCase();
+  if (!value) return undefined;
+  const code = /^(\d{3,6})\b/.exec(value)?.[1];
+  const name = value.replace(/^\d{3,6}\s*[-–—:.]?\s*/, '');
+  return (
+    byCodeOrName.get(value) ?? (code ? byCodeOrName.get(code) : undefined) ?? byCodeOrName.get(name)
+  );
+}

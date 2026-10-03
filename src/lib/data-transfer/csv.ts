@@ -44,9 +44,19 @@ export function csvFileName(prefix: string, label: string, today = new Date()): 
   return `${prefix}-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${date}.csv`;
 }
 
-/** Splits CSV text into rows of raw cells. Quoted cells may contain commas and newlines. */
+/**
+ * Splits CSV text into rows of raw cells. Quoted cells may contain commas and
+ * newlines. The separator is read from the heading row: a comma, or the
+ * semicolon Excel uses in some regions, or the tab of a sheet copied as text.
+ */
 export function parseCsvRows(text: string): string[][] {
   const input = text.replace(/^﻿/, '');
+  const heading = input.split(/\r?\n/, 1)[0] ?? '';
+  const count = (char: string) => heading.split(char).length - 1;
+  const separator = [',', ';', '\t'].reduce(
+    (best, char) => (count(char) > count(best) ? char : best),
+    ',',
+  );
   const rows: string[][] = [];
   let row: string[] = [];
   let value = '';
@@ -69,7 +79,7 @@ export function parseCsvRows(text: string): string[][] {
     }
     if (char === '"') {
       quoted = true;
-    } else if (char === ',') {
+    } else if (char === separator) {
       row.push(value);
       value = '';
     } else if (char === '\r') {
@@ -131,6 +141,26 @@ export function field(record: Record<string, string>, ...names: string[]): strin
   for (const name of names) {
     const value = record[key(name)];
     if (value !== undefined && value !== '') return value;
+  }
+  return '';
+}
+
+/**
+ * A value by how its column's heading starts — "Total (AED)" or "Total incl.
+ * VAT" for "total" — for files whose headings add a unit or a note. Headings
+ * starting with any of `not` are passed over.
+ */
+export function fieldStarting(
+  record: Record<string, string>,
+  starts: string[],
+  not: string[] = [],
+): string {
+  for (const start of starts) {
+    for (const [name, value] of Object.entries(record)) {
+      if (value !== '' && name.startsWith(start) && !not.some((skip) => name.startsWith(skip))) {
+        return value;
+      }
+    }
   }
   return '';
 }

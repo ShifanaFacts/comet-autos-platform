@@ -426,92 +426,106 @@ export async function createPurchase(
   rawInput: unknown,
   options: { receive?: boolean } = {},
 ) {
+  return prisma.$transaction(
+    (tx) => createPurchaseInTransaction(tx, user, rawInput, options),
+    RECEIPT_TRANSACTION,
+  );
+}
+
+/**
+ * createPurchase in a transaction the caller already holds — the purchase
+ * import uses it, so every imported bill follows exactly the form's rules.
+ */
+export async function createPurchaseInTransaction(
+  tx: Prisma.TransactionClient,
+  user: AuthenticatedUser,
+  rawInput: unknown,
+  options: { receive?: boolean } = {},
+) {
   const input = parsePurchase(rawInput);
   const settlement = parseSettlement(rawInput);
   if (!options.receive && settlement.payment === 'now') {
     throw new DomainError('A supplier is paid once the goods are received.', 'payment');
   }
 
-  return prisma.$transaction(async (tx) => {
-    await claimRequestKey(tx, user, rawInput, 'purchase.create');
-    const branch = await resolveInventoryBranch(user, tx);
-    requirePermission(user, 'purchase.create', { branchId: branch.id });
-    if (options.receive) requirePermission(user, 'purchase.approve', { branchId: branch.id });
-    const supplierId = await requireActiveSupplier(tx, user.organizationId, input.supplierId);
-    const priced = pricePurchase(await prepareLines(tx, user.organizationId, input.items), {
-      type: input.billDiscountType,
-      value: input.billDiscountValue,
-    });
-    const lines = priced.lines;
-    const header = headerData(input, priced);
-    await assertSupplierInvoiceFree(
-      tx,
-      user.organizationId,
-      supplierId,
-      header.supplierInvoiceNumber,
-    );
+  await claimRequestKey(tx, user, rawInput, 'purchase.create');
+  const branch = await resolveInventoryBranch(user, tx);
+  requirePermission(user, 'purchase.create', { branchId: branch.id });
+  if (options.receive) requirePermission(user, 'purchase.approve', { branchId: branch.id });
+  const supplierId = await requireActiveSupplier(tx, user.organizationId, input.supplierId);
+  const priced = pricePurchase(await prepareLines(tx, user.organizationId, input.items), {
+    type: input.billDiscountType,
+    value: input.billDiscountValue,
+  });
+  const lines = priced.lines;
+  const header = headerData(input, priced);
+  await assertSupplierInvoiceFree(
+    tx,
+    user.organizationId,
+    supplierId,
+    header.supplierInvoiceNumber,
+  );
 
-    const purchaseNumber = await allocateDocumentNumber(
-      tx,
-      user.organizationId,
-      branch.id,
-      'PURCHASE_ORDER',
-    );
-    const purchase = await tx.purchase.create({
-      data: {
-        organizationId: user.organizationId,
-        branchId: branch.id,
-        supplierId,
-        purchaseNumber,
-        status: 'DRAFT',
-        ...header,
-        createdByUserId: user.id,
-        items: {
-          create: itemRows(priced),
-        },
+  const purchaseNumber = await allocateDocumentNumber(
+    tx,
+    user.organizationId,
+    branch.id,
+    'PURCHASE_ORDER',
+  );
+  const purchase = await tx.purchase.create({
+    data: {
+      organizationId: user.organizationId,
+      branchId: branch.id,
+      supplierId,
+      purchaseNumber,
+      status: 'DRAFT',
+      ...header,
+      createdByUserId: user.id,
+      items: {
+        create: itemRows(priced),
       },
-    });
+    },
+  });
+  await writeAuditLog(tx, {
+    organizationId: user.organizationId,
+    branchId: branch.id,
+    actorUserId: user.id,
+    action: 'purchase.created',
+    entityType: 'Purchase',
+    entityId: purchase.id,
+    afterData: {
+      purchaseNumber,
+      supplierId,
+      supplierInvoiceNumber: header.supplierInvoiceNumber,
+      lines: lines.length,
+      total: header.totalAmount,
+      ...discountAudit(priced),
+      dueDate: input.dueDate || null,
+    },
+  });
+  if (input.scannedFields) {
+    // The figures came from reading the bill, then the user's review.
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
       branchId: branch.id,
       actorUserId: user.id,
-      action: 'purchase.created',
+      action: 'purchase.filled_from_scan',
       entityType: 'Purchase',
       entityId: purchase.id,
       afterData: {
+        filled: input.scannedFields.split(',').filter(Boolean),
         purchaseNumber,
-        supplierId,
         supplierInvoiceNumber: header.supplierInvoiceNumber,
-        lines: lines.length,
         total: header.totalAmount,
-        ...discountAudit(priced),
-        dueDate: input.dueDate || null,
       },
     });
-    if (input.scannedFields) {
-      // The figures came from reading the bill, then the user's review.
-      await writeAuditLog(tx, {
-        organizationId: user.organizationId,
-        branchId: branch.id,
-        actorUserId: user.id,
-        action: 'purchase.filled_from_scan',
-        entityType: 'Purchase',
-        entityId: purchase.id,
-        afterData: {
-          filled: input.scannedFields.split(',').filter(Boolean),
-          purchaseNumber,
-          supplierInvoiceNumber: header.supplierInvoiceNumber,
-          total: header.totalAmount,
-        },
-      });
-    }
-    if (options.receive) {
-      const receipt = await receiveInTransaction(tx, user, purchase.id, null);
-      await settleOnReceipt(tx, user, purchase.id, settlement, receipt.itemIds);
-    }
-    await settleRequestKey(tx, user, rawInput, purchase.id);
-    return purchase;
-  }, RECEIPT_TRANSACTION);
+  }
+  if (options.receive) {
+    const receipt = await receiveInTransaction(tx, user, purchase.id, null);
+    await settleOnReceipt(tx, user, purchase.id, settlement, receipt.itemIds);
+  }
+  await settleRequestKey(tx, user, rawInput, purchase.id);
+  return purchase;
 }
 
 /** The discounts on a purchase, for its audit entry — only when there are any. */

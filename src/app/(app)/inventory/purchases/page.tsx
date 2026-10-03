@@ -3,6 +3,7 @@ import { Plus, ShoppingCart } from 'lucide-react';
 import type { PurchaseStatus } from '@/generated/prisma/enums';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { canExport } from '@/lib/data-transfer/exports';
+import { canImport, importColumns, importNote } from '@/lib/data-transfer/imports';
 import { listPurchases } from '@/lib/inventory/purchases';
 import { PURCHASE_STATUS_LABEL } from '@/lib/inventory/labels';
 import { formatCalendarDate, formatDate, formatMoney } from '@/lib/format';
@@ -66,6 +67,9 @@ export default async function PurchasesPage({
               entity="purchases"
               canExport={canExport(user, 'purchases')}
               label="purchases"
+              canImport={canImport(user, 'purchases')}
+              columns={importColumns('purchases')}
+              note={importNote('purchases')}
               search={new URLSearchParams(
                 Object.entries(params).filter(([, value]) => Boolean(value)) as [string, string][],
               ).toString()}

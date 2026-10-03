@@ -36,6 +36,8 @@ import { getStockOnHand, postMovement } from '@/lib/inventory/stock';
 import { getPayables } from '@/lib/finance/supplier-payments';
 import { getSupplierStatement } from '@/lib/finance/statements';
 import { getVatReturn } from '@/lib/finance/vat';
+import { importCsv } from '@/lib/data-transfer/imports';
+import { mergeSuppliers } from '@/lib/inventory/supplier-merge';
 import { calculateLine, filsToString, toFils } from '@/lib/money';
 import { localDateString } from '@/lib/format';
 import { createTestOrg, expectDomainError, RUN, type TestOrg } from './support';
@@ -520,6 +522,175 @@ describe('a received purchase’s details', () => {
         dueDate: daysAgo(3),
       }),
       /before the purchase date/,
+    );
+  });
+});
+
+describe('importing purchases from a spreadsheet', () => {
+  const supplierName = `Taimoor Auto Spare Parts ${RUN}`;
+  const heading =
+    'Supplier,Supplier TRN,Supplier invoice no.,Date,Part code,Part name,Quantity,Unit cost,VAT %,Line discount,Round-off,Amount paid,Payment method,Paid from';
+  // Taimoor's 38039 as a converted photo would give it: no item codes, paid in cash.
+  const taimoor = [
+    heading,
+    `${supplierName},104558747200001,TM-${RUN},${daysAgo(7).split('-').reverse().join('/')},,OIL 5W40-4LTR ${RUN},1,60.00,5,,,99.75,Cash,1000`,
+    `${supplierName},,TM-${RUN},,,ENG OIL 5W40-1LTR ${RUN},1,20.00,5,,,,,`,
+    `${supplierName},,TM-${RUN},,,OIL FILTER ${RUN},1,15.00,5,,,,,`,
+  ].join('\n');
+
+  test('one bill from three rows: supplier and parts added, received, paid in cash', async () => {
+    const outcome = await importCsv(a.owner, 'purchases', taimoor);
+    assert.deepEqual(outcome.errors, []);
+    assert.equal(outcome.created, 1, 'one purchase');
+    const supplierRow = await prisma.supplier.findFirstOrThrow({
+      where: { organizationId: a.organizationId, name: supplierName },
+    });
+    const purchase = await prisma.purchase.findFirstOrThrow({
+      where: { supplierId: supplierRow.id, supplierInvoiceNumber: `TM-${RUN}` },
+      include: { items: true },
+    });
+    assert.equal(purchase.status, 'RECEIVED');
+    assert.equal(purchase.items.length, 3);
+    assert.equal(purchase.subtotal?.toString(), '95');
+    assert.equal(purchase.taxAmount?.toString(), '4.75');
+    assert.equal(purchase.totalAmount?.toString(), '99.75');
+    assert.equal(purchase.supplierInvoiceDate?.toISOString().slice(0, 10), daysAgo(7));
+    const detail = await getPurchaseDetail(a.owner, purchase.id);
+    assert.equal(detail.paid, '99.75');
+    assert.equal(detail.owed, '0.00');
+    const stock = await bookedForPurchase(purchase.id);
+    assert.equal(stock.get(roles.INVENTORY), toFils('95.00'));
+    assert.equal(stock.get(roles.VAT_INPUT), toFils('4.75'));
+  });
+
+  test('the same file again: the bill is skipped, not entered twice', async () => {
+    const outcome = await importCsv(a.owner, 'purchases', taimoor);
+    assert.equal(outcome.created, 0);
+    assert.equal(outcome.skipped.length, 1);
+    assert.match(outcome.skipped[0].reason, /already entered as PO-/);
+  });
+
+  test('the same supplier spelled another way is found by its TRN — the bill is skipped', async () => {
+    const csv = [
+      heading,
+      `TAIMOOR AUTO SPARES L.L.C ${RUN},104558747200001,TM-${RUN},${daysAgo(7)},,OIL 5W40-4LTR ${RUN},1,60.00,5,,,,,`,
+    ].join('\n');
+    const before = await prisma.supplier.count({ where: { organizationId: a.organizationId } });
+    const outcome = await importCsv(a.owner, 'purchases', csv);
+    assert.equal(outcome.created, 0);
+    assert.match(outcome.skipped[0]?.reason ?? '', /already entered as PO-/);
+    assert.equal(
+      await prisma.supplier.count({ where: { organizationId: a.organizationId } }),
+      before,
+      'no second supplier for the same TRN',
+    );
+  });
+
+  test('a round-off and a line discount, paying later', async () => {
+    const csv = [
+      heading,
+      `Round-off Parts ${RUN},,RO-${RUN},${daysAgo(1)},,Part X ${RUN},2,5.00,5,1.00,-0.20,,,`,
+      `Round-off Parts ${RUN},,RO-${RUN},,,Part Y ${RUN},1,85.00,5,,,,,`,
+    ].join('\n');
+    const outcome = await importCsv(a.owner, 'purchases', csv);
+    assert.deepEqual(outcome.errors, []);
+    const purchase = await prisma.purchase.findFirstOrThrow({
+      where: { organizationId: a.organizationId, supplierInvoiceNumber: `RO-${RUN}` },
+    });
+    // 9.00 + 85.00 = 94.00, VAT 4.70 = 98.70, adjusted −0.20.
+    assert.equal(purchase.totalAmount?.toString(), '98.5');
+    assert.equal(purchase.roundingAdjustment.toString(), '-0.2');
+    const detail = await getPurchaseDetail(a.owner, purchase.id);
+    assert.equal(detail.paid, '0.00');
+    assert.equal(detail.owed, '98.50');
+  });
+
+  test('one bad row and nothing at all is written', async () => {
+    const before = await prisma.purchase.count({ where: { organizationId: a.organizationId } });
+    const csv = [
+      heading,
+      `Good Parts ${RUN},,GD-${RUN},${daysAgo(1)},,Good part ${RUN},1,10.00,5,,,,,`,
+      `Bad Parts ${RUN},,BD-${RUN},${daysAgo(1)},,Bad part ${RUN},1,ten,5,,,,,`,
+    ].join('\n');
+    const outcome = await importCsv(a.owner, 'purchases', csv);
+    assert.equal(outcome.created, 0);
+    assert.equal(outcome.errors.length, 1);
+    assert.equal(
+      await prisma.purchase.count({ where: { organizationId: a.organizationId } }),
+      before,
+    );
+  });
+});
+
+describe('merging a supplier entered twice', () => {
+  test('purchases and what is owed move to the kept supplier; the duplicate is archived', async () => {
+    const kept = await supplier('Al Amani Trading');
+    const twin = await prisma.supplier.create({
+      data: {
+        organizationId: a.organizationId,
+        name: `Al Amani ${RUN}`,
+        taxNumber: '100326808100003',
+        phone: '04 229 3400',
+      },
+    });
+    const bill = (supplierId: string, invoice: string) =>
+      createPurchase(
+        a.owner,
+        {
+          supplierId,
+          supplierInvoiceNumber: invoice,
+          items: [{ partId: part('C'), quantity: '1', unitCost: '20', taxRate: '5' }],
+          payment: 'later',
+        },
+        { receive: true },
+      );
+    await bill(kept.id, `AA-1-${RUN}`);
+    const theirs = await bill(twin.id, `AA-2-${RUN}`);
+
+    const merged = await mergeSuppliers(a.owner, twin.id, {
+      targetId: kept.id,
+      reason: 'Same supplier, short name',
+    });
+    assert.equal(merged.moved.purchases, 1);
+    const moved = await prisma.purchase.findUniqueOrThrow({ where: { id: theirs.id } });
+    assert.equal(moved.supplierId, kept.id);
+    // What is owed is all on the kept supplier now: 21.00 + 21.00.
+    const owed = await getPayables(a.owner, { supplierId: kept.id });
+    assert.equal(owed.rows.length, 2);
+    const keptRow = await prisma.supplier.findUniqueOrThrow({ where: { id: kept.id } });
+    assert.equal(keptRow.taxNumber, '100326808100003', 'a missing TRN taken from the duplicate');
+    assert.equal(keptRow.phone, '04 229 3400');
+    const twinRow = await prisma.supplier.findUniqueOrThrow({ where: { id: twin.id } });
+    assert.equal(twinRow.isActive, false);
+    assert.ok(
+      await prisma.auditLog.findFirst({
+        where: { entityId: kept.id, action: 'supplier.merged_in' },
+      }),
+    );
+  });
+
+  test('refused while both have the same bill, and into itself', async () => {
+    const one = await supplier('Twin bill A');
+    const two = await supplier('Twin bill B');
+    for (const id of [one.id, two.id]) {
+      await createPurchase(
+        a.owner,
+        {
+          supplierId: id,
+          supplierInvoiceNumber: `SAME-${RUN}`,
+          items: [{ partId: part('C'), quantity: '1', unitCost: '10', taxRate: '5' }],
+          payment: 'later',
+        },
+        { receive: true },
+      );
+    }
+    await expectDomainError(
+      mergeSuppliers(a.owner, two.id, { targetId: one.id }),
+      /the same bill entered twice/,
+    );
+    await expectDomainError(
+      mergeSuppliers(a.owner, one.id, { targetId: one.id }),
+      /different supplier/,
     );
   });
 });

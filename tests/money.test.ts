@@ -32,6 +32,7 @@ import {
   voidMoneyTransfer,
 } from '@/lib/finance/money';
 import { recordExpense } from '@/lib/finance/expenses';
+import { importCsv } from '@/lib/data-transfer/imports';
 import {
   addPartner,
   listOwnerMoney,
@@ -398,5 +399,94 @@ describe('owner’s money', () => {
   test('the books balance and nothing is left unbooked', async () => {
     assert.equal((await getBalanceSheet(a.owner)).balanced, true);
     assert.equal(await countUnbooked(a.owner), 0);
+  });
+});
+
+describe('importing expenses from a spreadsheet', () => {
+  const heading =
+    'Date,Description,Category,Amount,VAT %,VAT amount,Total,Vendor,Vendor TRN,Bill no.,Due date,Payment method,Paid from,Reference,Notes';
+
+  test('receipts with no VAT, paid from petty cash and cash; a VAT bill kept as printed', async () => {
+    const csv = [
+      heading,
+      `01/10/2026,Printer repair ${RUN},5150 Repairs & maintenance,,,,200.00,,,,,Cash,1005 Petty cash,,`,
+      `01/10/2026,Parts delivery ${RUN},5140,,,,10.00,,,,,Cash,1000,,`,
+      `${today()},Courier ${RUN},5140,,5,5.00,105.00,Courier Co ${RUN},,CC-${RUN},,Bank transfer,1010,TT-1,`,
+    ].join('\n');
+    const outcome = await importCsv(a.owner, 'expenses', csv);
+    assert.deepEqual(outcome.errors, []);
+    assert.equal(outcome.created, 3);
+    const printer = await prisma.expense.findFirstOrThrow({
+      where: { organizationId: a.organizationId, description: `Printer repair ${RUN}` },
+      include: { chartOfAccount: { select: { accountCode: true } } },
+    });
+    assert.equal(printer.amount.toString(), '200');
+    assert.equal(printer.taxAmount?.toString() ?? '0', '0', 'no VAT without a tax invoice');
+    assert.equal(printer.chartOfAccount?.accountCode, '5150');
+    assert.equal(printer.paidFromAccountId, pettyId);
+    const courier = await prisma.expense.findFirstOrThrow({
+      where: { organizationId: a.organizationId, billNumber: `CC-${RUN}` },
+    });
+    assert.equal(courier.amount.toString(), '100', '105.00 less the 5.00 VAT printed');
+    assert.equal(courier.taxAmount?.toString(), '5');
+    assert.equal(courier.paidFromAccountId, roles.BANK);
+  });
+
+  test('the same bill again is skipped, not entered twice', async () => {
+    const csv = [
+      heading,
+      `${today()},Courier ${RUN},5140,,5,5.00,105.00,Courier Co ${RUN},,CC-${RUN},,Bank transfer,1010,,`,
+    ].join('\n');
+    const outcome = await importCsv(a.owner, 'expenses', csv);
+    assert.equal(outcome.created, 0);
+    assert.match(outcome.skipped[0]?.reason ?? '', /already entered/);
+  });
+
+  test('a semicolon file with headings like Total (AED); a VAT rate without its amount', async () => {
+    const csv = [
+      'Date;Description;Category;VAT %;Total (AED);Payment method;Paid from',
+      `${today()};Tea and water ${RUN};5120 Workshop supplies;;45.50;Cash;1005 Petty cash`,
+      `${today()};Toner ${RUN};5240;5;105.00;Cash;1000`,
+    ].join('\n');
+    const outcome = await importCsv(a.owner, 'expenses', csv);
+    assert.deepEqual(outcome.errors, []);
+    assert.equal(outcome.created, 2);
+    const tea = await prisma.expense.findFirstOrThrow({
+      where: { organizationId: a.organizationId, description: `Tea and water ${RUN}` },
+    });
+    assert.equal(tea.amount.toString(), '45.5');
+    const toner = await prisma.expense.findFirstOrThrow({
+      where: { organizationId: a.organizationId, description: `Toner ${RUN}` },
+    });
+    // 105.00 with 5% VAT in it: 100.00 + 5.00 — the rate is never read as the VAT amount.
+    assert.equal(toner.amount.toString(), '100');
+    assert.equal(toner.taxAmount?.toString(), '5');
+  });
+
+  test('a purchases file is turned away with where it belongs', async () => {
+    const csv = [
+      'Supplier,Supplier invoice no.,Date,Part name,Quantity,Unit cost',
+      `Parts Co ${RUN},P-1,${today()},Filter,1,15.00`,
+    ].join('\n');
+    const outcome = await importCsv(a.owner, 'expenses', csv);
+    assert.equal(outcome.created, 0);
+    assert.equal(outcome.errors.length, 1);
+    assert.match(outcome.errors[0].message, /purchases file/);
+  });
+
+  test('an unknown category and nothing at all is written', async () => {
+    const before = await prisma.expense.count({ where: { organizationId: a.organizationId } });
+    const csv = [
+      heading,
+      `${today()},Good one ${RUN},5140,,,,12.00,,,,,Cash,1000,,`,
+      `${today()},Bad one ${RUN},Flowers and gifts,,,,30.00,,,,,Cash,1000,,`,
+    ].join('\n');
+    const outcome = await importCsv(a.owner, 'expenses', csv);
+    assert.equal(outcome.created, 0);
+    assert.match(outcome.errors[0]?.message ?? '', /not an expense account/);
+    assert.equal(
+      await prisma.expense.count({ where: { organizationId: a.organizationId } }),
+      before,
+    );
   });
 });

@@ -14,6 +14,8 @@ import { VoidExpenseButton } from '@/components/finance/void-expense';
 import { EditExpenseButton } from '@/components/finance/edit-expense';
 import { ExpenseBills } from '@/components/finance/expense-bills';
 import { listExpenseBills } from '@/lib/finance/expense-bills';
+import { canImport, importColumns, importNote } from '@/lib/data-transfer/imports';
+import { ListDataActions } from '@/components/shared/list-data-actions';
 
 const METHOD_LABEL: Record<string, string> = {
   CASH: 'Cash',
@@ -80,6 +82,17 @@ export default async function ExpensesPage({
         eyebrow="Receivables & payables"
         title="Expenses & bills"
         description="What the workshop spends to keep running — rent, utilities, supplies. Parts bought for a job are purchases, not expenses."
+        actions={
+          canImport(user, 'expenses') ? (
+            <ListDataActions
+              entity="expenses"
+              label="expenses"
+              canImport
+              columns={importColumns('expenses')}
+              note={importNote('expenses')}
+            />
+          ) : undefined
+        }
       />
 
       {/* Totals for exactly the expenses listed below. */}
