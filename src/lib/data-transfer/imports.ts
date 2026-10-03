@@ -17,6 +17,8 @@ import {
   type ImportOutcome,
 } from '@/lib/data-transfer/import-rows';
 import { DOCUMENT_IMPORTS } from '@/lib/data-transfer/document-imports';
+import { PURCHASE_IMPORTS } from '@/lib/data-transfer/purchase-imports';
+import { EXPENSE_IMPORTS } from '@/lib/data-transfer/expense-imports';
 
 export type { ImportColumn, ImportOutcome } from '@/lib/data-transfer/import-rows';
 
@@ -257,6 +259,8 @@ export const IMPORTS: Record<string, ImportDefinition> = {
   },
 
   ...DOCUMENT_IMPORTS,
+  ...PURCHASE_IMPORTS,
+  ...EXPENSE_IMPORTS,
 };
 
 export function isImportable(entity: string): boolean {

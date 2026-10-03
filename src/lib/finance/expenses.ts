@@ -59,7 +59,13 @@ const expenseSchema = z.object({
    * the VAT reclaimed must be what the tax invoice says.
    */
   taxAmount: z
-    .union([z.literal(''), z.string().trim().regex(/^\d{1,9}(\.\d{1,2})?$/, 'Enter the VAT like 12.50.')])
+    .union([
+      z.literal(''),
+      z
+        .string()
+        .trim()
+        .regex(/^\d{1,9}(\.\d{1,2})?$/, 'Enter the VAT like 12.50.'),
+    ])
     .optional(),
   expenseDate: z
     .string({ error: 'Choose the date.' })
@@ -79,7 +85,13 @@ const expenseSchema = z.object({
     ),
   /** A bill not paid yet: when it is due. */
   dueDate: z
-    .union([z.literal(''), z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the due date.')])
+    .union([
+      z.literal(''),
+      z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the due date.'),
+    ])
     .optional(),
   /** The transfer, cheque or card-slip number it was paid with. */
   paymentReference: z.string().trim().max(60, 'Keep the reference under 60 characters.').optional(),
@@ -266,9 +278,21 @@ async function assertCategory(organizationId: string, categoryId: string | null)
 }
 
 export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) {
+  return prisma.$transaction((tx) => recordExpenseInTransaction(tx, user, rawInput));
+}
+
+/**
+ * recordExpense in a transaction the caller already holds — the expense
+ * import uses it, so every imported expense follows exactly the form's rules.
+ */
+export async function recordExpenseInTransaction(
+  tx: Prisma.TransactionClient,
+  user: AuthenticatedUser,
+  rawInput: unknown,
+) {
   const input = parseInput(expenseSchema, rawInput);
   requirePermission(user, 'expense.create');
-  const branch = await resolveInventoryBranch(user);
+  const branch = await resolveInventoryBranch(user, tx);
 
   if (toFils(input.amount) <= 0)
     throw new DomainError('The amount must be more than zero.', 'amount');
@@ -277,85 +301,85 @@ export async function recordExpense(user: AuthenticatedUser, rawInput: unknown) 
   await assertCategory(user.organizationId, categoryId);
   const money = split(input.amount, taxRate, emptyToNull(input.taxAmount) ?? undefined);
 
-  return prisma.$transaction(async (tx) => {
-    await claimRequestKey(tx, user, rawInput, 'expense.record');
-    await assertBillFree(
-      tx,
-      user.organizationId,
-      emptyToNull(input.vendorName),
-      emptyToNull(input.billNumber),
-    );
-    const { paidPersonallyBy, ...payer } = await readPayer(tx, user.organizationId, input);
-    const details = readDetails(input, payer);
-    // EXP-000123: the voucher number it is filed and found under.
-    const expenseNumber = await allocateDocumentNumber(
-      tx,
-      user.organizationId,
-      branch.id,
-      'EXPENSE_VOUCHER',
-    );
-    const expense = await tx.expense.create({
-      data: {
-        organizationId: user.organizationId,
-        branchId: branch.id,
-        expenseNumber,
-        ...details,
-        chartOfAccountId: categoryId,
-        description: input.description.replace(/\s+/g, ' '),
-        // `amount` is the net; `taxAmount` the VAT on top, so net + tax is
-        // what left the bank. This matches how the invoice stores money.
-        amount: money.net,
-        taxRate: taxRate,
-        taxAmount: taxRate ? money.tax : null,
-        taxCodeId,
-        expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
-        vendorName: emptyToNull(input.vendorName),
-        billNumber: emptyToNull(input.billNumber),
-        // Paid from an account, by an owner personally, or not yet.
-        ...payer,
-        recordedByUserId: user.id,
-      },
-    });
+  await claimRequestKey(tx, user, rawInput, 'expense.record');
+  await assertBillFree(
+    tx,
+    user.organizationId,
+    emptyToNull(input.vendorName),
+    emptyToNull(input.billNumber),
+  );
+  const { paidPersonallyBy, ...payer } = await readPayer(tx, user.organizationId, input);
+  const details = readDetails(input, payer);
+  // EXP-000123: the voucher number it is filed and found under.
+  const expenseNumber = await allocateDocumentNumber(
+    tx,
+    user.organizationId,
+    branch.id,
+    'EXPENSE_VOUCHER',
+  );
+  const expense = await tx.expense.create({
+    data: {
+      organizationId: user.organizationId,
+      branchId: branch.id,
+      expenseNumber,
+      ...details,
+      chartOfAccountId: categoryId,
+      description: input.description.replace(/\s+/g, ' '),
+      // `amount` is the net; `taxAmount` the VAT on top, so net + tax is
+      // what left the bank. This matches how the invoice stores money.
+      amount: money.net,
+      taxRate: taxRate,
+      taxAmount: taxRate ? money.tax : null,
+      taxCodeId,
+      expenseDate: new Date(`${input.expenseDate}T00:00:00Z`),
+      vendorName: emptyToNull(input.vendorName),
+      billNumber: emptyToNull(input.billNumber),
+      // Paid from an account, by an owner personally, or not yet.
+      ...payer,
+      recordedByUserId: user.id,
+    },
+  });
+  await writeAuditLog(tx, {
+    organizationId: user.organizationId,
+    branchId: branch.id,
+    actorUserId: user.id,
+    action: 'expense.recorded',
+    entityType: 'Expense',
+    entityId: expense.id,
+    afterData: {
+      description: expense.description,
+      amount: money.net,
+      taxAmount: money.tax,
+      total: money.total,
+      ...(money.tax !== money.calculatedTax
+        ? { vatAsOnBill: true, calculatedTax: money.calculatedTax }
+        : {}),
+      expenseDate: input.expenseDate,
+      vendorName: expense.vendorName,
+      paymentMethod: expense.paymentMethod,
+      paidPersonallyBy,
+    },
+  });
+  if (input.scannedFields) {
+    // The figures came from reading the bill, then the user's review.
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
       branchId: branch.id,
       actorUserId: user.id,
-      action: 'expense.recorded',
+      action: 'expense.filled_from_scan',
       entityType: 'Expense',
       entityId: expense.id,
       afterData: {
-        description: expense.description,
-        amount: money.net,
-        taxAmount: money.tax,
-        total: money.total,
-        ...(money.tax !== money.calculatedTax ? { vatAsOnBill: true, calculatedTax: money.calculatedTax } : {}),
-        expenseDate: input.expenseDate,
+        filled: input.scannedFields.split(',').filter(Boolean),
+        billNumber: expense.billNumber,
         vendorName: expense.vendorName,
-        paymentMethod: expense.paymentMethod,
-        paidPersonallyBy,
+        total: money.total,
       },
     });
-    if (input.scannedFields) {
-      // The figures came from reading the bill, then the user's review.
-      await writeAuditLog(tx, {
-        organizationId: user.organizationId,
-        branchId: branch.id,
-        actorUserId: user.id,
-        action: 'expense.filled_from_scan',
-        entityType: 'Expense',
-        entityId: expense.id,
-        afterData: {
-          filled: input.scannedFields.split(',').filter(Boolean),
-          billNumber: expense.billNumber,
-          vendorName: expense.vendorName,
-          total: money.total,
-        },
-      });
-    }
-    await syncPosting(tx, user.organizationId, 'EXPENSE', expense.id, user.id);
-    await settleRequestKey(tx, user, rawInput, expense.id);
-    return expense;
-  });
+  }
+  await syncPosting(tx, user.organizationId, 'EXPENSE', expense.id, user.id);
+  await settleRequestKey(tx, user, rawInput, expense.id);
+  return expense;
 }
 
 /**
@@ -591,7 +615,6 @@ export async function getExpenseFormOptions(user: AuthenticatedUser) {
     })),
   };
 }
-
 
 /**
  * One expense, in full: what it was, what it cost and the VAT reclaimed, who

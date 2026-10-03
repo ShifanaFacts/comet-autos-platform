@@ -4,6 +4,8 @@ import { Cog, FileSpreadsheet, Pencil, Plus, ShoppingCart } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getSupplierDetail } from '@/lib/inventory/suppliers';
+import { getSupplierMergeOptions } from '@/lib/inventory/supplier-merge';
+import { MergeSupplierButton } from '@/components/inventory/merge-supplier';
 import { formatCalendarDate, formatDate, formatMoney } from '@/lib/format';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -34,6 +36,11 @@ export default async function SupplierDetailPage({ params }: { params: Promise<{
   const canManage = hasPermission(user, 'inventory.create');
   const canPurchase = hasPermission(user, 'purchase.create');
   const canStatement = hasPermission(user, 'invoice.view');
+  // Merging a duplicate is a deletion of sorts: the same right as deleting a supplier.
+  const mergeOptions =
+    supplier.isActive && hasPermission(user, 'inventory.delete')
+      ? await getSupplierMergeOptions(user, supplier.id)
+      : null;
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -77,6 +84,13 @@ export default async function SupplierDetailPage({ params }: { params: Promise<{
                 <Pencil />
                 Edit supplier
               </LinkButton>
+            ) : null}
+            {mergeOptions && mergeOptions.others.length ? (
+              <MergeSupplierButton
+                supplierId={supplier.id}
+                name={supplier.name}
+                options={mergeOptions}
+              />
             ) : null}
             {canPurchase && supplier.isActive ? (
               <LinkButton href={`/inventory/purchases/new?supplier=${supplier.id}`} size="lg">

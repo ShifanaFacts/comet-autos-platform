@@ -8,6 +8,7 @@ import type { ActionResult } from '@/lib/errors';
 import { formDataToObject } from '@/lib/form-data';
 import { adjustStock, createPart, reverseMovement, updatePart } from '@/lib/inventory/parts';
 import { createSupplier, updateSupplier } from '@/lib/inventory/suppliers';
+import { mergeSuppliers } from '@/lib/inventory/supplier-merge';
 import {
   cancelPurchase,
   createPurchase,
@@ -210,4 +211,18 @@ export async function cancelPurchaseAction(purchaseId: string): Promise<ActionRe
   const result = await runAction(() => cancelPurchase(user, purchaseId));
   if (result.ok) refreshInventory();
   return toClientResult(result);
+}
+
+/** Merges this supplier into the one kept, then opens the kept supplier. */
+export async function mergeSupplierAction(
+  duplicateId: string,
+  input: { targetId: string; reason: string; requestKey: string },
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => mergeSuppliers(user, duplicateId, input));
+  const targetId = result.data?.targetId ?? (result.duplicate ? result.duplicateOf : null);
+  if (!result.ok || !targetId) return toClientResult(result);
+  refreshInventory();
+  revalidatePath('/finance', 'layout');
+  redirect(`/inventory/suppliers/${targetId}?merged=1`);
 }

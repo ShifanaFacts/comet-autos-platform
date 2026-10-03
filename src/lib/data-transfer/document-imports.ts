@@ -64,7 +64,7 @@ import {
 // Reading cells
 
 /** Amounts as a spreadsheet may hold them: "1,250.00", "AED 1250". */
-function readAmount(value: string): string {
+export function readAmount(value: string): string {
   return value
     .replace(/^AED\s*/i, '')
     .replace(/\s*AED$/i, '')
@@ -180,7 +180,7 @@ const PAYMENT_METHODS: [RegExp, PaymentMethod][] = [
   [/^online/, 'ONLINE'],
 ];
 
-function readPaymentMethod(value: string): PaymentMethod {
+export function readPaymentMethod(value: string): PaymentMethod {
   const text = value.trim().toLowerCase();
   if (!text) return 'CASH';
   const found = PAYMENT_METHODS.find(([pattern]) => pattern.test(text));
