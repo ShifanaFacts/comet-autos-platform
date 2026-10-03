@@ -93,6 +93,7 @@ export async function getCustomerOutstanding(
       totalAmount: true,
       creditedAmount: true,
       advanceAppliedAmount: true,
+      settlementDiscount: true,
       customer: { select: { id: true, name: true, phone: true } },
       jobCard: { select: { id: true, jobNumber: true } },
       payments: {

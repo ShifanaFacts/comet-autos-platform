@@ -7,8 +7,9 @@ import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { parseInput } from '@/lib/form-data';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
-import { filsToString, toFils } from '@/lib/money';
+import { calculateDocument, calculateLine, filsToString, readDiscount, toFils } from '@/lib/money';
 import { emptyToNull } from '@/lib/normalize';
+import { localDateString, parseCalendarDate } from '@/lib/format';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import {
   applyJobStatusChange,
@@ -24,12 +25,16 @@ import {
   lineData,
   lineSchema,
   priceDocument,
+  roundingField,
+  storedLineAmounts,
   totalsData,
+  withRounding,
 } from '@/lib/billing/document-lines';
 import { resolveTaxCodes } from '@/lib/accounting/tax-codes';
+import { syncJobWithInvoice } from '@/lib/billing/credit-notes';
 
 /*
- * Correcting billing after the fact. Three doors, each narrow on purpose:
+ * Correcting billing after the fact. Four doors, each narrow on purpose:
  *
  *   updateInvoice          fix the lines of an invoice nobody has paid yet.
  *                          The number and issue date stay; the audit log
@@ -42,9 +47,14 @@ import { resolveTaxCodes } from '@/lib/accounting/tax-codes';
  *                          never edited or deleted — a reversal row cancels
  *                          it (the Payment model's rule) — and the invoice
  *                          and job card step back to match.
+ *   discountInvoice        a discount given after the invoice, out of what
+ *                          is still due ("the customer paid 154.00 less"):
+ *                          the lines stay, the discount goes on the bill and
+ *                          VAT comes down with it. removeInvoiceDiscount
+ *                          takes it off again.
  *
  * Money already received is never silently rewritten: an invoice with a
- * payment on it must have that payment reversed before it can change.
+ * payment on it must have that payment reversed before its lines can change.
  */
 
 const REASON = z
@@ -111,6 +121,8 @@ const updateSchema = z.object({
     .min(1, 'An invoice needs at least one line.')
     .max(100, 'An invoice can have at most 100 lines.'),
   ...discountFields,
+  /** A round-off after VAT, outside VAT: "-0.50", "0.25" or blank. */
+  roundingAdjustment: roundingField,
   dueDate: z.string().trim().optional(),
   customerReference: z
     .string()
@@ -131,6 +143,13 @@ const isCredited = (invoice: { creditedAmount?: { toString(): string } }) =>
 const hasAdvanceApplied = (invoice: { advanceAppliedAmount?: { toString(): string } }) =>
   invoice.advanceAppliedAmount !== undefined && toFils(invoice.advanceAppliedAmount.toString()) > 0;
 
+/** A discount given after the invoice (discountInvoice). */
+const hasSettlementDiscount = (invoice: { settlementDiscount?: { toString(): string } }) =>
+  invoice.settlementDiscount !== undefined && toFils(invoice.settlementDiscount.toString()) > 0;
+
+const SETTLEMENT_DISCOUNT = (to: string) =>
+  `A discount was given on this invoice after it. Take the discount off first to ${to}.`;
+
 const ADVANCE_APPLIED = (to: string) =>
   `A customer advance has been applied to this invoice. Undo it on the invoice first to ${to}.`;
 
@@ -141,6 +160,7 @@ export function invoiceEditBlocker(invoice: {
   paidAmount?: string;
   creditedAmount?: { toString(): string };
   advanceAppliedAmount?: { toString(): string };
+  settlementDiscount?: { toString(): string };
   items: { labourId: string | null; partUsageId: string | null }[];
 }): string | null {
   if (invoice.status === 'VOID' || invoice.status === 'CANCELLED') return 'This invoice is void.';
@@ -149,6 +169,7 @@ export function invoiceEditBlocker(invoice: {
   }
   if (isCredited(invoice)) return CREDITED;
   if (hasAdvanceApplied(invoice)) return ADVANCE_APPLIED('change the invoice');
+  if (hasSettlementDiscount(invoice)) return SETTLEMENT_DISCOUNT('change the invoice');
   if (
     invoice.status !== 'ISSUED' ||
     (invoice.paidAmount !== undefined && toFils(invoice.paidAmount) > 0)
@@ -181,6 +202,7 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
       paidAmount: filsToString(paidFils(invoice.payments)),
       creditedAmount: invoice.creditedAmount,
       advanceAppliedAmount: invoice.advanceAppliedAmount,
+      settlementDiscount: invoice.settlementDiscount,
       items: invoice.items,
     });
     if (blocker) throw new DomainError(blocker);
@@ -224,6 +246,7 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
         select: { name: true, taxNumber: true, address: true },
       }),
     ]);
+    const rounded = withRounding(totals, input.roundingAdjustment);
     const parties = {
       sellerLegalName: organization.legalName ?? organization.name,
       sellerTaxNumber: organization.taxNumber,
@@ -237,6 +260,7 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
       where: { id: invoice.id },
       data: {
         ...totalsData(totals),
+        ...rounded,
         dueDate,
         customerReference: emptyToNull(input.customerReference),
         notes: emptyToNull(input.notes),
@@ -260,6 +284,7 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
         subtotal: invoice.subtotal.toString(),
         taxAmount: invoice.taxAmount.toString(),
         totalAmount: invoice.totalAmount.toString(),
+        roundingAdjustment: invoice.roundingAdjustment.toString(),
         dueDate: invoice.dueDate?.toISOString().slice(0, 10) ?? null,
         customerReference: invoice.customerReference,
         notes: invoice.notes,
@@ -283,7 +308,8 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
         discountAmount: totals.discountAmount,
         subtotal: totals.subtotal,
         taxAmount: totals.taxAmount,
-        totalAmount: totals.totalAmount,
+        totalAmount: rounded.totalAmount,
+        roundingAdjustment: rounded.roundingAdjustment,
         dueDate: dueDate.toISOString().slice(0, 10),
         customerReference: emptyToNull(input.customerReference),
         notes: emptyToNull(input.notes),
@@ -293,6 +319,391 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
     });
     await settleRequestKey(tx, user, rawInput, invoice.id);
     return { invoiceId: invoice.id };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// A discount after the invoice
+// ---------------------------------------------------------------------------
+
+const discountSchema = z.object({
+  amount: z
+    .string({ error: 'Enter the discount.' })
+    .trim()
+    .regex(/^\d+(\.\d{1,2})?$/, 'Enter the discount like 154 or 154.50.'),
+  /** The day it was given; today when left out. */
+  givenOn: z.string().trim().optional(),
+  reason: z.string().trim().max(500, 'Keep the reason under 500 characters.').optional(),
+  requestKey: z.string().optional(),
+});
+
+const removeDiscountSchema = z.object({ reason: REASON, requestKey: z.string().optional() });
+
+/** Why a discount can't be given on an invoice now, or null when it can. */
+export function invoiceDiscountBlocker(invoice: {
+  status: string;
+  invoiceType: string;
+  creditedAmount: { toString(): string };
+  settlementDiscount: { toString(): string };
+}): string | null {
+  if (invoice.status === 'VOID' || invoice.status === 'CANCELLED') return 'This invoice is void.';
+  if (invoice.invoiceType !== 'TAX_INVOICE') return 'A discount is given on a tax invoice.';
+  if (invoice.status === 'DRAFT') return 'Issue the invoice first.';
+  // Before "paid": an invoice a credit note settled says what is in the way.
+  if (isCredited(invoice)) {
+    return 'A credit note stands against this invoice. Void it first to give the discount instead.';
+  }
+  if (toFils(invoice.settlementDiscount.toString()) > 0) {
+    return 'A discount has already been given on this invoice. Take it off first to give a different one.';
+  }
+  if (invoice.status === 'PAID') return 'This invoice is already fully paid.';
+  return null;
+}
+
+/** What the audit log keeps of an invoice's settlement, before and after. */
+function settlementSnapshot(invoice: {
+  totalAmount: { toString(): string };
+  taxAmount: { toString(): string };
+  settlementDiscount: { toString(): string };
+  settlementDiscountOn: Date | null;
+  status: string;
+}) {
+  return {
+    totalAmount: invoice.totalAmount.toString(),
+    taxAmount: invoice.taxAmount.toString(),
+    settlementDiscount: invoice.settlementDiscount.toString(),
+    settlementDiscountOn: invoice.settlementDiscountOn?.toISOString().slice(0, 10) ?? null,
+    status: invoice.status,
+  };
+}
+
+/**
+ * Gives a discount after the invoice, off its total: "the invoice is 3,654,
+ * the customer paid 3,500, the 154 is a discount". Out of what is still due.
+ * No credit note: the invoice keeps its total, lines and VAT exactly as
+ * issued (only a tax credit note reduces VAT) — the discount comes off what
+ * is owed. Booked as its own entry on the day given: Dr Sales discounts, Cr
+ * receivables. Once nothing is due, the invoice — and its job card — are paid.
+ */
+export async function discountInvoice(
+  user: AuthenticatedUser,
+  invoiceId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(discountSchema, rawInput);
+  const amount = toFils(input.amount, 'Discount');
+  if (amount <= 0) throw new DomainError('Enter the discount.', 'amount');
+  const givenOnDay = input.givenOn || localDateString();
+  const givenOn = parseCalendarDate(givenOnDay);
+  if (!givenOn) throw new DomainError('Enter the date the discount was given.', 'givenOn');
+  if (givenOnDay > localDateString()) {
+    throw new DomainError('The discount cannot be dated in the future.', 'givenOn');
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'invoice.discount');
+    const invoice = await lockInvoice(tx, user.organizationId, invoiceId);
+    requirePermission(user, 'invoice.edit', { branchId: invoice.branchId });
+    const blocker = invoiceDiscountBlocker(invoice);
+    if (blocker) throw new DomainError(blocker);
+    if (givenOn < invoice.issueDate) {
+      throw new DomainError('The discount cannot be dated before the invoice.', 'givenOn');
+    }
+    const paid = paidFils(invoice.payments);
+    const due = dueFils(invoice, paid);
+    if (amount > due) {
+      throw new DomainError(`Only ${filsToString(due)} is still due on this invoice.`, 'amount');
+    }
+
+    const settlementDiscount = filsToString(amount);
+    const status = settlementStatus({ ...invoice, settlementDiscount }, paid);
+    const after = await tx.invoice.update({
+      where: { id: invoice.id },
+      data: { settlementDiscount, settlementDiscountOn: givenOn, status },
+    });
+    await syncPosting(tx, user.organizationId, 'INVOICE_DISCOUNT', invoice.id, user.id);
+    await syncJobWithInvoice(tx, user.organizationId, invoice.id, user.id, {
+      reason: 'invoice_discounted',
+    });
+
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: invoice.branchId,
+      actorUserId: user.id,
+      action: 'invoice.discount_given',
+      entityType: 'Invoice',
+      entityId: invoice.id,
+      beforeData: settlementSnapshot(invoice),
+      afterData: settlementSnapshot(after),
+      metadata: {
+        invoiceNumber: invoice.invoiceNumber,
+        dueBefore: filsToString(due),
+        dueAfter: filsToString(due - amount),
+        reason: emptyToNull(input.reason),
+      },
+    });
+    await settleRequestKey(tx, user, rawInput, invoice.id);
+    return { invoiceId: invoice.id, settlementDiscount, status };
+  });
+}
+
+/**
+ * Takes a discount given after the invoice off again (given in error): its
+ * entry is reversed, and whatever was paid stands, so the invoice is owed
+ * the discount again — and a paid job card goes back to invoiced.
+ */
+export async function removeInvoiceDiscount(
+  user: AuthenticatedUser,
+  invoiceId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(removeDiscountSchema, rawInput);
+  return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'invoice.discount_remove');
+    const invoice = await lockInvoice(tx, user.organizationId, invoiceId);
+    requirePermission(user, 'invoice.edit', { branchId: invoice.branchId });
+    if (invoice.status === 'VOID' || invoice.status === 'CANCELLED') {
+      throw new DomainError('This invoice is void.');
+    }
+    if (toFils(invoice.settlementDiscount.toString()) === 0) {
+      throw new DomainError('No discount has been given on this invoice.');
+    }
+    const status = settlementStatus(
+      { ...invoice, settlementDiscount: '0' },
+      paidFils(invoice.payments),
+    );
+    const after = await tx.invoice.update({
+      where: { id: invoice.id },
+      data: { settlementDiscount: '0', settlementDiscountOn: null, status },
+    });
+    await syncPosting(tx, user.organizationId, 'INVOICE_DISCOUNT', invoice.id, user.id);
+    await syncJobWithInvoice(tx, user.organizationId, invoice.id, user.id, {
+      reason: 'invoice_discount_removed',
+    });
+
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: invoice.branchId,
+      actorUserId: user.id,
+      action: 'invoice.discount_removed',
+      entityType: 'Invoice',
+      entityId: invoice.id,
+      beforeData: settlementSnapshot(invoice),
+      afterData: settlementSnapshot(after),
+      metadata: { invoiceNumber: invoice.invoiceNumber, reason: input.reason },
+    });
+    await settleRequestKey(tx, user, rawInput, invoice.id);
+    return { invoiceId: invoice.id, status };
+  });
+}
+
+/**
+ * Takes a discount on the bill (before VAT, part of the invoice's own
+ * pricing) off an invoice that already has money on it: the lines priced as
+ * they were without it, VAT back to its full amount, the round-off cleared,
+ * the invoice's entry corrected. Whatever was paid stands, so the invoice is
+ * owed the difference again — and a paid job card goes back to invoiced.
+ * (An unpaid invoice is simply edited.)
+ */
+export async function removeBillDiscount(
+  user: AuthenticatedUser,
+  invoiceId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(removeDiscountSchema, rawInput);
+  return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'invoice.bill_discount_remove');
+    const invoice = await lockInvoice(tx, user.organizationId, invoiceId);
+    requirePermission(user, 'invoice.edit', { branchId: invoice.branchId });
+    if (invoice.status === 'VOID' || invoice.status === 'CANCELLED') {
+      throw new DomainError('This invoice is void.');
+    }
+    if (toFils(invoice.discountAmount.toString()) === 0) {
+      throw new DomainError('This invoice has no discount on the bill.');
+    }
+    if (isCredited(invoice)) throw new DomainError(CREDITED);
+    if (toFils(invoice.settlementDiscount.toString()) > 0) {
+      throw new DomainError('Take off the discount given after the invoice first.');
+    }
+
+    // Each line priced as it was issued: its own discount, its own VAT.
+    const lines = invoice.items.map((item) => {
+      const line = calculateLine({
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        taxRate: (item.taxRate ?? 0).toString(),
+        discount: readDiscount(item.discountType, item.discountValue),
+      });
+      if (line.lineTotalFils !== toFils(item.lineTotal.toString())) {
+        throw new DomainError('This invoice’s lines don’t price as stored. Correct it instead.');
+      }
+      return line;
+    });
+    const priced = calculateDocument(lines, null);
+    for (const [index, item] of invoice.items.entries()) {
+      await tx.invoiceItem.update({
+        where: { id: item.id },
+        data: { taxAmount: priced.lines[index].taxAmount },
+      });
+    }
+    const totalAmount = priced.totals.totalAmount;
+    const status = settlementStatus({ ...invoice, totalAmount }, paidFils(invoice.payments));
+    const after = await tx.invoice.update({
+      where: { id: invoice.id },
+      data: { ...totalsData(priced.totals), roundingAdjustment: '0', status },
+    });
+    await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
+    await syncJobWithInvoice(tx, user.organizationId, invoice.id, user.id, {
+      reason: 'bill_discount_removed',
+    });
+
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: invoice.branchId,
+      actorUserId: user.id,
+      action: 'invoice.bill_discount_removed',
+      entityType: 'Invoice',
+      entityId: invoice.id,
+      beforeData: {
+        discountAmount: invoice.discountAmount.toString(),
+        subtotal: invoice.subtotal.toString(),
+        taxAmount: invoice.taxAmount.toString(),
+        totalAmount: invoice.totalAmount.toString(),
+        roundingAdjustment: invoice.roundingAdjustment.toString(),
+        status: invoice.status,
+      },
+      afterData: {
+        discountAmount: after.discountAmount.toString(),
+        subtotal: after.subtotal.toString(),
+        taxAmount: after.taxAmount.toString(),
+        totalAmount: after.totalAmount.toString(),
+        roundingAdjustment: after.roundingAdjustment.toString(),
+        status: after.status,
+      },
+      metadata: { invoiceNumber: invoice.invoiceNumber, reason: input.reason },
+    });
+    await settleRequestKey(tx, user, rawInput, invoice.id);
+    return { invoiceId: invoice.id, totalAmount, status };
+  });
+}
+
+const billDiscountSchema = z.object({
+  /** Before VAT, as on the invoice form's discount. */
+  discount: z
+    .string({ error: 'Enter the discount.' })
+    .trim()
+    .regex(/^\d+(\.\d{1,2})?$/, 'Enter the discount like 146.68.'),
+  reason: REASON,
+  requestKey: z.string().optional(),
+});
+
+/**
+ * Puts a discount on the bill of an invoice that already has money on it,
+ * as if it had been on the invoice when it was made: before VAT, shared
+ * across the lines, each line's VAT worked out on what is left — the same
+ * pricing as the invoice form — so VAT comes down with it and no credit note
+ * is needed. The lines stay; the invoice's entry is corrected. Never below
+ * what is already paid or applied. (An unpaid invoice is simply edited.)
+ */
+export async function addBillDiscount(
+  user: AuthenticatedUser,
+  invoiceId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(billDiscountSchema, rawInput);
+  return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'invoice.bill_discount_add');
+    const invoice = await lockInvoice(tx, user.organizationId, invoiceId);
+    requirePermission(user, 'invoice.edit', { branchId: invoice.branchId });
+    if (invoice.status === 'VOID' || invoice.status === 'CANCELLED') {
+      throw new DomainError('This invoice is void.');
+    }
+    if (invoice.invoiceType !== 'TAX_INVOICE') {
+      throw new DomainError('A discount on the bill is given on a tax invoice.');
+    }
+    if (invoice.status === 'DRAFT') throw new DomainError('Edit the draft instead.');
+    if (toFils(invoice.discountAmount.toString()) > 0) {
+      throw new DomainError('This invoice already has a discount on the bill. Take it off first.');
+    }
+    if (isCredited(invoice)) throw new DomainError(CREDITED);
+    if (hasSettlementDiscount(invoice)) {
+      throw new DomainError(SETTLEMENT_DISCOUNT('put a discount on the bill'));
+    }
+    if (toFils(invoice.roundingAdjustment.toString().replace('-', '')) > 0) {
+      throw new DomainError('This invoice has a round-off. Correct it as a credit note instead.');
+    }
+
+    let priced: ReturnType<typeof calculateDocument>;
+    try {
+      priced = calculateDocument(
+        invoice.items.map(storedLineAmounts),
+        readDiscount('AMOUNT', input.discount),
+      );
+    } catch (error) {
+      throw new DomainError(
+        error instanceof Error ? error.message : 'Check the discount.',
+        'discount',
+      );
+    }
+    const totalAmount = priced.totals.totalAmount;
+    const paid = paidFils(invoice.payments);
+    const settled = paid + toFils(invoice.advanceAppliedAmount.toString());
+    if (toFils(totalAmount) < settled) {
+      throw new DomainError(
+        `That would take the invoice to ${totalAmount}, below the ${filsToString(settled)} already paid.`,
+        'discount',
+      );
+    }
+
+    for (const [index, item] of invoice.items.entries()) {
+      await tx.invoiceItem.update({
+        where: { id: item.id },
+        data: { taxAmount: priced.lines[index].taxAmount },
+      });
+    }
+    const status = settlementStatus({ ...invoice, totalAmount }, paid);
+    const after = await tx.invoice.update({
+      where: { id: invoice.id },
+      data: { ...totalsData(priced.totals), roundingAdjustment: '0', status },
+    });
+    // The invoice's entry is corrected: the old one reversed, the new one
+    // booked on the invoice's own date, with the discount in it.
+    await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
+    await syncJobWithInvoice(tx, user.organizationId, invoice.id, user.id, {
+      reason: 'bill_discount_added',
+    });
+
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: invoice.branchId,
+      actorUserId: user.id,
+      action: 'invoice.bill_discount_added',
+      entityType: 'Invoice',
+      entityId: invoice.id,
+      beforeData: {
+        discountAmount: invoice.discountAmount.toString(),
+        subtotal: invoice.subtotal.toString(),
+        taxAmount: invoice.taxAmount.toString(),
+        totalAmount: invoice.totalAmount.toString(),
+        status: invoice.status,
+      },
+      afterData: {
+        discountAmount: after.discountAmount.toString(),
+        subtotal: after.subtotal.toString(),
+        taxAmount: after.taxAmount.toString(),
+        totalAmount: after.totalAmount.toString(),
+        status: after.status,
+      },
+      metadata: { invoiceNumber: invoice.invoiceNumber, reason: input.reason },
+    });
+    await settleRequestKey(tx, user, rawInput, invoice.id);
+    return {
+      invoiceId: invoice.id,
+      discountAmount: priced.totals.discountAmount,
+      taxAmount: priced.totals.taxAmount,
+      totalAmount,
+      status,
+    };
   });
 }
 
@@ -308,12 +719,14 @@ export function invoiceVoidBlocker(invoice: {
   paidAmount?: string;
   creditedAmount?: { toString(): string };
   advanceAppliedAmount?: { toString(): string };
+  settlementDiscount?: { toString(): string };
   jobCard: { status: string } | null;
 }): string | null {
   if (invoice.status === 'VOID' || invoice.status === 'CANCELLED')
     return 'This invoice is already void.';
   if (isCredited(invoice)) return CREDITED;
   if (hasAdvanceApplied(invoice)) return ADVANCE_APPLIED('void the invoice');
+  if (hasSettlementDiscount(invoice)) return SETTLEMENT_DISCOUNT('void the invoice');
   if (
     invoice.status !== 'ISSUED' ||
     (invoice.paidAmount !== undefined && toFils(invoice.paidAmount) > 0)
@@ -342,6 +755,7 @@ export async function voidInvoice(user: AuthenticatedUser, invoiceId: string, ra
       paidAmount: filsToString(paidFils(invoice.payments)),
       creditedAmount: invoice.creditedAmount,
       advanceAppliedAmount: invoice.advanceAppliedAmount,
+      settlementDiscount: invoice.settlementDiscount,
       jobCard: invoice.jobCard,
     });
     if (blocker) throw new DomainError(blocker);

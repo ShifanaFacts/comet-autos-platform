@@ -4,7 +4,13 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { hasPermission, requirePermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { formatCalendarDate, formatDate, formatDateTime, localDateString } from '@/lib/format';
-import { filsToString, formatMilli, signedToMilli, toFils } from '@/lib/money';
+import {
+  billDiscountBreakdown,
+  filsToString,
+  formatMilli,
+  signedToMilli,
+  toFils,
+} from '@/lib/money';
 import { invoiceBalance, receiptBalances } from '@/lib/billing/invoice';
 import {
   formatAed,
@@ -362,6 +368,36 @@ function billDiscountRows(document: {
   ];
 }
 
+/**
+ * An invoice with a discount on the bill shows how it was reached, VAT
+ * included, before the taxable total: the price before the discount, then
+ * the discount off it with the VAT it saves — so the customer reads
+ * "3,654.00 − 154.00 = 3,500.00" as they were told it. Without one, nothing.
+ */
+function invoiceDiscountRows(
+  invoice: Parameters<typeof billDiscountBreakdown>[0] & {
+    discountType: string | null;
+    discountValue: { toString(): string } | null;
+  },
+  vat: string,
+): DocumentTotal[] {
+  const breakdown = billDiscountBreakdown(invoice);
+  if (!breakdown) return [];
+  const percent =
+    invoice.discountType === 'PERCENT' && invoice.discountValue
+      ? ` ${formatRate(invoice.discountValue.toString())}`
+      : '';
+  return [
+    { label: 'Subtotal', amount: breakdown.linesTotal },
+    { label: `${vat} before discount`, amount: breakdown.vatBefore },
+    { label: 'Price before discount', amount: breakdown.totalBefore },
+    {
+      label: `Discount${percent} (${breakdown.discount} + VAT ${breakdown.vatSaved})`,
+      amount: filsToString(-toFils(breakdown.discountWithVat)),
+    },
+  ];
+}
+
 /** Payments that count, for listing on the invoice and choosing receipts. */
 function countedPayments<
   P extends { id: string; status: string; reversalOfPaymentId: string | null },
@@ -432,10 +468,23 @@ function invoiceModel(invoice: InvoiceRecord, seller: DocumentSeller): CustomerD
     narrative: [],
     sections,
     totals: [
-      ...billDiscountRows(invoice),
+      ...invoiceDiscountRows(invoice, vatLabel(sections.flatMap((s) => s.lines))),
       { label: 'Total excl. VAT', amount: invoice.subtotal.toString() },
       { label: vatLabel(sections.flatMap((s) => s.lines)), amount: invoice.taxAmount.toString() },
+      ...(!invoice.roundingAdjustment.isZero()
+        ? [{ label: 'Round-off', amount: invoice.roundingAdjustment.toFixed(2) }]
+        : []),
       { label: 'Total', amount: balance.total, emphasis: 'total' },
+      // A discount given after the invoice comes off its total; VAT stays as invoiced.
+      ...(toFils(balance.discount) > 0
+        ? [
+            { label: 'Discount', amount: filsToString(-toFils(balance.discount)) },
+            {
+              label: 'Total after discount',
+              amount: filsToString(toFils(balance.total) - toFils(balance.discount)),
+            },
+          ]
+        : []),
       ...(toFils(balance.credited) > 0
         ? [{ label: 'Credit notes', amount: filsToString(-toFils(balance.credited)) }]
         : []),
@@ -634,6 +683,9 @@ async function creditNoteModel(
           : []),
         { label: 'Total excl. VAT', amount: note.subtotal.toString() },
         { label: vatLabel(lines), amount: note.taxAmount.toString() },
+        ...(!note.roundingAmount.isZero()
+          ? [{ label: 'Invoice round-off', amount: note.roundingAmount.toFixed(2) }]
+          : []),
         { label: 'Total credited', amount: note.totalAmount.toString(), emphasis: 'total' },
       ],
       highlight: null,

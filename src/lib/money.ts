@@ -271,3 +271,35 @@ export function formatMilli(milli: number): string {
   const text = milliToString(Math.abs(milli));
   return sign + (text.includes('.') ? text.replace(/\.?0+$/, '') : text);
 }
+
+/**
+ * A discount on the bill as the customer understands it, VAT included: the
+ * price before the discount (the lines and their VAT as they would be without
+ * it), the discount off that price (its own amount and the VAT it saves), and
+ * so the total. "3,654.00 − 154.00 (146.68 + VAT 7.32) = 3,500.00". Null
+ * without a discount on the bill. The round-off, if any, is outside it.
+ */
+export function billDiscountBreakdown(document: {
+  discountAmount: { toString(): string };
+  subtotal: { toString(): string };
+  taxAmount: { toString(): string };
+  items: { lineTotal: { toString(): string }; taxRate: { toString(): string } | null }[];
+}) {
+  const discount = toFils(document.discountAmount.toString());
+  if (discount === 0) return null;
+  const linesTotal = toFils(document.subtotal.toString()) + discount;
+  // Each line's VAT on its whole amount, as it was before the bill discount.
+  const vatBefore = document.items.reduce((sum, item) => {
+    const rate = parseScaled((item.taxRate ?? 0).toString(), 2, 'VAT rate');
+    return sum + divRound(toFils(item.lineTotal.toString()) * rate, 10000);
+  }, 0);
+  const vatSaved = vatBefore - toFils(document.taxAmount.toString());
+  return {
+    linesTotal: filsToString(linesTotal),
+    vatBefore: filsToString(vatBefore),
+    totalBefore: filsToString(linesTotal + vatBefore),
+    discount: filsToString(discount),
+    vatSaved: filsToString(vatSaved),
+    discountWithVat: filsToString(discount + vatSaved),
+  };
+}

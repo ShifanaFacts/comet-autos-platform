@@ -182,6 +182,39 @@ export function lineData(amounts: LineAmounts) {
   };
 }
 
+/** The most an invoice's round-off may be, either way, in fils. */
+export const MAX_ROUNDING_FILS = 500;
+
+/** An invoice's round-off as a form sends it: "-0.50", "0.25" or blank. */
+export const roundingField = z
+  .string()
+  .trim()
+  .optional()
+  .refine(
+    (value) => !value || /^-?\d+(\.\d{1,2})?$/.test(value),
+    'Enter the round-off like -0.50 or 0.25.',
+  );
+
+/**
+ * An invoice's round-off applied after VAT: outside VAT, at most 5.00 either
+ * way, never taking the total below zero. Returns the columns to store.
+ */
+export function withRounding(totals: DocumentTotals, raw: string | undefined) {
+  const text = raw?.trim() ?? '';
+  const fils = !text ? 0 : text.startsWith('-') ? -toFils(text.slice(1)) : toFils(text);
+  if (Math.abs(fils) > MAX_ROUNDING_FILS) {
+    throw new DomainError(
+      `A round-off can be at most ${filsToString(MAX_ROUNDING_FILS)} either way.`,
+      'roundingAdjustment',
+    );
+  }
+  const total = toFils(totals.totalAmount) + fils;
+  if (total < 0) {
+    throw new DomainError('The round-off would take the total below zero.', 'roundingAdjustment');
+  }
+  return { roundingAdjustment: filsToString(fils), totalAmount: filsToString(total) };
+}
+
 /** A document's totals columns, as stored on a quotation or invoice. */
 export function totalsData(totals: DocumentTotals) {
   return {

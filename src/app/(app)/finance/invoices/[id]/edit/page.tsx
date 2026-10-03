@@ -52,6 +52,9 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
             dueDate={(invoice.dueDate ?? invoice.issueDate).toISOString().slice(0, 10)}
             customerReference={invoice.customerReference ?? ''}
             bill={editableBill(invoice)}
+            rounding={
+              invoice.roundingAdjustment.isZero() ? '' : invoice.roundingAdjustment.toFixed(2)
+            }
             incomeAccounts={
               hasPermission(user, 'accounting.view')
                 ? (await getAccountChoices(user)).income

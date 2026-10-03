@@ -74,6 +74,7 @@ export const SYSTEM_ACCOUNTS: SystemAccount[] = [
   { role: 'SALES_LABOUR', code: '4010', name: 'Service revenue — labour', type: 'REVENUE' },
   { role: 'SALES_OTHER', code: '4020', name: 'Sales — other', type: 'REVENUE' },
   { role: 'SALES_DISCOUNTS', code: '4090', name: 'Sales discounts', type: 'REVENUE' },
+  { role: 'ROUNDING', code: '4095', name: 'Rounding adjustments', type: 'REVENUE' },
   {
     role: 'ASSET_DISPOSALS',
     code: '4110',

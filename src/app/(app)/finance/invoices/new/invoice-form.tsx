@@ -26,6 +26,7 @@ import {
   linesPayload,
   newEditableLine,
   useLineTotals,
+  withRoundOff,
   type BillDiscount,
   type EditableLine,
 } from '@/components/workshop/document-lines-editor';
@@ -130,6 +131,11 @@ export function NewInvoiceForm({
     setEdited(true);
     setBillState(next);
   };
+  const [rounding, setRoundingState] = useState('');
+  const setRounding = (next: string) => {
+    setEdited(true);
+    setRoundingState(next);
+  };
   const [payNow, setPayNow] = useState(initialPayNow && canTakePayment);
   const errors = state.fieldErrors ?? {};
   const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate, bill);
@@ -159,7 +165,8 @@ export function NewInvoiceForm({
   const heldFils = held ? toFils(held.total) : 0;
   const [useAdvance, setUseAdvance] = useState(false);
   const [advanceAmount, setAdvanceAmount] = useState<string | null>(null);
-  const totalFils = count > 0 && !incomplete ? toFils(totals.totalAmount) : 0;
+  const totalFils =
+    count > 0 && !incomplete ? toFils(withRoundOff(totals.totalAmount, rounding)) : 0;
   const suggested = filsToString(Math.min(heldFils, totalFils));
   const applying = useAdvance && heldFils > 0 && Boolean(held?.canApply);
   const applyFils = applying ? toFils(advanceAmount || suggested || '0') : 0;
@@ -226,7 +233,10 @@ export function NewInvoiceForm({
           defaultVatRate={defaultVatRate}
           incomeAccounts={incomeAccounts}
           taxCodes={taxCodes}
+          rounding={rounding}
+          onRoundingChange={setRounding}
         />
+        <input type="hidden" name="roundingAdjustment" value={rounding} />
       </section>
 
       {held && heldFils > 0 ? (
@@ -389,6 +399,7 @@ export function NewInvoiceForm({
           errors.jobCardId ??
           errors.items ??
           errors.discount ??
+          errors.roundingAdjustment ??
           errors.advanceAmount
         }
       />
@@ -406,7 +417,7 @@ export function NewInvoiceForm({
           {asQuoted
             ? ` · ${formatMoney(quotation!.totalAmount)}`
             : count > 0 && !incomplete
-              ? ` · ${formatMoney(totals.totalAmount)}`
+              ? ` · ${formatMoney(withRoundOff(totals.totalAmount, rounding))}`
               : ''}
         </SubmitButton>
         <p className="mt-3 text-sm text-muted-foreground">

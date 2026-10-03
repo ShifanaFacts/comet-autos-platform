@@ -280,7 +280,7 @@ export async function sourceLinks(
   return (source: JournalSource, id: string | null): EntrySource => {
     const href = !id
       ? null
-      : source === 'INVOICE'
+      : source === 'INVOICE' || source === 'INVOICE_DISCOUNT'
         ? `/finance/invoices/${id}`
         : source === 'PAYMENT'
           ? invoiceOfPayment.get(id)

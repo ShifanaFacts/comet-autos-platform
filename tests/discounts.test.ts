@@ -148,10 +148,13 @@ describe('an invoice typed on screen', () => {
 
     const document = await getInvoiceDocument(a.owner, invoiceId);
     assert.deepEqual(
-      document.totals.slice(0, 3).map((total) => [total.label, money(total.amount)]),
+      document.totals.slice(0, 5).map((total) => [total.label, money(total.amount)]),
       [
         ['Subtotal', '440.00'],
-        ['Discount (5%)', '-22.00'],
+        // How the discount was reached, VAT included: 462.00 − 23.10 = 438.90.
+        ['VAT 5% before discount', '22.00'],
+        ['Price before discount', '462.00'],
+        ['Discount 5% (22.00 + VAT 1.10)', '-23.10'],
         ['Total excl. VAT', '418.00'],
       ],
     );

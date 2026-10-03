@@ -315,13 +315,16 @@ export interface InvoiceSettlement {
   creditedAmount: { toString(): string };
   /** Settled from customer advances (lib/billing/advances.ts). */
   advanceAppliedAmount: { toString(): string };
+  /** A discount given after the invoice, off its total (VAT unchanged). */
+  settlementDiscount: { toString(): string };
 }
 
 /**
  * Paid, credited, advance applied, balance and state of an invoice — the one
  * rule the staff screens, customer pages and documents share:
  *
- *   due = total − credited (tax credit notes) − paid − advance applied
+ *   due = total − credited (tax credit notes) − discount given after the
+ *         invoice − paid − advance applied
  *
  * never below zero; anything paid beyond it is returned to the customer's
  * advance, or refunded, under the credit note that caused it. An advance
@@ -334,12 +337,14 @@ export function invoiceBalance(
   const total = toFils(invoice.totalAmount.toString());
   const credited = toFils(invoice.creditedAmount.toString());
   const advanceApplied = toFils(invoice.advanceAppliedAmount.toString());
+  const discount = toFils(invoice.settlementDiscount.toString());
   return {
     total: filsToString(total),
     credited: filsToString(credited),
+    discount: filsToString(discount),
     paid: filsToString(paid),
     advanceApplied: filsToString(advanceApplied),
-    balance: filsToString(Math.max(total - credited - advanceApplied - paid, 0)),
+    balance: filsToString(Math.max(total - credited - discount - advanceApplied - paid, 0)),
     state: paymentState(invoice.status),
   };
 }
@@ -357,13 +362,14 @@ export function settlementStatus(invoice: InvoiceSettlement, paid: number): Invo
 }
 
 /**
- * What is still due on an invoice, in fils: total − credited − advance
- * applied − paid, never below zero.
+ * What is still due on an invoice, in fils: total − credited − discount −
+ * advance applied − paid, never below zero.
  */
 export function dueFils(invoice: InvoiceSettlement, paid: number) {
   return Math.max(
     toFils(invoice.totalAmount.toString()) -
       toFils(invoice.creditedAmount.toString()) -
+      toFils(invoice.settlementDiscount.toString()) -
       toFils(invoice.advanceAppliedAmount.toString()) -
       paid,
     0,
@@ -384,10 +390,11 @@ export function receiptBalances(
   );
   const index = ordered.findIndex((p) => p.id === paymentId);
   if (index < 0) throw new NotFoundError('payment');
-  // Credit notes and advances applied come off the invoice before any payment is counted.
+  // Credit notes, a discount and advances applied come off the invoice before any payment is counted.
   const total =
     toFils(invoice.totalAmount.toString()) -
     toFils(invoice.creditedAmount.toString()) -
+    toFils(invoice.settlementDiscount.toString()) -
     toFils(invoice.advanceAppliedAmount.toString());
   const paidBefore = paidFils(ordered.slice(0, index));
   const paidThrough = paidFils(ordered.slice(0, index + 1));

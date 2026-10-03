@@ -46,7 +46,11 @@ export async function createCreditNoteAction(
   const result = await runAction(() => createCreditNote(user, invoiceId, input));
   if (result.ok) await refresh(invoiceId, result.data!.creditNoteId);
   // A double-submitted form already issued it: open that one.
-  const issued = result.data ?? (result.duplicateOf ? { creditNoteId: result.duplicateOf, refundAmount: '0.00', returnedToAdvances: '0.00' } : null);
+  const issued =
+    result.data ??
+    (result.duplicateOf
+      ? { creditNoteId: result.duplicateOf, refundAmount: '0.00', returnedToAdvances: '0.00' }
+      : null);
   return {
     ...toClientResult(result),
     data: issued

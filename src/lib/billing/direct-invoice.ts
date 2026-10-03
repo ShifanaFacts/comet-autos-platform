@@ -15,9 +15,11 @@ import {
   lineData,
   lineSchema,
   priceDocument,
+  roundingField,
   storedLineAmounts,
   storedTotals,
   totalsData,
+  withRounding,
 } from '@/lib/billing/document-lines';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { localDateString, parseCalendarDate } from '@/lib/format';
@@ -77,6 +79,8 @@ const directInvoiceSchema = z.object({
     ),
   /** A discount on the whole bill, after the lines' own. */
   ...discountFields,
+  /** A round-off after VAT, outside VAT: "-0.50", "0.25" or blank. */
+  roundingAdjustment: roundingField,
   /** YYYY-MM-DD; blank means due on the day it is issued. */
   dueDate: z.string().trim().optional(),
   customerReference: z
@@ -319,6 +323,7 @@ export async function createDirectInvoice(
             await resolveTaxCodes(tx, user.organizationId, input.items ?? []),
           );
     await assertIncomeAccounts(tx, user.organizationId, lines);
+    const rounded = withRounding(totals, input.roundingAdjustment);
 
     const organization = await tx.organization.findUniqueOrThrow({
       where: { id: user.organizationId },
@@ -347,6 +352,7 @@ export async function createDirectInvoice(
         supplyDate: today,
         dueDate,
         ...totalsData(totals),
+        ...rounded,
         customerReference: emptyToNull(input.customerReference),
         notes: emptyToNull(input.notes),
         sellerLegalName: organization.legalName ?? organization.name,
@@ -393,13 +399,14 @@ export async function createDirectInvoice(
 
     // The customer's advances first: they settle the invoice like a
     // payment, without changing its sales or VAT.
-    const totalFils = toFils(totals.totalAmount);
+    // The invoice's total, its round-off included.
+    const totalFils = toFils(rounded.totalAmount);
     let advanceApplied = 0;
     if (useAdvance && totalFils > 0) {
       const wanted = input.advanceAmount ? toFils(input.advanceAmount) : null;
       if (wanted !== null && wanted > totalFils) {
         throw new DomainError(
-          `The advance applied can't be more than the invoice total (${totals.totalAmount}).`,
+          `The advance applied can't be more than the invoice total (${rounded.totalAmount}).`,
           'advanceAmount',
         );
       }
@@ -416,7 +423,13 @@ export async function createDirectInvoice(
     // payment rules as any other payment. Nothing to take when nothing is due.
     const settled = await tx.invoice.findUniqueOrThrow({
       where: { id: invoice.id },
-      select: { totalAmount: true, creditedAmount: true, advanceAppliedAmount: true, status: true },
+      select: {
+        totalAmount: true,
+        creditedAmount: true,
+        advanceAppliedAmount: true,
+        settlementDiscount: true,
+        status: true,
+      },
     });
     const stillDue = dueFils(settled, 0);
     const payment =
@@ -453,7 +466,8 @@ export async function createDirectInvoice(
         discountAmount: totals.discountAmount,
         subtotal: totals.subtotal,
         taxAmount: totals.taxAmount,
-        totalAmount: totals.totalAmount,
+        totalAmount: rounded.totalAmount,
+        roundingAdjustment: rounded.roundingAdjustment,
       },
       metadata: {
         origin: source ? (edited ? 'quotation_edited' : 'quotation') : 'direct',

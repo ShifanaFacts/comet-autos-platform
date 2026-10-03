@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import {
   calculateDocument,
   calculateLine,
+  filsToString,
   formatMilli,
   readDiscount,
   signedToMilli,
@@ -138,9 +139,7 @@ export function useLineTotals(
       totals = calculateDocument(amounts).totals;
     }
     const rates = new Set(
-      used.map((entry) =>
-        formatMilli(signedToMilli(lineRate(entry.line, defaultVatRate))),
-      ),
+      used.map((entry) => formatMilli(signedToMilli(lineRate(entry.line, defaultVatRate)))),
     );
     return {
       priced,
@@ -164,9 +163,17 @@ export function DocumentLinesEditor({
   defaultVatRate,
   incomeAccounts,
   taxCodes,
+  rounding,
+  onRoundingChange,
 }: {
   lines: EditableLine[];
   onChange: (lines: EditableLine[]) => void;
+  /**
+   * Invoices: a round-off after VAT ("-0.50"), outside VAT. Omitted
+   * (quotations), no round-off row is shown.
+   */
+  rounding?: string;
+  onRoundingChange?: (value: string) => void;
   /** The discount on the whole bill. */
   bill: BillDiscount;
   onBillChange: (bill: BillDiscount) => void;
@@ -318,6 +325,8 @@ export function DocumentLinesEditor({
                   label={`Line ${n} discount`}
                   type={line.discountType}
                   value={line.discount}
+                  base={grossFils(line)}
+                  computed={amounts?.discountAmount ?? '0.00'}
                   onChange={(discount) =>
                     update(line.key, { discountType: discount.type, discount: discount.value })
                   }
@@ -393,7 +402,8 @@ export function DocumentLinesEditor({
                     </td>
                   ) : null}
                   <td className="px-2 py-2">
-                    <NumberInput kind="quantity"
+                    <NumberInput
+                      kind="quantity"
                       aria-label={`Line ${n} quantity`}
                       value={line.quantity}
                       onChange={(event) => update(line.key, { quantity: event.target.value })}
@@ -422,6 +432,8 @@ export function DocumentLinesEditor({
                       label={`Line ${n} discount`}
                       type={line.discountType}
                       value={line.discount}
+                      base={grossFils(line)}
+                      computed={amounts?.discountAmount ?? '0.00'}
                       onChange={(discount) =>
                         update(line.key, { discountType: discount.type, discount: discount.value })
                       }
@@ -484,6 +496,8 @@ export function DocumentLinesEditor({
               label="Discount on the bill"
               type={bill.type}
               value={bill.value}
+              base={toFils(totals.linesTotal)}
+              computed={totals.discountAmount}
               onChange={onBillChange}
             />
             <span className="w-24 text-right tabular-nums">
@@ -504,9 +518,18 @@ export function DocumentLinesEditor({
           <dt className="text-muted-foreground">{vatLabel}</dt>
           <dd className="tabular-nums">{formatMoney(totals.taxAmount)}</dd>
         </div>
+        {onRoundingChange ? (
+          <RoundingRow
+            total={totals.totalAmount}
+            value={rounding ?? ''}
+            onChange={onRoundingChange}
+          />
+        ) : null}
         <div className="flex justify-between gap-4 border-t border-border pt-2 text-base font-semibold">
           <dt>Total</dt>
-          <dd className="tabular-nums">{formatMoney(totals.totalAmount)}</dd>
+          <dd className="tabular-nums">
+            {formatMoney(withRoundOff(totals.totalAmount, onRoundingChange ? rounding : ''))}
+          </dd>
         </div>
       </dl>
     </div>
@@ -551,6 +574,83 @@ function TypeSwitch({
       ))}
     </div>
   );
+}
+
+/** Signed fils from a round-off as typed ("-0.50"): 0 while it doesn't parse. */
+export function roundOffFils(value: string | undefined) {
+  const text = value?.trim() ?? '';
+  if (!text || text === '-') return 0;
+  return text.startsWith('-') ? -safeFils(text.slice(1)) : safeFils(text);
+}
+
+/** A total with its round-off, as the invoice will show it. */
+export function withRoundOff(total: string, rounding: string | undefined) {
+  return filsToString(safeFils(total) + roundOffFils(rounding));
+}
+
+/**
+ * The round-off after VAT: a small plus or minus amount, outside VAT, and a
+ * one-tap "round to whole AED" that fills it in.
+ */
+function RoundingRow({
+  total,
+  value,
+  onChange,
+}: {
+  total: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const totalFils = safeFils(total);
+  // To the nearest whole dirham: down when under half, up from half.
+  const cents = totalFils % 100;
+  const toWhole = cents === 0 ? 0 : cents < 50 ? -cents : 100 - cents;
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <dt className="flex flex-col text-muted-foreground">
+        Round-off
+        {toWhole !== 0 ? (
+          <button
+            type="button"
+            onClick={() => onChange(filsToString(toWhole))}
+            className="self-start text-xs font-medium text-primary hover:underline"
+          >
+            Round to whole AED
+          </button>
+        ) : null}
+      </dt>
+      <dd>
+        <NumberInput
+          kind="money"
+          allowNegative
+          aria-label="Round-off (AED, minus to round down)"
+          value={value}
+          placeholder="0.00"
+          onChange={(event) => onChange(event.target.value)}
+          className="h-9 w-24 text-right tabular-nums"
+        />
+      </dd>
+    </div>
+  );
+}
+
+/** Fils from an amount that may not parse (a half-typed figure): 0 then. */
+function safeFils(value: string) {
+  try {
+    return toFils(value);
+  } catch {
+    return 0;
+  }
+}
+
+/** Quantity × price before any discount, in fils (0 while it doesn't parse). */
+function grossFils(line: EditableLine) {
+  try {
+    return calculateLine({ quantity: line.quantity, unitPrice: line.unitPrice, taxRate: '0' })
+      .lineTotalFils;
+  } catch {
+    return 0;
+  }
 }
 
 function LineAmount({ line, amounts }: { line: EditableLine; amounts: LineAmounts | null }) {
@@ -678,9 +778,21 @@ function AccountSelect({
   );
 }
 
+/** "12.5" from a discount of `off` fils on `base` fils — the percentage it comes to. */
+function percentOf(off: number, base: number) {
+  if (base <= 0 || off <= 0) return '';
+  return String(Math.round((off * 10000) / base) / 100);
+}
+
 /**
  * A discount box: the value, and a switch between a percentage and an AED
  * amount beside it. Blank means no discount.
+ *
+ * Given `base` (what it is taken off, in fils) and `computed` (what it
+ * comes to, in AED), it shows both instead — a % box and an AED box, side
+ * by side, either of which can be typed in: typing a percentage makes it a
+ * percentage discount, typing an amount an AED one, and the other box shows
+ * what that comes to.
  */
 export function DiscountInput({
   label,
@@ -688,13 +800,50 @@ export function DiscountInput({
   value,
   onChange,
   large = false,
+  base,
+  computed,
 }: {
   label: string;
   type: DiscountType;
   value: string;
   onChange: (discount: BillDiscount) => void;
   large?: boolean;
+  /** What the discount is taken off, in fils. */
+  base?: number;
+  /** What it comes to, in AED. */
+  computed?: string;
 }) {
+  if (base !== undefined && computed !== undefined) {
+    const off = value.trim() ? safeFils(computed) : 0;
+    const percent = type === 'PERCENT' ? value : percentOf(off, base);
+    const amount = type === 'AMOUNT' ? value : off > 0 ? computed : '';
+    const box = cn('min-w-0 text-right tabular-nums', large ? 'h-12 text-base' : 'h-9 w-[4.5rem]');
+    return (
+      <span className="flex items-center gap-1">
+        <span className="relative">
+          <NumberInput
+            kind="rate"
+            aria-label={`${label} (percent)`}
+            value={percent}
+            placeholder="0"
+            onChange={(event) => onChange({ type: 'PERCENT', value: event.target.value })}
+            className={cn(box, 'pr-5')}
+          />
+          <span className="pointer-events-none absolute top-1/2 right-1.5 -translate-y-1/2 text-xs text-muted-foreground">
+            %
+          </span>
+        </span>
+        <NumberInput
+          kind="money"
+          aria-label={`${label} (AED)`}
+          value={amount}
+          placeholder="0.00"
+          onChange={(event) => onChange({ type: 'AMOUNT', value: event.target.value })}
+          className={box}
+        />
+      </span>
+    );
+  }
   const other: DiscountType = type === 'PERCENT' ? 'AMOUNT' : 'PERCENT';
   const unit = (kind: DiscountType) => (kind === 'PERCENT' ? 'percent' : 'AED');
   return (

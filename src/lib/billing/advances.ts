@@ -1111,6 +1111,7 @@ export async function getCustomerAdvance(user: AuthenticatedUser, advanceId: str
             totalAmount: true,
             creditedAmount: true,
             advanceAppliedAmount: true,
+            settlementDiscount: true,
             jobCardId: true,
             payments: {
               select: { id: true, amount: true, status: true, reversalOfPaymentId: true },

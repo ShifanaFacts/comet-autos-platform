@@ -1,23 +1,14 @@
 import Link from 'next/link';
 import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { notFound } from 'next/navigation';
-import {
-  ArrowRight,
-  Ban,
-  Car,
-  ClipboardList,
-  FileMinus,
-  Info,
-  Pencil,
-  User,
-} from 'lucide-react';
+import { ArrowRight, Ban, Car, ClipboardList, FileMinus, Info, Pencil, User } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getInvoiceDetail } from '@/lib/billing/invoice';
 import { invoiceEditBlocker, invoiceVoidBlocker } from '@/lib/billing/invoice-changes';
 import { creditBlocker, listInvoiceCreditNotes } from '@/lib/billing/credit-notes';
 import { getInvoiceAdvances } from '@/lib/billing/advances';
-import { filsToString, toFils } from '@/lib/money';
+import { billDiscountBreakdown, filsToString, toFils } from '@/lib/money';
 import {
   formatCalendarDate,
   formatDateTime,
@@ -29,7 +20,7 @@ import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { StatusPill } from '@/components/shared/status-pill';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
-import { DocumentLinesView, billDiscountTotals } from '@/components/workshop/estimate-lines';
+import { DocumentLinesView } from '@/components/workshop/estimate-lines';
 import { getAccountChoices } from '@/lib/accounting/reports';
 import { StaffDocumentActions } from '@/components/documents/document-actions';
 import { InvoicePaymentForm } from '@/components/finance/invoice-payment-form';
@@ -75,9 +66,27 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const canVoid = hasPermission(user, 'invoice.delete', branch) && !invoiceVoidBlocker(invoice);
   const canReverse = !isVoid && hasPermission(user, 'payment.delete', branch);
   const canCredit = hasPermission(user, 'credit_note.create', branch) && !creditBlocker(invoice);
-  const creditNotes = await listInvoiceCreditNotes(user, invoice.id);
+  // Only the notes that stand: a voided one counts for nothing and is kept
+  // on record under Credit notes → Void, not on the invoice.
+  const creditNotes = (await listInvoiceCreditNotes(user, invoice.id)).filter(
+    (note) => note.status !== 'VOID',
+  );
   const credited = toFils(invoice.creditedAmount.toString());
   const advanceApplied = toFils(invoice.advanceApplied);
+  const discountAfter = toFils(invoice.settlementDiscount.toString());
+  // A discount on the bill, shown as the customer reads it on the invoice.
+  const breakdown = billDiscountBreakdown(invoice);
+  const discountRows = breakdown
+    ? [
+        { label: 'Subtotal', amount: breakdown.linesTotal },
+        { label: 'VAT before discount', amount: breakdown.vatBefore },
+        { label: 'Price before discount', amount: breakdown.totalBefore },
+        {
+          label: 'Discount (' + breakdown.discount + ' + VAT ' + breakdown.vatSaved + ')',
+          amount: filsToString(-toFils(breakdown.discountWithVat)),
+        },
+      ]
+    : [];
   const advances = await getInvoiceAdvances(user, { id: invoice.id, customerId: customer.id });
   const canApplyAdvance =
     !isVoid &&
@@ -206,10 +215,25 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
             <DocumentLinesView
               lines={invoice.items}
               totals={[
-                ...billDiscountTotals(invoice),
+                ...discountRows,
                 { label: 'Total excl. VAT', amount: invoice.subtotal },
                 { label: 'VAT', amount: invoice.taxAmount },
+                ...(invoice.roundingAdjustment.isZero()
+                  ? []
+                  : [{ label: 'Round-off', amount: invoice.roundingAdjustment.toFixed(2) }]),
                 { label: 'Total', amount: invoice.totalAmount, strong: true },
+                // A discount given after the invoice comes off its total; VAT stays as invoiced.
+                ...(discountAfter > 0
+                  ? [
+                      { label: 'Discount', amount: filsToString(-discountAfter) },
+                      {
+                        label: 'Total after discount',
+                        amount: filsToString(
+                          toFils(invoice.totalAmount.toString()) - discountAfter,
+                        ),
+                      },
+                    ]
+                  : []),
                 ...(credited > 0
                   ? [{ label: 'Credit notes', amount: filsToString(-credited) }]
                   : []),

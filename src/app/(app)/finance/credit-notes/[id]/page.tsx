@@ -162,6 +162,12 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
                 <dd className="text-right tabular-nums">
                   {formatMoney(note.taxAmount.toString())}
                 </dd>
+                {note.roundingAmount.isZero() ? null : (
+                  <>
+                    <dt className="text-muted-foreground">Invoice round-off taken back</dt>
+                    <dd className="text-right tabular-nums">{note.roundingAmount.toFixed(2)}</dd>
+                  </>
+                )}
                 <dt className="font-semibold">Total credited</dt>
                 <dd className="text-right font-semibold tabular-nums">
                   {formatMoney(note.totalAmount.toString())}

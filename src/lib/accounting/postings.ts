@@ -27,6 +27,7 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  *                                     parts / labour / other sales)
  *   Dr Discounts given                the bill discount
  *   Cr VAT payable                    the VAT
+ *   Cr / Dr Rounding adjustments      the round-off, outside VAT
  *   Dr Cost of parts sold             parts fitted on its job, at cost,
  *   Cr Parts inventory                after any taken back
  *
@@ -80,8 +81,15 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  *   Dr each line's income account     its amount
  *   Cr Sales discounts                any bill discount taken back with it
  *   Dr Output VAT payable             the VAT
+ *   Dr / Cr Rounding adjustments      the invoice's round-off, taken back by
+ *                                     the note that credits its last lines
  *   Cr Trade receivables              the total
  *   its refund, on the day paid       Dr Trade receivables / Cr the account paid from
+ *
+ * INVOICE DISCOUNT (given after the invoice, off its total; its own entry,
+ * on the day given — the invoice's entry and VAT untouched)
+ *   Dr Sales discounts                the discount
+ *   Cr Trade receivables              the discount
  *
  * CUSTOMER ADVANCE (money paid before any invoice; nothing once cancelled)
  *   received                          Dr the cash, bank or card account
@@ -216,6 +224,7 @@ const postInvoice: Poster = async (tx, organizationId, invoiceId, accounts) => {
       discountAmount: true,
       taxAmount: true,
       totalAmount: true,
+      roundingAdjustment: true,
       items: { select: { itemType: true, accountId: true, lineTotal: true } },
       customer: { select: { name: true } },
     },
@@ -243,7 +252,9 @@ const postInvoice: Poster = async (tx, organizationId, invoiceId, accounts) => {
   const lines = new Lines()
     .debit(accounts.ACCOUNTS_RECEIVABLE, fils(invoice.totalAmount))
     .debit(accounts.SALES_DISCOUNTS, fils(invoice.discountAmount))
-    .credit(accounts.VAT_OUTPUT, fils(invoice.taxAmount));
+    .credit(accounts.VAT_OUTPUT, fils(invoice.taxAmount))
+    // Signed: a round-off up is income, a round-off down a cost.
+    .credit(accounts.ROUNDING, fils(invoice.roundingAdjustment));
   for (const item of invoice.items) {
     const account =
       item.accountId ?? accounts[SALES_ROLE[item.itemType ?? 'OTHER'] ?? 'SALES_OTHER'];
@@ -273,6 +284,39 @@ const postInvoice: Poster = async (tx, organizationId, invoiceId, accounts) => {
     branchId: invoice.branchId,
     description: `Invoice ${invoice.invoiceNumber} — ${invoice.customerName ?? invoice.customer.name}`,
     lines: lines.build(),
+  };
+};
+
+/**
+ * A discount given after the invoice, off its total — its own entry, on the
+ * day it was given; the invoice's entry stays as issued. VAT is untouched
+ * (only a tax credit note reduces it). Nothing once the invoice is void.
+ */
+const postInvoiceDiscount: Poster = async (tx, organizationId, invoiceId, accounts) => {
+  const invoice = await tx.invoice.findFirst({
+    where: { id: invoiceId, organizationId },
+    select: {
+      status: true,
+      invoiceNumber: true,
+      customerName: true,
+      branchId: true,
+      settlementDiscount: true,
+      settlementDiscountOn: true,
+    },
+  });
+  if (!invoice || !invoice.settlementDiscountOn) return null;
+  if (invoice.status === 'DRAFT' || invoice.status === 'VOID' || invoice.status === 'CANCELLED') {
+    return null;
+  }
+  const amount = fils(invoice.settlementDiscount);
+  return {
+    date: invoice.settlementDiscountOn,
+    branchId: invoice.branchId,
+    description: `Discount on invoice ${invoice.invoiceNumber}${invoice.customerName ? ` — ${invoice.customerName}` : ''}`,
+    lines: new Lines()
+      .debit(accounts.SALES_DISCOUNTS, amount)
+      .credit(accounts.ACCOUNTS_RECEIVABLE, amount)
+      .build(),
   };
 };
 
@@ -668,6 +712,7 @@ const postCreditNote: Poster = async (tx, organizationId, creditNoteId, accounts
       discountAmount: true,
       taxAmount: true,
       totalAmount: true,
+      roundingAmount: true,
       items: { select: { itemType: true, accountId: true, lineTotal: true } },
       invoice: { select: { invoiceNumber: true, customerName: true } },
     },
@@ -676,7 +721,8 @@ const postCreditNote: Poster = async (tx, organizationId, creditNoteId, accounts
   const lines = new Lines()
     .credit(accounts.ACCOUNTS_RECEIVABLE, fils(note.totalAmount))
     .credit(accounts.SALES_DISCOUNTS, fils(note.discountAmount))
-    .debit(accounts.VAT_OUTPUT, fils(note.taxAmount));
+    .debit(accounts.VAT_OUTPUT, fils(note.taxAmount))
+    .debit(accounts.ROUNDING, fils(note.roundingAmount));
   for (const item of note.items) {
     const account =
       item.accountId ?? accounts[SALES_ROLE[item.itemType ?? 'OTHER'] ?? 'SALES_OTHER'];
@@ -940,4 +986,5 @@ export const POSTING_RULES: Record<
   CUSTOMER_ADVANCE: postCustomerAdvance,
   CUSTOMER_ADVANCE_ALLOCATION: postAdvanceAllocation,
   CUSTOMER_ADVANCE_REFUND: postAdvanceRefund,
+  INVOICE_DISCOUNT: postInvoiceDiscount,
 };

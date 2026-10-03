@@ -10,11 +10,12 @@ import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { filsToString, shareFils, toFils } from '@/lib/money';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { allocateDocumentNumber } from '@/lib/numbering';
-import { paidFils, settlementStatus } from '@/lib/billing/invoice';
+import { dueFils, paidFils, settlementStatus } from '@/lib/billing/invoice';
 import { syncPosting } from '@/lib/accounting/journal';
 import { checkMoneyAccount } from '@/lib/accounting/chart';
 import { emptyToNull } from '@/lib/normalize';
 import { returnToAdvances, undoReturnsToAdvances } from '@/lib/billing/advances';
+import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 
 /*
  * Tax credit notes — the only way an issued tax invoice is reduced once it
@@ -45,6 +46,17 @@ import { returnToAdvances, undoReturnsToAdvances } from '@/lib/billing/advances'
  *
  * A note is voided, never deleted, and only while no refund has been paid
  * under it.
+ *
+ * An invoice's round-off (outside VAT) is taken back by the note that
+ * credits the last of its lines, so a fully credited invoice owes nothing.
+ *
+ * createDiscountCreditNote is a credit note too (no screen offers it: a
+ * discount is given on the invoice form, or off the total afterwards —
+ * lib/billing/invoice-changes.ts discountInvoice): a
+ * discount agreed after the invoice — the customer paying 154.00 less —
+ * lowers the sale and its VAT, which only a tax credit note may do. The
+ * amount, VAT included, is spread across the lines in proportion, exactly to
+ * the fil, and issued by the same rules as any other note.
  */
 
 const REASON = z
@@ -109,7 +121,7 @@ interface CreditedSoFar {
  * What is left to credit on each line of an invoice: its value after its
  * share of the bill discount, less every issued credit note against it.
  */
-function creditableLines(
+export function creditableLines(
   invoice: { discountAmount: { toString(): string }; items: InvoiceLine[] },
   credited: Map<string, CreditedSoFar>,
 ) {
@@ -199,12 +211,74 @@ const INVOICE_LINES = {
   },
 };
 
+/**
+ * Job cards are locked before invoices, everywhere: lock the invoice's job
+ * card (if it has one) before the invoice itself.
+ */
+async function lockInvoiceJob(tx: Tx, organizationId: string, invoiceId: string) {
+  const target = await tx.invoice.findFirst({
+    where: { id: invoiceId, organizationId },
+    select: { jobCardId: true },
+  });
+  if (target?.jobCardId) {
+    await tx.$executeRaw`SELECT id FROM job_cards WHERE id = ${target.jobCardId}::uuid AND organization_id = ${organizationId}::uuid FOR UPDATE`;
+  }
+}
+
+/**
+ * Keeps an invoice's job card in step with what is owed on it, as a payment
+ * does: once nothing is due (a credit note or discount settling it), an
+ * Invoiced job becomes Paid; once something is owed again (the credit note
+ * voided), a Paid job goes back to Invoiced. A delivered job stays delivered.
+ * Through the job's own status change, so it is in its history and audit.
+ * Returns the status the job moved to, or null when it was left alone.
+ */
+export async function syncJobWithInvoice(
+  tx: Tx,
+  organizationId: string,
+  invoiceId: string,
+  actorUserId: string,
+  metadata: Record<string, unknown>,
+) {
+  const invoice = await tx.invoice.findFirst({
+    where: { id: invoiceId, organizationId },
+    select: { status: true, jobCard: { select: { id: true, status: true } } },
+  });
+  if (!invoice?.jobCard) return null;
+  const job = normalizeStatus(invoice.jobCard.status);
+  if (invoice.status === 'PAID' && job === 'INVOICED') {
+    await applyJobStatusChange(tx, {
+      organizationId,
+      jobCardId: invoice.jobCard.id,
+      toStatus: 'PAID',
+      actor: { userId: actorUserId },
+      source: 'workflow',
+      metadata: { invoiceId, ...metadata },
+    });
+    return 'PAID' as const;
+  }
+  if (invoice.status !== 'PAID' && job === 'PAID') {
+    await applyJobStatusChange(tx, {
+      organizationId,
+      jobCardId: invoice.jobCard.id,
+      toStatus: 'INVOICED',
+      actor: { userId: actorUserId },
+      source: 'workflow',
+      reopen: true,
+      metadata: { invoiceId, ...metadata },
+    });
+    return 'INVOICED' as const;
+  }
+  return null;
+}
+
 /** Why an invoice can't be credited, or null when it can. Shared with the screens. */
 export function creditBlocker(invoice: {
   invoiceType: string;
   status: string;
   totalAmount: { toString(): string };
   creditedAmount: { toString(): string };
+  settlementDiscount: { toString(): string };
 }): string | null {
   if (invoice.invoiceType !== 'TAX_INVOICE') {
     return 'A pro-forma invoice is not a supply. Edit or void it instead.';
@@ -213,6 +287,10 @@ export function creditBlocker(invoice: {
   if (invoice.status === 'DRAFT') return 'A draft invoice has not been issued. Edit it instead.';
   if (fils(invoice.creditedAmount) >= fils(invoice.totalAmount)) {
     return 'This invoice has been credited in full.';
+  }
+  // The two would both come off the same total.
+  if (fils(invoice.settlementDiscount) > 0) {
+    return 'A discount was given on this invoice after it. Take the discount off first to issue a credit note.';
   }
   return null;
 }
@@ -235,6 +313,7 @@ export async function getCreditableInvoice(user: AuthenticatedUser, invoiceId: s
       totalAmount: true,
       creditedAmount: true,
       advanceAppliedAmount: true,
+      settlementDiscount: true,
       jobCardId: true,
       customer: { select: { name: true } },
       items: INVOICE_LINES,
@@ -290,6 +369,7 @@ export async function createCreditNote(
 
   return prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'credit_note.create');
+    await lockInvoiceJob(tx, user.organizationId, invoiceId);
     await tx.$executeRaw`SELECT id FROM invoices WHERE id = ${invoiceId}::uuid AND organization_id = ${user.organizationId}::uuid FOR UPDATE`;
     const invoice = await tx.invoice.findFirst({
       where: { id: invoiceId, organizationId: user.organizationId },
@@ -305,6 +385,8 @@ export async function createCreditNote(
         totalAmount: true,
         creditedAmount: true,
         advanceAppliedAmount: true,
+        settlementDiscount: true,
+        roundingAdjustment: true,
         items: INVOICE_LINES,
         payments: { select: { id: true, amount: true, status: true, reversalOfPaymentId: true } },
       },
@@ -369,7 +451,28 @@ export async function createCreditNote(
     }
 
     const subtotal = grossTotal - shareTotal;
-    const total = subtotal + taxTotal;
+    // The note that credits the last of the lines takes the round-off back too.
+    const creditedNow = new Map(items.map((item) => [item.invoiceItemId, item]));
+    const clearsEveryLine = lines.every(
+      (line) =>
+        line.remaining === 0 ||
+        fils(creditedNow.get(line.item.id)?.lineTotal) -
+          fils(creditedNow.get(line.item.id)?.discountAmount) ===
+          line.remaining,
+    );
+    const roundingTaken = await tx.creditNote.aggregate({
+      where: { organizationId: user.organizationId, invoiceId: invoice.id, status: 'ISSUED' },
+      _sum: { roundingAmount: true },
+    });
+    const rounding = clearsEveryLine
+      ? fils(invoice.roundingAdjustment) - fils(roundingTaken._sum.roundingAmount)
+      : 0;
+    const total = subtotal + taxTotal + rounding;
+    if (total < 0) {
+      throw new DomainError(
+        'This credit is smaller than the invoice’s round-off. Credit more of the invoice in one note.',
+      );
+    }
     const creditedBefore = fils(invoice.creditedAmount);
     const invoiceTotal = fils(invoice.totalAmount);
     if (creditedBefore + total > invoiceTotal) {
@@ -405,6 +508,7 @@ export async function createCreditNote(
         discountAmount: filsToString(shareTotal),
         subtotal: filsToString(subtotal),
         taxAmount: filsToString(taxTotal),
+        roundingAmount: filsToString(rounding),
         totalAmount: filsToString(total),
         refundAmount: filsToString(refund),
         createdByUserId: user.id,
@@ -428,6 +532,7 @@ export async function createCreditNote(
       totalAmount: invoice.totalAmount,
       creditedAmount: filsToString(creditedBefore + total),
       advanceAppliedAmount: filsToString(appliedBefore - returned),
+      settlementDiscount: invoice.settlementDiscount,
     };
     const status = settlementStatus(invoiceAfter, paid);
     await tx.invoice.update({
@@ -439,6 +544,11 @@ export async function createCreditNote(
       },
     });
     await syncPosting(tx, user.organizationId, 'CREDIT_NOTE', note.id, user.id);
+    // Settled by the credit note (with what was paid): the job card is paid too.
+    await syncJobWithInvoice(tx, user.organizationId, invoice.id, user.id, {
+      creditNoteId: note.id,
+      reason: 'credit_note_issued',
+    });
 
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
@@ -453,6 +563,7 @@ export async function createCreditNote(
         reason: input.reason,
         subtotal: filsToString(subtotal),
         taxAmount: filsToString(taxTotal),
+        ...(rounding ? { roundingAmount: filsToString(rounding) } : {}),
         totalAmount: filsToString(total),
         refundAmount: filsToString(refund),
         returnedToAdvances: filsToString(returned),
@@ -478,6 +589,167 @@ export async function createCreditNote(
       refundAmount: filsToString(refund),
       returnedToAdvances: filsToString(returned),
     };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Give discount: a credit note for an amount, VAT included
+// ---------------------------------------------------------------------------
+
+const discountSchema = z.object({
+  /** The discount, VAT included — what the customer pays less. */
+  amount: z
+    .string({ error: 'Enter the discount.' })
+    .trim()
+    .refine(
+      (value) => AMOUNT.test(value) && toFils(value) > 0,
+      'Enter the discount like 154 or 154.00.',
+    ),
+  reason: z.string().trim().max(500).optional(),
+  issueDate: z.string().trim().optional(),
+  requestKey: z.string().optional(),
+});
+
+/**
+ * How a discount of `target` fils, VAT included, falls across an invoice's
+ * lines: in proportion to what is left on each (with its VAT), each line's
+ * amount before VAT chosen so that it and its VAT make its share. VAT is
+ * rounded per line, so some totals can't be made on one line alone (at 5%,
+ * 84.29 + 4.21 = 88.50 and 84.30 + 4.22 = 88.52 — never 88.51); the fil or
+ * two left over is then made up by moving one or two lines a few fils. Null
+ * only when no such mix makes the amount exactly.
+ */
+export function splitDiscount(lines: Creditable[], target: number) {
+  const open = lines.filter((line) => line.remaining > 0);
+  const values = open.map((line) => line.remaining + line.remainingTax);
+  const everything = values.reduce((sum, value) => sum + value, 0);
+  if (target >= everything) {
+    // The whole of what is left: every line in full.
+    return open.map((line) => ({ line, amount: line.remaining }));
+  }
+  /** A line's amount before VAT, and that amount with its VAT. */
+  const withVat = (line: Creditable, amount: number) =>
+    amount <= 0 ? 0 : amount + creditPart(line, amount).tax;
+  const shares = shareFils(target, values);
+  const amounts = open.map((line, index) => {
+    const rate = Math.round(Number((line.item.taxRate ?? 0).toString()) * 100);
+    const guess = Math.round((shares[index] * 10000) / (10000 + rate));
+    // The largest amount whose total with VAT does not pass the line's share.
+    let best = 0;
+    for (
+      let amount = Math.max(guess - 3, 0);
+      amount <= Math.min(guess + 3, line.remaining);
+      amount++
+    ) {
+      if (withVat(line, amount) <= shares[index]) best = amount;
+    }
+    return best;
+  });
+  const reached = () => open.reduce((sum, line, index) => sum + withVat(line, amounts[index]), 0);
+  const fits = (index: number, amount: number) => amount >= 0 && amount <= open[index].remaining;
+
+  // Make up the difference: one line moved a few fils, else two.
+  const STEPS = [-4, -3, -2, -1, 1, 2, 3, 4];
+  let gap = target - reached();
+  for (let i = 0; gap !== 0 && i < open.length; i++) {
+    for (const step of STEPS) {
+      const moved = amounts[i] + step;
+      if (!fits(i, moved)) continue;
+      if (withVat(open[i], moved) - withVat(open[i], amounts[i]) === gap) {
+        amounts[i] = moved;
+        gap = 0;
+        break;
+      }
+    }
+  }
+  for (let i = 0; gap !== 0 && i < open.length; i++) {
+    for (let j = i + 1; gap !== 0 && j < open.length; j++) {
+      for (const a of STEPS) {
+        if (gap === 0) break;
+        for (const b of STEPS) {
+          const ai = amounts[i] + a;
+          const bj = amounts[j] + b;
+          if (!fits(i, ai) || !fits(j, bj)) continue;
+          const change =
+            withVat(open[i], ai) -
+            withVat(open[i], amounts[i]) +
+            withVat(open[j], bj) -
+            withVat(open[j], amounts[j]);
+          if (change === gap) {
+            amounts[i] = ai;
+            amounts[j] = bj;
+            gap = 0;
+            break;
+          }
+        }
+      }
+    }
+  }
+  if (gap !== 0) return null;
+  return open
+    .map((line, index) => ({ line, amount: amounts[index] }))
+    .filter((entry) => entry.amount > 0);
+}
+
+/**
+ * Gives a customer a discount on an issued invoice after the fact — the
+ * customer paid less, and the difference is a discount, not a debt. Issued
+ * as a tax credit note (so the sale and output VAT come down), never more
+ * than is still due on the invoice, so no refund ever arises from it.
+ */
+export async function createDiscountCreditNote(
+  user: AuthenticatedUser,
+  invoiceId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(discountSchema, rawInput);
+  const target = toFils(input.amount);
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, organizationId: user.organizationId },
+    select: {
+      id: true,
+      branchId: true,
+      invoiceType: true,
+      status: true,
+      discountAmount: true,
+      totalAmount: true,
+      creditedAmount: true,
+      advanceAppliedAmount: true,
+      settlementDiscount: true,
+      items: INVOICE_LINES,
+      payments: { select: { id: true, amount: true, status: true, reversalOfPaymentId: true } },
+    },
+  });
+  if (!invoice) throw new NotFoundError('invoice');
+  requirePermission(user, 'credit_note.create', { branchId: invoice.branchId });
+  const blocker = creditBlocker(invoice);
+  if (blocker) throw new DomainError(blocker);
+  const due = dueFils(invoice, paidFils(invoice.payments));
+  if (target > due) {
+    throw new DomainError(
+      `Only ${filsToString(due)} is still due on this invoice. To give back money already paid, issue a credit note.`,
+      'amount',
+    );
+  }
+  const lines = creditableLines(
+    invoice,
+    await creditedSoFar(prisma, user.organizationId, invoice.id),
+  );
+  const split = splitDiscount(lines, target);
+  if (!split || split.length === 0) {
+    throw new DomainError(
+      `A discount of exactly ${filsToString(target)} can't be split across the lines to the fil. Try a fil more or less.`,
+      'amount',
+    );
+  }
+  return createCreditNote(user, invoice.id, {
+    issueDate: input.issueDate,
+    reason: input.reason?.trim() || 'Discount given at payment',
+    lines: split.map(({ line, amount }) => ({
+      invoiceItemId: line.item.id,
+      amount: filsToString(amount),
+    })),
+    requestKey: input.requestKey,
   });
 }
 
@@ -608,7 +880,8 @@ export async function voidCreditNote(
       select: { id: true, invoiceId: true },
     });
     if (!found) throw new NotFoundError('credit note');
-    // The invoice first, as everything that changes it does.
+    // Its job card, then the invoice, as everything that changes them does.
+    await lockInvoiceJob(tx, user.organizationId, found.invoiceId);
     await tx.$executeRaw`SELECT id FROM invoices WHERE id = ${found.invoiceId}::uuid FOR UPDATE`;
     await tx.$executeRaw`SELECT id FROM credit_notes WHERE id = ${found.id}::uuid FOR UPDATE`;
     const note = await tx.creditNote.findFirstOrThrow({
@@ -628,6 +901,7 @@ export async function voidCreditNote(
             totalAmount: true,
             creditedAmount: true,
             advanceAppliedAmount: true,
+            settlementDiscount: true,
             payments: {
               select: { id: true, amount: true, status: true, reversalOfPaymentId: true },
             },
@@ -652,7 +926,12 @@ export async function voidCreditNote(
     );
     const advanceAppliedAmount = filsToString(fils(invoice.advanceAppliedAmount) + restored);
     const status = settlementStatus(
-      { totalAmount: invoice.totalAmount, creditedAmount, advanceAppliedAmount },
+      {
+        totalAmount: invoice.totalAmount,
+        creditedAmount,
+        advanceAppliedAmount,
+        settlementDiscount: invoice.settlementDiscount,
+      },
       paidFils(invoice.payments),
     );
     const voidedAt = new Date();
@@ -665,6 +944,11 @@ export async function voidCreditNote(
       data: { creditedAmount, advanceAppliedAmount, status },
     });
     await syncPosting(tx, user.organizationId, 'CREDIT_NOTE', note.id, user.id);
+    // Owed again: a paid job card goes back to invoiced.
+    await syncJobWithInvoice(tx, user.organizationId, invoice.id, user.id, {
+      creditNoteId: note.id,
+      reason: 'credit_note_voided',
+    });
 
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
