@@ -246,6 +246,23 @@ describe('chart of accounts', () => {
     assert.equal(found?.isActive, false);
   });
 
+  test('the chart can be searched by code or name, however it is typed', async () => {
+    const matches = (groups: Awaited<ReturnType<typeof listAccounts>>) =>
+      groups.flatMap((group) => group.accounts.map((row) => row.accountCode));
+    const byName = await listAccounts(a.owner, { q: 'sales DISCOUNT' });
+    assert.deepEqual(matches(byName), ['4090']);
+    assert.equal(byName.find((group) => group.type === 'REVENUE')?.accounts.length, 1);
+    assert.deepEqual(matches(await listAccounts(a.owner, { q: '1020' })), ['1020']);
+    assert.deepEqual(matches(await listAccounts(a.owner, { q: 'no such account' })), []);
+    // Every group is still there, so the screen can say which have nothing.
+    assert.equal((await listAccounts(a.owner, { q: 'zzz' })).length, byName.length);
+    // A blank search is the whole chart.
+    assert.deepEqual(
+      matches(await listAccounts(a.owner, { q: '  ' })),
+      matches(await listAccounts(a.owner)),
+    );
+  });
+
   test('changing the chart needs more than accounting.view', async () => {
     const reader = { ...a.owner, orgWidePermissions: new Set(['accounting.view']) };
     await assert.rejects(

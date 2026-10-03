@@ -45,6 +45,8 @@ import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitive
 import { AccessDenied } from '@/components/shared/access-denied';
 import { InlineForm } from '@/components/shared/inline-form';
 import { StatusPill } from '@/components/shared/status-pill';
+import { SearchField } from '@/components/shared/search-field';
+import { EmptyState } from '@/components/shared/empty-state';
 import { FinancePeriodPicker } from '@/components/finance/period-picker';
 import { EditAccountButton, NewAccountForm } from '@/components/finance/account-form';
 import { cn } from '@/lib/utils';
@@ -126,7 +128,17 @@ function Tabs({ active, search }: { active: View; search: string }) {
   );
 }
 
-function AccountsView({ groups, canEdit }: { groups: AccountGroups; canEdit: boolean }) {
+function AccountsView({
+  groups,
+  canEdit,
+  query,
+}: {
+  groups: AccountGroups;
+  canEdit: boolean;
+  query: string;
+}) {
+  // While searching, only the groups with a match; otherwise every group.
+  const shown = query ? groups.filter((group) => group.accounts.length > 0) : groups;
   return (
     <Stack gap="xl">
       {canEdit ? (
@@ -141,7 +153,19 @@ function AccountsView({ groups, canEdit }: { groups: AccountGroups; canEdit: boo
         </Panel>
       ) : null}
       {canEdit ? <AddStandardAccountsButton /> : null}
-      {groups.map((group) => (
+      <SearchField
+        initialQuery={query}
+        placeholder="Search by account code or name"
+        keep={{ view: 'accounts' }}
+      />
+      {query && shown.length === 0 ? (
+        <EmptyState
+          icon={BookOpen}
+          title={`No account matches “${query}”`}
+          description="Try part of the code, like 40, or a word from the name, like cash."
+        />
+      ) : null}
+      {shown.map((group) => (
         <Section key={group.type} title={group.label}>
           {group.accounts.length === 0 ? (
             <Panel>
@@ -215,6 +239,7 @@ export default async function AccountingPage({
     asOf?: string;
     account?: string;
     source?: string;
+    q?: string;
   }>;
 }) {
   const user = await requireUser();
@@ -257,7 +282,8 @@ export default async function AccountingPage({
   const journal =
     view === 'journal' ? await listJournal(user, { ...periodInput, source: params.source }) : null;
   const cash = view === 'cash' ? await getCashFlowStatement(user, periodInput) : null;
-  const accounts = view === 'accounts' ? await listAccounts(user) : null;
+  const accountQuery = (params.q ?? '').trim();
+  const accounts = view === 'accounts' ? await listAccounts(user, { q: accountQuery }) : null;
   const period = profit?.period ?? ledger?.period ?? journal?.period ?? cash?.period ?? null;
   const asOf = balance?.asOf ?? trial?.asOf ?? null;
   const intro =
@@ -348,7 +374,7 @@ export default async function AccountingPage({
         </Stack>
       ) : null}
       {cash ? <CashFlowView data={cash} /> : null}
-      {accounts ? <AccountsView groups={accounts} canEdit={canEdit} /> : null}
+      {accounts ? <AccountsView groups={accounts} canEdit={canEdit} query={accountQuery} /> : null}
     </Stack>
   );
 }

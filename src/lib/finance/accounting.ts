@@ -338,7 +338,9 @@ const accountSchema = z.object({
   accountType: z.enum(ACCOUNT_TYPES, { error: 'Choose the kind of account.' }).optional(),
   isActive: z.enum(['true', 'false']).optional(),
   /** Cash, bank and card accounts money can go into or come out of. */
-  isPaymentAccount: z.union([z.enum(['true', 'false']), z.array(z.enum(['true', 'false']))]).optional(),
+  isPaymentAccount: z
+    .union([z.enum(['true', 'false']), z.array(z.enum(['true', 'false']))])
+    .optional(),
   requestKey: z.string().optional(),
 });
 
@@ -346,11 +348,26 @@ const accountSchema = z.object({
 const checked = (value: 'true' | 'false' | ('true' | 'false')[] | undefined) =>
   value === undefined ? undefined : (Array.isArray(value) ? value.at(-1) : value) === 'true';
 
-/** Every account, grouped by type in the usual order, with how often each is used. */
-export async function listAccounts(user: AuthenticatedUser) {
+/**
+ * Every account — or those whose code or name matches a search — grouped by
+ * type in the usual order, with how often each is used.
+ */
+export async function listAccounts(user: AuthenticatedUser, filters: { q?: string } = {}) {
   requirePermission(user, 'accounting.view');
+  // A search matches the account's code or name, however it is typed.
+  const q = filters.q?.trim();
   const accounts = await prisma.chartOfAccount.findMany({
-    where: { organizationId: user.organizationId },
+    where: {
+      organizationId: user.organizationId,
+      ...(q
+        ? {
+            OR: [
+              { accountCode: { contains: q, mode: 'insensitive' } },
+              { accountName: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    },
     orderBy: [{ accountCode: 'asc' }],
     select: {
       id: true,
