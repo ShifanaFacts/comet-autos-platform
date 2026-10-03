@@ -75,6 +75,9 @@ export const SYSTEM_ACCOUNTS: SystemAccount[] = [
   { role: 'SALES_OTHER', code: '4020', name: 'Sales — other', type: 'REVENUE' },
   { role: 'SALES_DISCOUNTS', code: '4090', name: 'Sales discounts', type: 'REVENUE' },
   { role: 'ROUNDING', code: '4095', name: 'Rounding adjustments', type: 'REVENUE' },
+  // What an owner put in and took out (Money → Owner's money).
+  { role: 'OWNER_CAPITAL', code: '3000', name: "Owner's capital", type: 'EQUITY' },
+  { role: 'OWNER_DRAWINGS', code: '3100', name: "Owner's drawings", type: 'EQUITY' },
   {
     role: 'ASSET_DISPOSALS',
     code: '4110',
@@ -107,9 +110,7 @@ export const STANDARD_ACCOUNTS: ChartAccount[] = [
   { code: '2110', name: 'Corporate tax payable', type: 'LIABILITY' },
   { code: '2500', name: 'Provision for end-of-service benefits', type: 'LIABILITY' },
   { code: '2510', name: 'Bank loans', type: 'LIABILITY' },
-  // Equity
-  { code: '3000', name: "Owner's capital", type: 'EQUITY' },
-  { code: '3100', name: "Owner's drawings", type: 'EQUITY' },
+  // Equity: Owner's capital (3000) and drawings (3100) are system accounts above.
   // Income
   { code: '4100', name: 'Other income', type: 'REVENUE' },
   // Cost of sales
