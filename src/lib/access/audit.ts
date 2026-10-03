@@ -59,6 +59,8 @@ const PREFIX_MODULE: Record<string, string> = {
   customer_advance_application: 'customer_advance',
   customer_advance_refund: 'customer_advance',
   money_transfer: 'money',
+  partner: 'money',
+  owner_money: 'money',
   expense: 'expense',
   journal: 'accounting',
   account: 'accounting',

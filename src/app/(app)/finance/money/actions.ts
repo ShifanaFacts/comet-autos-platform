@@ -6,6 +6,7 @@ import { runAction, toClientResult } from '@/lib/action';
 import type { ActionResult } from '@/lib/errors';
 import { formDataToObject } from '@/lib/form-data';
 import { recordMoneyTransfer, voidMoneyTransfer } from '@/lib/finance/money';
+import { addPartner, recordOwnerMoney, voidOwnerMoney } from '@/lib/finance/owner-money';
 
 /** A transfer changes two balances: every screen that shows them. */
 function refresh() {
@@ -32,5 +33,35 @@ export async function voidMoneyTransferAction(
   const user = await requireUser();
   const result = await runAction(() => voidMoneyTransfer(user, transferId, input));
   if (result.ok) refresh();
+  return toClientResult(result);
+}
+
+export async function recordOwnerMoneyAction(
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => recordOwnerMoney(user, formDataToObject(formData)));
+  if (result.ok || result.duplicate) refresh();
+  return toClientResult(result);
+}
+
+export async function voidOwnerMoneyAction(
+  id: string,
+  input: { reason: string; requestKey: string },
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => voidOwnerMoney(user, id, input));
+  if (result.ok) refresh();
+  return toClientResult(result);
+}
+
+export async function addPartnerAction(
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => addPartner(user, formDataToObject(formData)));
+  if (result.ok || result.duplicate) revalidatePath('/finance/money/owner');
   return toClientResult(result);
 }

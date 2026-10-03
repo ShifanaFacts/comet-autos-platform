@@ -16,6 +16,7 @@ const DEFAULT_PREFIX: Record<DocumentType, string> = {
   OPENING_BALANCE: 'OB-',
   MONEY_TRANSFER: 'TRF-',
   CUSTOMER_ADVANCE: 'ADV-',
+  OWNER_MONEY: 'OWN-',
 };
 
 /**

@@ -32,6 +32,12 @@ import {
   voidMoneyTransfer,
 } from '@/lib/finance/money';
 import { recordExpense } from '@/lib/finance/expenses';
+import {
+  addPartner,
+  listOwnerMoney,
+  recordOwnerMoney,
+  voidOwnerMoney,
+} from '@/lib/finance/owner-money';
 import { toFils } from '@/lib/money';
 import { localDateString } from '@/lib/format';
 import { createTestOrg, expectDomainError, RUN, type TestOrg } from './support';
@@ -221,6 +227,175 @@ describe('money now', () => {
   });
 
   test('everything balances and nothing is left unbooked', async () => {
+    assert.equal((await getBalanceSheet(a.owner)).balanced, true);
+    assert.equal(await countUnbooked(a.owner), 0);
+  });
+});
+
+describe('owner’s money', () => {
+  const cashFils = async () =>
+    toFils((await balanceOf(roles.CASH))!.replace('-', '')) *
+    ((await balanceOf(roles.CASH))!.startsWith('-') ? -1 : 1);
+
+  test('Owner’s capital and drawings are system accounts on 3000 and 3100', async () => {
+    const accounts = await prisma.chartOfAccount.findMany({
+      where: { id: { in: [roles.OWNER_CAPITAL, roles.OWNER_DRAWINGS] } },
+      select: { id: true, accountCode: true },
+    });
+    const code = new Map(accounts.map((row) => [row.id, row.accountCode]));
+    assert.equal(code.get(roles.OWNER_CAPITAL), '3000');
+    assert.equal(code.get(roles.OWNER_DRAWINGS), '3100');
+  });
+
+  test('money put in: Dr cash, Cr Owner’s capital — the cash goes up, nothing earned', async () => {
+    const before = await cashFils();
+    const row = await recordOwnerMoney(a.owner, {
+      kind: 'CAPITAL_IN',
+      accountId: roles.CASH,
+      amount: '6000',
+      movedOn: today(),
+      notes: 'For parts and running costs',
+    });
+    assert.match(row.entryNumber, /^OWN-/);
+    const booked = await bookedFor(row.id);
+    assert.equal(booked.get(roles.CASH), toFils('6000.00'));
+    assert.equal(booked.get(roles.OWNER_CAPITAL), -toFils('6000.00'));
+    assert.equal(booked.size, 2);
+    assert.equal((await cashFils()) - before, toFils('6000.00'));
+  });
+
+  test('a loan: Dr bank, Cr Due to owner; drawings: Dr Owner’s drawings, Cr cash', async () => {
+    const loan = await recordOwnerMoney(a.owner, {
+      kind: 'LOAN_IN',
+      accountId: roles.BANK,
+      amount: '1000',
+      movedOn: today(),
+    });
+    const lent = await bookedFor(loan.id);
+    assert.equal(lent.get(roles.BANK), toFils('1000.00'));
+    assert.equal(lent.get(roles.OWNER_ADVANCES), -toFils('1000.00'));
+    const drawn = await recordOwnerMoney(a.owner, {
+      kind: 'DRAWINGS',
+      accountId: roles.CASH,
+      amount: '500',
+      movedOn: today(),
+    });
+    const out = await bookedFor(drawn.id);
+    assert.equal(out.get(roles.OWNER_DRAWINGS), toFils('500.00'));
+    assert.equal(out.get(roles.CASH), -toFils('500.00'));
+  });
+
+  test('only the workshop’s own cash, petty cash or bank; never a future date', async () => {
+    await expectDomainError(
+      recordOwnerMoney(a.owner, {
+        kind: 'CAPITAL_IN',
+        accountId: roles.CARD_CLEARING,
+        amount: '10',
+        movedOn: today(),
+      }),
+      /cash, petty cash or bank/,
+    );
+    await expectDomainError(
+      recordOwnerMoney(a.owner, {
+        kind: 'CAPITAL_IN',
+        accountId: roles.CASH,
+        amount: '10',
+        movedOn: localDateString(new Date(Date.now() + 2 * 86_400_000)),
+      }),
+      /not a future one/,
+    );
+    // The partner named must be one of the workshop's partners.
+    await expectDomainError(
+      recordOwnerMoney(a.owner, {
+        kind: 'CAPITAL_IN',
+        accountId: roles.CASH,
+        partnerId: '00000000-0000-7000-8000-000000000000',
+        amount: '10',
+        movedOn: today(),
+      }),
+      /partner from the list/,
+    );
+    const viewer = { ...a.owner, orgWidePermissions: new Set(['money.view']) };
+    await assert.rejects(
+      recordOwnerMoney(viewer, {
+        kind: 'CAPITAL_IN',
+        accountId: roles.CASH,
+        amount: '10',
+        movedOn: today(),
+      }),
+      AuthError,
+    );
+  });
+
+  test('voided: kept on record, its entry reversed; the list shows both entries', async () => {
+    const row = await recordOwnerMoney(a.owner, {
+      kind: 'CAPITAL_IN',
+      accountId: roles.CASH,
+      amount: '250',
+      movedOn: today(),
+    });
+    await voidOwnerMoney(a.owner, row.id, { reason: 'Entered twice' });
+    const booked = await bookedFor(row.id);
+    assert.ok(
+      [...booked.values()].every((value) => value === 0),
+      'nothing stands',
+    );
+    const list = await listOwnerMoney(a.owner);
+    const listed = list.rows.find((entry) => entry.id === row.id);
+    assert.equal(listed?.status, 'VOID');
+    assert.match(listed?.journalEntry ?? '', /^JV-/);
+    assert.match(listed?.reversedBy ?? '', /^JV-/);
+    assert.equal(list.totals.capitalIn, '6000.00', 'a void counts for nothing');
+    assert.equal(list.totals.loansIn, '1000.00');
+    assert.equal(list.totals.drawings, '500.00');
+    await expectDomainError(voidOwnerMoney(a.owner, row.id, { reason: 'Again' }), /already void/);
+  });
+
+  test('three partners: each one’s money kept against their name, totalled per partner', async () => {
+    const first = await addPartner(a.owner, { name: `Partner A ${RUN}` });
+    const second = await addPartner(a.owner, { name: `Partner B ${RUN}` });
+    const third = await addPartner(a.owner, { name: `Partner C ${RUN}` });
+    await expectDomainError(
+      addPartner(a.owner, { name: `partner a ${RUN}` }),
+      /already a partner by that name/,
+    );
+    for (const [partner, amount] of [
+      [first, '2000'],
+      [second, '2000'],
+      [third, '2000'],
+    ] as const) {
+      await recordOwnerMoney(a.owner, {
+        kind: 'CAPITAL_IN',
+        accountId: roles.CASH,
+        partnerId: partner.id,
+        amount,
+        movedOn: today(),
+      });
+    }
+    await recordOwnerMoney(a.owner, {
+      kind: 'DRAWINGS',
+      accountId: roles.CASH,
+      partnerId: first.id,
+      amount: '300',
+      movedOn: today(),
+    });
+    const list = await listOwnerMoney(a.owner);
+    const of = (id: string) => list.partners.find((partner) => partner.id === id);
+    assert.equal(of(first.id)?.capitalIn, '2000.00');
+    assert.equal(of(first.id)?.drawings, '300.00');
+    assert.equal(of(first.id)?.net, '1700.00');
+    assert.equal(of(second.id)?.net, '2000.00');
+    assert.equal(of(third.id)?.net, '2000.00');
+    const row = list.rows.find((entry) => entry.partner?.id === second.id);
+    assert.equal(row?.partner?.name, `Partner B ${RUN}`);
+    // The journal names the partner.
+    const entry = await prisma.journalEntry.findFirstOrThrow({
+      where: { organizationId: a.organizationId, sourceType: 'OWNER_MONEY', sourceId: row!.id },
+    });
+    assert.match(entry.description ?? '', /Partner B/);
+  });
+
+  test('the books balance and nothing is left unbooked', async () => {
     assert.equal((await getBalanceSheet(a.owner)).balanced, true);
     assert.equal(await countUnbooked(a.owner), 0);
   });

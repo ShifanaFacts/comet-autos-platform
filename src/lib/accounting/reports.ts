@@ -304,13 +304,15 @@ export async function sourceLinks(
                           ? '/finance/vat'
                           : source === 'MONEY_TRANSFER'
                             ? '/finance/money/transfers'
-                            : source === 'CUSTOMER_ADVANCE'
-                              ? `/finance/advances/${id}`
-                              : (source === 'CUSTOMER_ADVANCE_ALLOCATION' ||
-                                    source === 'CUSTOMER_ADVANCE_REFUND') &&
-                                  advanceOf.get(id)
-                                ? `/finance/advances/${advanceOf.get(id)}`
-                                : null;
+                            : source === 'OWNER_MONEY'
+                              ? '/finance/money/owner'
+                              : source === 'CUSTOMER_ADVANCE'
+                                ? `/finance/advances/${id}`
+                                : (source === 'CUSTOMER_ADVANCE_ALLOCATION' ||
+                                      source === 'CUSTOMER_ADVANCE_REFUND') &&
+                                    advanceOf.get(id)
+                                  ? `/finance/advances/${advanceOf.get(id)}`
+                                  : null;
     return { type: source, id, href };
   };
 }

@@ -5,6 +5,7 @@ import { milliToString, multiplyQuantity, signedToMilli, toFils } from '@/lib/mo
 import { withNetQuantities } from '@/lib/inventory/stock';
 import { movementValue, receivedBefore } from '@/lib/inventory/purchase-value';
 import { getVatSettings, resolveDefaultVatRate } from '@/lib/tax';
+import { OWNER_MONEY_LABEL } from '@/lib/finance/owner-money-labels';
 import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
 
 /*
@@ -95,6 +96,11 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  * on the day given — the invoice's entry and VAT untouched)
  *   Dr Sales discounts                the discount
  *   Cr Trade receivables              the discount
+ *
+ * OWNER'S MONEY (Money → Owner's money; nothing once void)
+ *   capital in                        Dr the money account / Cr Owner's capital
+ *   loan in                           Dr the money account / Cr Due to owner
+ *   drawings                          Dr Owner's drawings / Cr the money account
  *
  * CUSTOMER ADVANCE (money paid before any invoice; nothing once cancelled)
  *   received                          Dr the cash, bank or card account
@@ -605,6 +611,46 @@ const postMoneyTransfer: Poster = async (tx, organizationId, transferId) => {
   };
 };
 
+// ─── Owner's money ──────────────────────────────────────────────────────────
+
+/**
+ * An owner putting money in (to stay: capital; to be taken back: a loan, owed
+ * to them as Due to owner) or taking it out for themselves (drawings).
+ */
+const postOwnerMoney: Poster = async (tx, organizationId, id, accounts) => {
+  const row = await tx.ownerMoney.findFirst({
+    where: { id, organizationId },
+    select: {
+      status: true,
+      entryNumber: true,
+      kind: true,
+      amount: true,
+      movedOn: true,
+      accountId: true,
+      owner: { select: { fullName: true } },
+      partner: { select: { name: true } },
+    },
+  });
+  if (!row || row.status !== 'POSTED') return null;
+  const amount = fils(row.amount);
+  const who = row.partner?.name ?? row.owner?.fullName;
+  const lines =
+    row.kind === 'DRAWINGS'
+      ? new Lines().debit(accounts.OWNER_DRAWINGS, amount).credit(row.accountId, amount)
+      : new Lines()
+          .debit(row.accountId, amount)
+          .credit(
+            row.kind === 'LOAN_IN' ? accounts.OWNER_ADVANCES : accounts.OWNER_CAPITAL,
+            amount,
+          );
+  return {
+    date: row.movedOn,
+    branchId: null,
+    description: `${OWNER_MONEY_LABEL[row.kind]} ${row.entryNumber}${who ? ` — ${who}` : ''}`,
+    lines: lines.build(),
+  };
+};
+
 // ─── Owners repaid ──────────────────────────────────────────────────────────
 
 const postOwnerReimbursement: Poster = async (tx, organizationId, id, accounts) => {
@@ -1024,4 +1070,5 @@ export const POSTING_RULES: Record<
   CUSTOMER_ADVANCE_REFUND: postAdvanceRefund,
   INVOICE_DISCOUNT: postInvoiceDiscount,
   PURCHASE_ROUNDING: postPurchaseRounding,
+  OWNER_MONEY: postOwnerMoney,
 };
