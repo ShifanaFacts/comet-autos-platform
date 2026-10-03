@@ -7,7 +7,7 @@ import { canPayOnReceipt, getPurchaseDetail } from '@/lib/inventory/purchases';
 import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { getAccountChoices } from '@/lib/accounting/reports';
 import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
-import { formatCalendarDate, formatDateTime, formatMoney } from '@/lib/format';
+import { formatCalendarDate, formatDateTime, formatMoney, localDateString } from '@/lib/format';
 import { formatMilli, signedToMilli, toFils } from '@/lib/money';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -15,6 +15,7 @@ import { LinkButton } from '@/components/shared/link-button';
 import { StatusPill } from '@/components/shared/status-pill';
 import { PurchaseStatusPill } from '@/components/inventory/purchase-status';
 import { CancelPurchaseButton, ReceivePurchaseForm } from '@/components/inventory/stock-actions';
+import { EditPurchaseDetailsButton } from '@/components/inventory/purchase-details-form';
 import { ExpenseBills } from '@/components/finance/expense-bills';
 import { listAttachments } from '@/lib/documents/attachments';
 import { removePurchaseBillAction } from '../../actions';
@@ -45,7 +46,9 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
   const reversed = new Set(
     purchase.supplierPayments.map((payment) => payment.reversalOfSupplierPaymentId).filter(Boolean),
   );
-  const payments = purchase.supplierPayments.filter((payment) => !payment.reversalOfSupplierPaymentId);
+  const payments = purchase.supplierPayments.filter(
+    (payment) => !payment.reversalOfSupplierPaymentId,
+  );
   const bills = (await listAttachments(user, 'Purchase', [purchase.id])).get(purchase.id) ?? [];
   const receivable = ['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED'].includes(purchase.status);
   const canReceive =
@@ -53,6 +56,11 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
   const nothingReceived = lines.every((line) => line.receivedMilli === 0);
   const canEdit =
     purchase.status === 'DRAFT' &&
+    hasPermission(user, 'purchase.edit', { branchId: purchase.branchId });
+  // Past draft, only the details can change — never the lines or amounts.
+  const canEditDetails =
+    purchase.status !== 'DRAFT' &&
+    purchase.status !== 'CANCELLED' &&
     hasPermission(user, 'purchase.edit', { branchId: purchase.branchId });
   const canCancel =
     purchase.status === 'DRAFT' &&
@@ -110,6 +118,20 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
                 <Pencil />
                 Edit draft
               </LinkButton>
+            ) : null}
+            {canEditDetails ? (
+              <EditPurchaseDetailsButton
+                today={localDateString()}
+                purchase={{
+                  id: purchase.id,
+                  purchaseNumber: purchase.purchaseNumber,
+                  supplierInvoiceNumber: purchase.supplierInvoiceNumber,
+                  supplierInvoiceDate:
+                    purchase.supplierInvoiceDate?.toISOString().slice(0, 10) ?? null,
+                  dueDate: purchase.dueDate?.toISOString().slice(0, 10) ?? null,
+                  notes: purchase.notes,
+                }}
+              />
             ) : null}
             {canCancel && nothingReceived ? (
               <CancelPurchaseButton
@@ -298,6 +320,14 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
             <dd className="text-right tabular-nums">{formatMoney(purchase.subtotal ?? 0)}</dd>
             <dt className="text-muted-foreground">VAT</dt>
             <dd className="text-right tabular-nums">{formatMoney(purchase.taxAmount ?? 0)}</dd>
+            {purchase.roundingAdjustment.isZero() ? null : (
+              <>
+                <dt className="text-muted-foreground">Adjustment (round-off)</dt>
+                <dd className="text-right tabular-nums">
+                  {formatMoney(purchase.roundingAdjustment.toFixed(2))}
+                </dd>
+              </>
+            )}
             <dt className="font-semibold">Total</dt>
             <dd className="text-right font-semibold tabular-nums">
               {formatMoney(purchase.totalAmount ?? 0)}
@@ -313,8 +343,8 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
           </dl>
           {hasDiscount ? (
             <p className="border-t border-border px-4 py-3 text-xs text-muted-foreground sm:px-6">
-              The supplier’s discount lowers what these parts cost and the VAT claimed back. Stock is
-              valued at the cost after discount.
+              The supplier’s discount lowers what these parts cost and the VAT claimed back. Stock
+              is valued at the cost after discount.
             </p>
           ) : null}
         </Panel>

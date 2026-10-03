@@ -249,7 +249,7 @@ export async function getSupplierPayables(user: AuthenticatedUser, supplierId: s
         supplierInvoiceDate: true,
         dueDate: true,
         createdAt: true,
-        status: true,
+        // status comes with the balance select.
         ...PURCHASE_BALANCE_SELECT,
       },
     }),

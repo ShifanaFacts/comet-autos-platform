@@ -26,7 +26,12 @@ import { AuthError } from '@/lib/auth/authorize';
 import { ensureChart } from '@/lib/accounting/chart';
 import { countUnbooked } from '@/lib/accounting/entries';
 import { getBalanceSheet, getLedgerProfitAndLoss } from '@/lib/accounting/reports';
-import { createPurchase, receivePurchase } from '@/lib/inventory/purchases';
+import {
+  createPurchase,
+  getPurchaseDetail,
+  receivePurchase,
+  updatePurchaseDetails,
+} from '@/lib/inventory/purchases';
 import { getStockOnHand, postMovement } from '@/lib/inventory/stock';
 import { getPayables } from '@/lib/finance/supplier-payments';
 import { getSupplierStatement } from '@/lib/finance/statements';
@@ -379,6 +384,143 @@ describe('a purchase with no discount is exactly as before', () => {
     const vat = await getVatReturn(a.owner);
     const vatRow = vat.purchases.find((r) => r.id === purchase.id);
     assert.equal(vatRow?.vat, filsToString(one.taxFils + two.taxFils));
+  });
+});
+
+describe('the supplier’s round-off (“adjusted amount” on the bill)', () => {
+  // Al Amani's GHCR26-20748: 85.00 + 20.00 + 2 × 5.00 + 2 × 5.00 less 1.00 =
+  // 124.00, VAT 6.20 = 130.20, adjusted −0.20, paid 130.00.
+  const bill = (supplierId: string, invoice: string) => ({
+    supplierId,
+    supplierInvoiceNumber: invoice,
+    items: [
+      { partId: part('C'), quantity: '1', unitCost: '85', taxRate: '5' },
+      { partId: part('D'), quantity: '1', unitCost: '20', taxRate: '5' },
+      { partId: part('E'), quantity: '2', unitCost: '5', taxRate: '5' },
+      {
+        partId: part('A'),
+        quantity: '2',
+        unitCost: '5',
+        taxRate: '5',
+        discountType: 'AMOUNT',
+        discountValue: '1',
+      },
+    ],
+    roundingAdjustment: '-0.20',
+  });
+
+  test('more than 5.00 either way is refused', async () => {
+    const { id } = await supplier('Round-off limits');
+    await expectDomainError(
+      createPurchase(a.owner, { ...bill(id, `RND-X-${RUN}`), roundingAdjustment: '-5.01' }),
+      /at most 5\.00/,
+    );
+  });
+
+  test('received and paid at once: 130.00, nothing owed, the round-off booked', async () => {
+    const { id: supplierId } = await supplier('Al Amani');
+    const purchase = await createPurchase(
+      a.owner,
+      {
+        ...bill(supplierId, `GHCR-${RUN}`),
+        payment: 'now',
+        payAmount: '130',
+        method: 'BANK_TRANSFER',
+      },
+      { receive: true },
+    );
+    const saved = await prisma.purchase.findUniqueOrThrow({ where: { id: purchase.id } });
+    assert.equal(saved.subtotal?.toString(), '124');
+    assert.equal(saved.taxAmount?.toString(), '6.2', 'VAT as on the bill');
+    assert.equal(saved.roundingAdjustment.toString(), '-0.2');
+    assert.equal(saved.totalAmount?.toString(), '130');
+    // The parts, at cost after the line discount, VAT claimable in full.
+    const stock = await bookedForPurchase(purchase.id);
+    assert.equal(stock.get(roles.INVENTORY), toFils('124.00'));
+    assert.equal(stock.get(roles.VAT_INPUT), toFils('6.20'));
+    assert.equal(stock.get(roles.ACCOUNTS_PAYABLE), -toFils('130.20'));
+    // The round-off its own entry: owed 0.20 less, a gain.
+    const rounding = await bookedFor([purchase.id]);
+    assert.equal(rounding.get(roles.ACCOUNTS_PAYABLE), toFils('0.20'));
+    assert.equal(rounding.get(roles.ROUNDING), -toFils('0.20'));
+    assert.equal(rounding.size, 2);
+    // Paid in full: off the payables list, nothing owed on the purchase itself.
+    const detail = await getPurchaseDetail(a.owner, purchase.id);
+    assert.equal(detail.receivedValue, '130.00');
+    assert.equal(detail.roundingOwed, '-0.20');
+    assert.equal(detail.paid, '130.00');
+    assert.equal(detail.owed, '0.00');
+    assert.ok(
+      !(await getPayables(a.owner, { supplierId })).rows.some((row) => row.id === purchase.id),
+    );
+    const statement = await getSupplierStatement(a.owner, supplierId);
+    assert.ok(statement.lines.some((line) => line.kind === 'Round-off'));
+    assert.equal(toFils(statement.closing.replace('-', '')), 0);
+  });
+
+  test('received in part: the round-off waits for the rest', async () => {
+    const { id: supplierId } = await supplier('Round-off later');
+    const purchase = await createPurchase(a.owner, bill(supplierId, `RND-P-${RUN}`));
+    const [first, ...rest] = await itemsOf(purchase.id);
+    await receivePurchase(a.owner, purchase.id, {
+      [first.id]: '1',
+      ...Object.fromEntries(rest.map((item) => [item.id, ''])),
+    });
+    const owedNow = async () =>
+      (await getPayables(a.owner, { supplierId })).rows.find((row) => row.id === purchase.id);
+    assert.equal((await owedNow())?.received, '89.25', '85.00 + VAT 4.25, no round-off yet');
+    assert.equal((await bookedFor([purchase.id])).size, 0, 'nothing booked for it yet');
+    await receivePurchase(a.owner, purchase.id, null);
+    assert.equal((await owedNow())?.received, '130.00');
+    assert.equal((await bookedFor([purchase.id])).get(roles.ROUNDING), -toFils('0.20'));
+    assert.equal(await countUnbooked(a.owner), 0);
+  });
+});
+
+describe('a received purchase’s details', () => {
+  test('the date, invoice number, due date and notes change — nothing else', async () => {
+    const { id: supplierId } = await supplier('Details later');
+    const purchase = await createPurchase(
+      a.owner,
+      {
+        supplierId,
+        supplierInvoiceNumber: `DET-${RUN}`,
+        items: [{ partId: part('C'), quantity: '1', unitCost: '40', taxRate: '5' }],
+        payment: 'now',
+        method: 'CASH',
+      },
+      { receive: true },
+    );
+    const before = await bookedForPurchase(purchase.id);
+    await updatePurchaseDetails(a.owner, purchase.id, {
+      supplierInvoiceNumber: `DET-${RUN}-A`,
+      supplierInvoiceDate: daysAgo(2),
+      dueDate: daysAgo(1),
+      notes: 'Paid in cash',
+    });
+    const saved = await prisma.purchase.findUniqueOrThrow({ where: { id: purchase.id } });
+    assert.equal(saved.supplierInvoiceNumber, `DET-${RUN}-A`);
+    assert.equal(saved.supplierInvoiceDate?.toISOString().slice(0, 10), daysAgo(2));
+    assert.equal(saved.notes, 'Paid in cash');
+    assert.equal(saved.totalAmount?.toString(), '42', 'the amounts as received');
+    assert.equal(saved.status, 'RECEIVED');
+    assert.deepEqual(await bookedForPurchase(purchase.id), before, 'the books untouched');
+    assert.ok(
+      await prisma.auditLog.findFirst({
+        where: { entityId: purchase.id, action: 'purchase.details_updated' },
+      }),
+    );
+    await expectDomainError(
+      updatePurchaseDetails(a.owner, purchase.id, { supplierInvoiceDate: daysAgo(-1) }),
+      /can't be in the future/,
+    );
+    await expectDomainError(
+      updatePurchaseDetails(a.owner, purchase.id, {
+        supplierInvoiceDate: daysAgo(2),
+        dueDate: daysAgo(3),
+      }),
+      /before the purchase date/,
+    );
   });
 });
 

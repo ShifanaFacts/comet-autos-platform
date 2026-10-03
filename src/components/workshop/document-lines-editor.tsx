@@ -592,23 +592,27 @@ export function withRoundOff(total: string, rounding: string | undefined) {
  * The round-off after VAT: a small plus or minus amount, outside VAT, and a
  * one-tap "round to whole AED" that fills it in.
  */
-function RoundingRow({
+export function RoundingRow({
   total,
   value,
   onChange,
+  label = 'Round-off',
+  className,
 }: {
   total: string;
   value: string;
   onChange: (value: string) => void;
+  label?: string;
+  className?: string;
 }) {
   const totalFils = safeFils(total);
   // To the nearest whole dirham: down when under half, up from half.
   const cents = totalFils % 100;
   const toWhole = cents === 0 ? 0 : cents < 50 ? -cents : 100 - cents;
   return (
-    <div className="flex items-center justify-between gap-4">
+    <div className={cn('flex items-center justify-between gap-4', className)}>
       <dt className="flex flex-col text-muted-foreground">
-        Round-off
+        {label}
         {toWhole !== 0 ? (
           <button
             type="button"
@@ -817,7 +821,8 @@ export function DiscountInput({
     const off = value.trim() ? safeFils(computed) : 0;
     const percent = type === 'PERCENT' ? value : percentOf(off, base);
     const amount = type === 'AMOUNT' ? value : off > 0 ? computed : '';
-    const box = cn('min-w-0 text-right tabular-nums', large ? 'h-12 text-base' : 'h-9 w-[4.5rem]');
+    // Fixed widths, so the pair never crowds out the boxes beside it in a row.
+    const box = cn('min-w-0 text-right tabular-nums', large ? 'h-11 text-base md:text-sm' : 'h-9');
     return (
       <span className="flex items-center gap-1">
         <span className="relative">
@@ -827,7 +832,7 @@ export function DiscountInput({
             value={percent}
             placeholder="0"
             onChange={(event) => onChange({ type: 'PERCENT', value: event.target.value })}
-            className={cn(box, 'pr-5')}
+            className={cn(box, 'w-[4.5rem] pr-5')}
           />
           <span className="pointer-events-none absolute top-1/2 right-1.5 -translate-y-1/2 text-xs text-muted-foreground">
             %
@@ -839,7 +844,7 @@ export function DiscountInput({
           value={amount}
           placeholder="0.00"
           onChange={(event) => onChange({ type: 'AMOUNT', value: event.target.value })}
-          className={box}
+          className={cn(box, large ? 'w-24' : 'w-[4.5rem]')}
         />
       </span>
     );

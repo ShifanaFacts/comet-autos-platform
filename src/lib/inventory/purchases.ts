@@ -30,7 +30,9 @@ import { getTaxCodeOptions, resolveTaxCodes } from '@/lib/accounting/tax-codes';
 import { PURCHASE_STATUS_LABEL } from '@/lib/inventory/labels';
 import { receivedValueFils, unitCostAfterDiscount } from '@/lib/inventory/purchase-value';
 import { takeSupplierPayment } from '@/lib/finance/supplier-payments';
-import { supplierPaidFils } from '@/lib/finance/supplier-balance';
+import { purchaseRoundingFils, supplierPaidFils } from '@/lib/finance/supplier-balance';
+import { roundingField, withRounding } from '@/lib/billing/document-lines';
+import { syncPosting } from '@/lib/accounting/journal';
 
 /*
  * Purchase receiving: a purchase records one supplier invoice / delivery
@@ -126,6 +128,8 @@ const purchaseSchema = z.object({
       (value) => !value || /^\d+(\.\d{1,2})?$/.test(value),
       'Enter a discount like 10 or 10.50.',
     ),
+  /** The supplier's round-off after VAT ("adjusted amount"): "-0.20", "0.25" or blank. */
+  roundingAdjustment: roundingField,
   /** When the supplier expects to be paid. */
   dueDate: DATE_FIELD,
   /** Set when the form was filled by Scan bill: the fields the reader filled. */
@@ -321,6 +325,27 @@ async function assertSupplierInvoiceFree(
       'supplierInvoiceNumber',
     );
   }
+  // The same bill may have been entered as an expense against this supplier's name.
+  const supplier = await tx.supplier.findFirst({
+    where: { id: supplierId, organizationId },
+    select: { name: true },
+  });
+  if (!supplier) return;
+  const expense = await tx.expense.findFirst({
+    where: {
+      organizationId,
+      status: 'RECORDED',
+      billNumber: { equals: invoiceNumber, mode: 'insensitive' },
+      vendorName: { equals: supplier.name, mode: 'insensitive' },
+    },
+    select: { expenseNumber: true },
+  });
+  if (expense) {
+    throw new DomainError(
+      `This supplier invoice is already entered as ${expense.expenseNumber ? `expense ${expense.expenseNumber}` : 'an expense'}.`,
+      'supplierInvoiceNumber',
+    );
+  }
 }
 
 async function requireActiveSupplier(
@@ -356,6 +381,8 @@ function readDueDate(value: string | undefined, billDate: Date | null) {
 
 function headerData(input: z.infer<typeof purchaseSchema>, priced: PricedPurchase) {
   const { totals } = priced;
+  // The supplier's round-off: after VAT, outside it, at most 5.00 either way.
+  const rounded = withRounding(totals, input.roundingAdjustment);
   const supplierInvoiceDate = input.supplierInvoiceDate
     ? parseCalendarDate(input.supplierInvoiceDate)
     : null;
@@ -365,7 +392,8 @@ function headerData(input: z.infer<typeof purchaseSchema>, priced: PricedPurchas
     notes: emptyToNull(input.notes),
     subtotal: totals.subtotal,
     taxAmount: totals.taxAmount,
-    totalAmount: totals.totalAmount,
+    totalAmount: rounded.totalAmount,
+    roundingAdjustment: rounded.roundingAdjustment,
     billDiscountType: totals.discountType,
     billDiscountValue: totals.discountValue,
     billDiscountAmount: totals.discountAmount,
@@ -567,6 +595,74 @@ export async function updatePurchase(
         dueDate: input.dueDate || null,
       },
     });
+  });
+}
+
+const detailsSchema = purchaseSchema
+  .pick({ supplierInvoiceNumber: true, supplierInvoiceDate: true, dueDate: true, notes: true })
+  .extend({ requestKey: z.string().optional() });
+
+/**
+ * Corrects a purchase's details once it is past draft — the supplier's
+ * invoice number, the purchase (bill) date, the due date and the notes. None
+ * of them changes an amount, the stock or an entry: the books keep the day
+ * the goods were received. The lines and figures stay as received; the
+ * audit log keeps the details as they were.
+ */
+export async function updatePurchaseDetails(
+  user: AuthenticatedUser,
+  purchaseId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(detailsSchema, rawInput);
+  return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'purchase.details');
+    const purchase = await lockPurchase(tx, user.organizationId, purchaseId);
+    requirePermission(user, 'purchase.edit', { branchId: purchase.branchId });
+    if (purchase.status === 'CANCELLED') throw new DomainError('This purchase is cancelled.');
+    if (purchase.status === 'DRAFT') throw new DomainError('Edit the draft instead.');
+    const supplierInvoiceNumber = emptyToNull(input.supplierInvoiceNumber);
+    const supplierInvoiceDate = input.supplierInvoiceDate
+      ? parseCalendarDate(input.supplierInvoiceDate)
+      : null;
+    await assertSupplierInvoiceFree(
+      tx,
+      user.organizationId,
+      purchase.supplierId,
+      supplierInvoiceNumber,
+      purchase.id,
+    );
+    const after = {
+      supplierInvoiceNumber,
+      supplierInvoiceDate,
+      dueDate: readDueDate(input.dueDate, supplierInvoiceDate),
+      notes: emptyToNull(input.notes),
+    };
+    await tx.purchase.update({ where: { id: purchase.id }, data: after });
+    const day = (date: Date | null) => date?.toISOString().slice(0, 10) ?? null;
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: purchase.branchId,
+      actorUserId: user.id,
+      action: 'purchase.details_updated',
+      entityType: 'Purchase',
+      entityId: purchase.id,
+      beforeData: {
+        supplierInvoiceNumber: purchase.supplierInvoiceNumber,
+        supplierInvoiceDate: day(purchase.supplierInvoiceDate),
+        dueDate: day(purchase.dueDate),
+        notes: purchase.notes,
+      },
+      afterData: {
+        supplierInvoiceNumber: after.supplierInvoiceNumber,
+        supplierInvoiceDate: day(after.supplierInvoiceDate),
+        dueDate: day(after.dueDate),
+        notes: after.notes,
+      },
+      metadata: { purchaseNumber: purchase.purchaseNumber },
+    });
+    await settleRequestKey(tx, user, rawInput, purchase.id);
+    return { purchaseId: purchase.id };
   });
 }
 
@@ -831,6 +927,8 @@ async function receiveInTransaction(
     beforeData: { status: purchase.status },
     afterData: { status, received },
   });
+  // Received in full: the bill's round-off is owed now, and booked.
+  await syncPosting(tx, user.organizationId, 'PURCHASE_ROUNDING', purchase.id, user.id);
   return { status, received, itemIds };
 }
 
@@ -979,12 +1077,16 @@ export async function getPurchaseDetail(user: AuthenticatedUser, purchaseId: str
         toFils(item.part.defaultCostPrice.toString()) !== toFils(item.unitCost.toString()),
     };
   });
-  const receivedFils = receivedValueFils(purchase.items, defaultVat);
+  const roundingFils = purchaseRoundingFils(purchase);
+  const receivedFils = receivedValueFils(purchase.items, defaultVat) + roundingFils;
   const paidFils = supplierPaidFils(purchase.supplierPayments);
   return {
     purchase,
     lines,
+    /** The goods received, and the bill's round-off once all of them are. */
     receivedValue: filsToString(receivedFils),
+    /** The round-off counted in what is owed (nothing until fully received). */
+    roundingOwed: filsToString(roundingFils),
     /** What the purchase owes the supplier now — the supplier balance's own rule. */
     paid: filsToString(paidFils),
     owed: filsToString(Math.max(receivedFils - paidFils, 0)),

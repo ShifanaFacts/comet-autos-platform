@@ -12,6 +12,7 @@ import {
   TextField,
   TextareaField,
 } from '@/components/forms/fields';
+import { ReferenceField } from '@/components/forms/reference-field';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import type { ActionResult } from '@/lib/errors';
@@ -125,7 +126,7 @@ export function InvoicePaymentForm({
             className="h-12 text-base md:h-11 md:text-sm"
           />
         </Field>
-        <TextField
+        <ReferenceField
           label="Reference"
           name="referenceNumber"
           required={needsReference}

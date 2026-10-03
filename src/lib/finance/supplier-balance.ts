@@ -13,7 +13,8 @@ import { receivedValueFils, type ValuedLine } from '@/lib/inventory/purchase-val
  *
  * The rule:
  *
- *   owed = value of stock actually received  −  the payments that count
+ *   owed = value of stock actually received  (+ the bill's round-off, once
+ *          the whole purchase is received)  −  the payments that count
  *
  * "Value" is after any purchase discounts, valued by the same rule as the
  * books (lib/inventory/purchase-value.ts).
@@ -51,6 +52,19 @@ export function supplierPaidFils(payments: SupplierPaymentLike[]): number {
     .reduce((sum, payment) => sum + toFils(payment.amount.toString()), 0);
 }
 
+/**
+ * A purchase's round-off, signed, in fils — counted once the whole purchase is
+ * received, as it is booked (postings.ts PURCHASE_ROUNDING); nothing before.
+ */
+export function purchaseRoundingFils(purchase: {
+  status: string;
+  roundingAdjustment: { toString(): string };
+}): number {
+  if (purchase.status !== 'RECEIVED') return 0;
+  const text = purchase.roundingAdjustment.toString();
+  return text.startsWith('-') ? -toFils(text.slice(1)) : toFils(text);
+}
+
 export type PurchasePaymentState = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
 
 export interface PurchaseBalance {
@@ -73,12 +87,15 @@ export interface PurchaseBalance {
  */
 export function purchaseBalance(
   purchase: {
+    status: string;
+    roundingAdjustment: { toString(): string };
     items: (ValuedLine & { quantityReceived: { toString(): string } })[];
     supplierPayments: SupplierPaymentLike[];
   },
   defaultVat: string,
 ): PurchaseBalance {
-  const receivedFils = receivedValueFils(purchase.items, defaultVat);
+  const receivedFils =
+    receivedValueFils(purchase.items, defaultVat) + purchaseRoundingFils(purchase);
   const paidFils = supplierPaidFils(purchase.supplierPayments);
   const balanceFils = Math.max(receivedFils - paidFils, 0);
   return {
@@ -94,6 +111,8 @@ export function purchaseBalance(
 
 /** The `select` every caller needs for `purchaseBalance` to be computable. */
 export const PURCHASE_BALANCE_SELECT = {
+  status: true,
+  roundingAdjustment: true,
   items: {
     select: {
       quantityReceived: true,

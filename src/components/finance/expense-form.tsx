@@ -11,6 +11,7 @@ import {
   TextField,
   TextareaField,
 } from '@/components/forms/fields';
+import { ReferenceField } from '@/components/forms/reference-field';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import type { ActionResult } from '@/lib/errors';
@@ -439,10 +440,11 @@ export function ExpenseForm({
           </Field>
         )}
         {payer === 'paid' ? (
-          <TextField
+          <ReferenceField
             label="Payment reference"
             id={id('paymentReference')}
             name="paymentReference"
+            exceptExpenseId={expense?.id}
             defaultValue={start?.paymentReference}
             error={errors.paymentReference}
             hint={

@@ -13,6 +13,7 @@ import {
   TextField,
   TextareaField,
 } from '@/components/forms/fields';
+import { ReferenceField } from '@/components/forms/reference-field';
 import { PAYMENT_METHODS } from '@/components/finance/invoice-payment-form';
 import { MoneyAccountField } from '@/components/accounting/money-account-field';
 import type { AccountChoice } from '@/lib/accounting/reports';
@@ -361,7 +362,7 @@ export function NewInvoiceForm({
                   </NativeSelect>
                 </Field>
               )}
-              <TextField
+              <ReferenceField
                 label="Payment reference"
                 name="paymentReference"
                 error={errors.paymentReference}

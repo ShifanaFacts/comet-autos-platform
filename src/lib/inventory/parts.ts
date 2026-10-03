@@ -51,17 +51,29 @@ const optionalQuantity = (label: string) =>
     )
     .refine((value) => !value || Number(value) <= 1_000_000, `${label} is not realistic.`);
 
-const partSchema = z.object({
-  sku: z
-    .string({ error: 'Enter the part number / SKU.' })
+const optionalMoney = (label: string) =>
+  z
+    .string()
     .trim()
-    .min(1, 'Enter the part number / SKU.')
+    .optional()
+    .refine(
+      (value) => !value || /^\d+(\.\d{1,2})?$/.test(value),
+      `The ${label} must be an amount like 45 or 45.50.`,
+    )
+    .refine((value) => !value || Number(value) <= 1_000_000, `The ${label} is not realistic.`);
+
+const partSchema = z.object({
+  /** Empty when the part has no number of its own — an automatic P-0001 style code is given instead. */
+  sku: z
+    .string()
+    .trim()
     .max(40, 'Keep the part number under 40 characters.')
     .transform((value) => value.toUpperCase().replace(/\s+/g, ' '))
     .refine(
-      (value) => /^[A-Z0-9][A-Z0-9 ._\-/]*$/.test(value),
+      (value) => !value || /^[A-Z0-9][A-Z0-9 ._\-/]*$/.test(value),
       'Use letters, numbers, spaces and - . _ / only.',
-    ),
+    )
+    .optional(),
   name: z.string({ error: 'Enter the part name.' }).trim().min(2, 'Enter the part name.').max(120),
   category: z.string().trim().max(60, 'Keep the category under 60 characters.').optional(),
   description: z.string().trim().max(500).optional(),
@@ -72,7 +84,8 @@ const partSchema = z.object({
     .min(1, 'Enter the unit (e.g. piece, litre, set).')
     .max(20),
   costPrice: money('cost price'),
-  sellingPrice: money('selling price'),
+  /** Optional — a part without one is priced when it is issued to a job. */
+  sellingPrice: optionalMoney('selling price'),
   taxRate: z
     .string()
     .trim()
@@ -134,15 +147,43 @@ async function assertSkuFree(
   if (clash) throw new DomainError(`Part number ${sku} is already used by “${clash.name}”.`, 'sku');
 }
 
+const AUTO_SKU = /^P-\d{1,9}$/;
+
+/**
+ * The next automatic part code (P-0001, P-0002, …) for a part entered
+ * without a number. An advisory lock held to the end of the transaction
+ * keeps two parts saved at once from being handed the same code.
+ */
+async function nextAutoSku(tx: Prisma.TransactionClient, organizationId: string) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`part-sku:${organizationId}`}))`;
+  const [row] = await tx.$queryRaw<{ last: bigint | null }[]>`
+    SELECT MAX(substring(sku FROM 3)::bigint) AS last
+    FROM parts
+    WHERE organization_id = ${organizationId}::uuid AND sku ~ '^P-[0-9]{1,9}$'`;
+  return `P-${String(Number(row?.last ?? 0) + 1).padStart(4, '0')}`;
+}
+
+/** The part number to save: the one typed in, else the part's own automatic code, else a new one. */
+async function resolveSku(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  sku: string | undefined,
+  currentSku?: string,
+) {
+  if (sku) return sku;
+  if (currentSku && AUTO_SKU.test(currentSku)) return currentSku;
+  return nextAutoSku(tx, organizationId);
+}
+
 /** An empty VAT rate takes the organization's default — never a literal rate. */
-function partData(input: z.infer<typeof partSchema>, defaultVatRate: string) {
+function partData(input: z.infer<typeof partSchema>, sku: string, defaultVatRate: string) {
   return {
-    sku: input.sku,
+    sku,
     name: input.name,
     description: emptyToNull(input.description),
     unitOfMeasure: input.unitOfMeasure.toLowerCase(),
     defaultCostPrice: input.costPrice,
-    defaultSellingPrice: input.sellingPrice,
+    defaultSellingPrice: input.sellingPrice || null,
     defaultTaxRate: input.taxRate || defaultVatRate,
     reorderLevel: input.reorderLevel ? input.reorderLevel : null,
   };
@@ -161,11 +202,12 @@ export async function createPart(
   const run = async (tx: Prisma.TransactionClient) => {
     await claimRequestKey(tx, user, rawInput, 'part.create');
     const branch = await resolveInventoryBranch(user, tx);
-    await assertSkuFree(tx, user.organizationId, input.sku);
+    const sku = await resolveSku(tx, user.organizationId, input.sku);
+    await assertSkuFree(tx, user.organizationId, sku);
     const part = await tx.part.create({
       data: {
         organizationId: user.organizationId,
-        ...partData(input, await resolveDefaultVatRate(user.organizationId, tx)),
+        ...partData(input, sku, await resolveDefaultVatRate(user.organizationId, tx)),
         category: await canonicalCategory(tx, user.organizationId, emptyToNull(input.category)),
         preferredSupplierId: await requireSupplier(
           tx,
@@ -216,11 +258,12 @@ export async function updatePart(user: AuthenticatedUser, partId: string, rawInp
   return prisma.$transaction(async (tx) => {
     await lockPart(tx, user.organizationId, partId);
     const before = await tx.part.findUniqueOrThrow({ where: { id: partId } });
-    await assertSkuFree(tx, user.organizationId, input.sku, partId);
+    const sku = await resolveSku(tx, user.organizationId, input.sku, before.sku);
+    await assertSkuFree(tx, user.organizationId, sku, partId);
     const part = await tx.part.update({
       where: { id: partId },
       data: {
-        ...partData(input, await resolveDefaultVatRate(user.organizationId, tx)),
+        ...partData(input, sku, await resolveDefaultVatRate(user.organizationId, tx)),
         category: await canonicalCategory(tx, user.organizationId, emptyToNull(input.category)),
         preferredSupplierId: await requireSupplier(
           tx,

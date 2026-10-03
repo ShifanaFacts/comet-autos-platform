@@ -6,6 +6,7 @@ import { ArrowRightLeft, Ban } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Field, FormError, NativeSelect, TextField } from '@/components/forms/fields';
+import { ReferenceField } from '@/components/forms/reference-field';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import { ReasonAction } from '@/components/shared/reason-action';
@@ -138,7 +139,7 @@ export function MoneyTransferForm({
           error={errors.transferredOn}
           className="[&_input]:h-11"
         />
-        <TextField
+        <ReferenceField
           label="Reference"
           name="reference"
           id="transfer-reference"

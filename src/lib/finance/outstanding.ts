@@ -175,8 +175,8 @@ export async function getSupplierOutstanding(
       supplierInvoiceDate: true,
       dueDate: true,
       createdAt: true,
-      status: true,
       supplier: { select: { id: true, name: true, phone: true } },
+      // status comes with the balance select.
       ...PURCHASE_BALANCE_SELECT,
     },
   });

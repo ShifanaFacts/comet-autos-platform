@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Field, NativeSelect, TextField } from '@/components/forms/fields';
+import { ReferenceField } from '@/components/forms/reference-field';
 import { MoneyAccountField } from '@/components/accounting/money-account-field';
 import { PaymentModeField } from '@/components/accounting/payment-mode-field';
 import type { AccountChoice } from '@/lib/accounting/reports';
@@ -169,7 +170,7 @@ export function ReceiptSettlementFields({
               ) : null}
             </>
           )}
-          <TextField
+          <ReferenceField
             id={`${idPrefix}-reference`}
             label="Reference"
             name="payReference"

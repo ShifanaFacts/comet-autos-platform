@@ -2,7 +2,7 @@
 
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import { NumberInput } from '@/components/forms/number-input';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { PackageCheck, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +28,11 @@ import {
   type DocumentTotals,
   type LineAmounts,
 } from '@/lib/money';
-import { DiscountInput } from '@/components/workshop/document-lines-editor';
+import {
+  DiscountInput,
+  RoundingRow,
+  withRoundOff,
+} from '@/components/workshop/document-lines-editor';
 import {
   ReceiptSettlementFields,
   owedHint,
@@ -83,6 +87,8 @@ export interface PurchaseFormInitial {
   /** The discount on the whole bill, as entered. */
   billDiscountType?: DiscountType | null;
   billDiscountValue?: string;
+  /** The supplier's round-off after VAT, as entered ("-0.20"). */
+  roundingAdjustment?: string;
   dueDate?: string;
   items: {
     partId: string;
@@ -132,6 +138,8 @@ export function PurchaseForm({
   taxCodes = [],
   hidden = {},
   receipt,
+  intro,
+  aside,
 }: {
   action: (prev: ActionResult, formData: FormData) => Promise<ActionResult>;
   parts: PurchasePart[];
@@ -148,6 +156,13 @@ export function PurchaseForm({
   hidden?: Record<string, string>;
   /** Paying the supplier as the goods are received ("Save & receive stock"). */
   receipt?: ReceiptOptions;
+  /** Shown above the purchase's details (Scan bill: what it could and couldn't read). */
+  intro?: ReactNode;
+  /**
+   * Shown beside the purchase's details only (Scan bill: the bill itself) — the
+   * parts and totals below always have the whole width.
+   */
+  aside?: ReactNode;
 }) {
   const nextKey = useRef(initial?.items.length ?? 0);
   const intentRef = useRef<HTMLInputElement>(null);
@@ -169,6 +184,7 @@ export function PurchaseForm({
     type: initial?.billDiscountType ?? 'PERCENT',
     value: initial?.billDiscountValue ?? '',
   });
+  const [rounding, setRounding] = useState(initial?.roundingAdjustment ?? '');
   const [payment, setPayment] = useState<'later' | 'now'>('later');
   const [payAmount, setPayAmount] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -217,18 +233,24 @@ export function PurchaseForm({
 
   const amounts = lines.map(preview);
   let totals: DocumentTotals | null = null;
+  /** Each line as it will be saved: its VAT after its share of any bill discount. */
+  let pricedLines: LineAmounts[] | null = null;
   let billError: string | null = null;
   if (amounts.every(Boolean) && amounts.length > 0) {
     try {
-      totals = calculateDocument(
+      const priced = calculateDocument(
         amounts as LineAmounts[],
         readDiscount(bill.type, bill.value),
-      ).totals;
+      );
+      totals = priced.totals;
+      pricedLines = priced.lines;
     } catch (error) {
       billError = error instanceof Error ? error.message : 'Check the discount.';
     }
   }
   const grossFils = lines.reduce((sum, line) => sum + gross(line), 0);
+  // What the bill comes to with the supplier's round-off ("adjusted amount").
+  const grandTotal = totals ? withRoundOff(totals.totalAmount, rounding) : null;
   const discountFils = totals ? grossFils - toFils(totals.subtotal) : 0;
   const payload = JSON.stringify(
     lines.map(
@@ -255,57 +277,64 @@ export function PurchaseForm({
       <input ref={intentRef} type="hidden" name="intent" defaultValue="draft" />
       <input type="hidden" name="billDiscountType" value={bill.value.trim() ? bill.type : ''} />
       <input type="hidden" name="billDiscountValue" value={bill.value.trim()} />
+      <input type="hidden" name="roundingAdjustment" value={rounding.trim()} />
 
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        <Field
-          label="Supplier"
-          htmlFor="supplierId"
-          required
-          error={errors.supplierId}
-          className="lg:col-span-2"
-        >
-          <NativeSelect
-            id="supplierId"
-            name="supplierId"
-            required
-            value={supplierId}
-            onChange={(event) => setSupplierId(event.target.value)}
-            className="h-11 text-base md:text-sm"
-          >
-            <option value="">Choose the supplier…</option>
-            {suppliers.map((supplier) => (
-              <option key={supplier.id} value={supplier.id}>
-                {supplier.name}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
-        <TextField
-          label="Supplier invoice no."
-          name="supplierInvoiceNumber"
-          defaultValue={initial?.supplierInvoiceNumber}
-          error={errors.supplierInvoiceNumber}
-          hint="Their invoice or delivery note."
-          className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
-        />
-        <TextField
-          label="Purchase date"
-          name="supplierInvoiceDate"
-          type="date"
-          max={today}
-          defaultValue={initial?.supplierInvoiceDate ?? today}
-          error={errors.supplierInvoiceDate}
-          className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
-        />
-        <TextField
-          label="Due date"
-          name="dueDate"
-          type="date"
-          defaultValue={initial?.dueDate}
-          error={errors.dueDate}
-          hint="Optional: when the supplier expects to be paid."
-          className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
-        />
+      <div className={aside ? 'grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]' : undefined}>
+        <div className="@container flex min-w-0 flex-col gap-6">
+          {intro}
+          <div className="grid gap-6 @md:grid-cols-2 @3xl:grid-cols-4">
+            <Field
+              label="Supplier"
+              htmlFor="supplierId"
+              required
+              error={errors.supplierId}
+              className="@3xl:col-span-2"
+            >
+              <NativeSelect
+                id="supplierId"
+                name="supplierId"
+                required
+                value={supplierId}
+                onChange={(event) => setSupplierId(event.target.value)}
+                className="h-11 text-base md:text-sm"
+              >
+                <option value="">Choose the supplier…</option>
+                {suppliers.map((supplier) => (
+                  <option key={supplier.id} value={supplier.id}>
+                    {supplier.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+            <TextField
+              label="Supplier invoice no."
+              name="supplierInvoiceNumber"
+              defaultValue={initial?.supplierInvoiceNumber}
+              error={errors.supplierInvoiceNumber}
+              hint="Their invoice or delivery note."
+              className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
+            />
+            <TextField
+              label="Purchase date"
+              name="supplierInvoiceDate"
+              type="date"
+              max={today}
+              defaultValue={initial?.supplierInvoiceDate ?? today}
+              error={errors.supplierInvoiceDate}
+              className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
+            />
+            <TextField
+              label="Due date"
+              name="dueDate"
+              type="date"
+              defaultValue={initial?.dueDate}
+              error={errors.dueDate}
+              hint="Optional: when the supplier expects to be paid."
+              className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
+            />
+          </div>
+        </div>
+        {aside}
       </div>
 
       <div className="flex flex-col gap-4">
@@ -360,19 +389,41 @@ export function PurchaseForm({
             No parts yet. Search above to add the first line.
           </p>
         ) : (
-          <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
+          // Laid out by the list's own width, not the screen's: the form can sit
+          // beside a scanned bill, so it is often narrower than the screen.
+          <ul className="@container flex flex-col divide-y divide-border rounded-lg border border-border">
             {lines.map((line, index) => {
               const part = byId.get(line.partId);
               const amount = amounts[index];
               const error = lineError(index);
               return (
-                <li key={line.key} className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
-                  <div className="min-w-0 lg:flex-1">
-                    <p className="truncate font-medium">{part?.name ?? 'Unknown part'}</p>
-                    <p className="font-mono text-xs text-muted-foreground">{part?.sku}</p>
-                    {error ? <p className="mt-1 text-xs text-destructive">{error}</p> : null}
+                <li key={line.key} className="flex flex-col gap-3 p-4">
+                  {/* The part and its total always have the whole width. */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{part?.name ?? 'Unknown part'}</p>
+                      <p className="font-mono text-xs text-muted-foreground">{part?.sku}</p>
+                      {error ? <p className="mt-1 text-xs text-destructive">{error}</p> : null}
+                    </div>
+                    <p className="shrink-0 text-right text-sm font-medium tabular-nums">
+                      {amount ? formatMoney(amount.lineTotal) : '—'}
+                      {amount ? (
+                        // The line's VAT and its total with VAT — the bill's own columns.
+                        <span className="block text-xs font-normal text-muted-foreground">
+                          {(() => {
+                            const tax = pricedLines?.[index].taxFils ?? amount.taxFils;
+                            return `VAT ${formatMoney(filsToString(tax))} · ${formatMoney(filsToString(amount.lineTotalFils + tax))} with VAT`;
+                          })()}
+                        </span>
+                      ) : null}
+                      {amount && toFils(amount.discountAmount) > 0 ? (
+                        <span className="block text-xs font-normal text-muted-foreground">
+                          {`−${formatMoney(amount.discountAmount)} discount`}
+                        </span>
+                      ) : null}
+                    </p>
                   </div>
-                  <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[1fr_1fr_auto_0.8fr_auto] lg:w-[40rem]">
+                  <div className="grid grid-cols-2 items-end gap-2 @xl:grid-cols-[minmax(4.5rem,1fr)_minmax(5.5rem,1fr)_auto_minmax(6.5rem,1fr)_auto]">
                     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                       Qty ({part?.unit})
                       <NumberInput
@@ -390,7 +441,7 @@ export function PurchaseForm({
                         className="h-11 text-right text-base tabular-nums md:text-sm"
                       />
                     </label>
-                    <span className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    <span className="col-span-2 flex flex-col gap-1 text-xs text-muted-foreground @xl:col-span-1">
                       Discount
                       <DiscountInput
                         label={`${part?.sku ?? 'Line'} discount`}
@@ -452,14 +503,6 @@ export function PurchaseForm({
                       <Trash2 />
                     </Button>
                   </div>
-                  <p className="text-right text-sm font-medium tabular-nums lg:w-28">
-                    {amount ? formatMoney(amount.lineTotal) : '—'}
-                    {amount && toFils(amount.discountAmount) > 0 ? (
-                      <span className="block text-xs font-normal text-muted-foreground">
-                        {`−${formatMoney(amount.discountAmount)} discount`}
-                      </span>
-                    ) : null}
-                  </p>
                 </li>
               );
             })}
@@ -497,9 +540,21 @@ export function PurchaseForm({
                 <dd className="text-right tabular-nums">{formatMoney(totals.subtotal)}</dd>
                 <dt className="text-muted-foreground">VAT</dt>
                 <dd className="text-right tabular-nums">{formatMoney(totals.taxAmount)}</dd>
+                <RoundingRow
+                  label="Adjustment (round-off)"
+                  total={totals.totalAmount}
+                  value={rounding}
+                  onChange={setRounding}
+                  className="col-span-2"
+                />
+                {errors.roundingAdjustment ? (
+                  <p role="alert" className="col-span-2 text-right text-xs text-destructive">
+                    {errors.roundingAdjustment}
+                  </p>
+                ) : null}
                 <dt className="border-t border-border pt-1.5 font-semibold">Grand total</dt>
                 <dd className="border-t border-border pt-1.5 text-right font-semibold tabular-nums">
-                  {formatMoney(totals.totalAmount)}
+                  {formatMoney(grandTotal ?? totals.totalAmount)}
                 </dd>
               </>
             ) : null}
@@ -529,9 +584,9 @@ export function PurchaseForm({
             options={receipt}
             errors={errors}
             showDueDate={false}
-            amount={payAmount ?? totals?.totalAmount ?? ''}
+            amount={payAmount ?? grandTotal ?? ''}
             onAmountChange={setPayAmount}
-            amountHint={owedHint(totals?.totalAmount ?? null)}
+            amountHint={owedHint(grandTotal)}
             onPaymentChange={setPayment}
             idPrefix="new-purchase"
           />

@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Field, FormError, TextField } from '@/components/forms/fields';
+import { ReferenceField } from '@/components/forms/reference-field';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
 import { Panel } from '@/components/layout/primitives';
@@ -285,7 +286,7 @@ function ReimburseButton({
             />
           </div>
           <div className="grid gap-5 sm:grid-cols-2">
-            <TextField
+            <ReferenceField
               label="Reference"
               name="reference"
               error={errors.reference}

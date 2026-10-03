@@ -9,6 +9,7 @@ import { isDiscountedLine, movementValue, receivedBefore } from '@/lib/inventory
 import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
 import { dueFils, paidFils } from '@/lib/billing/invoice';
 import { customerAdvanceHeld } from '@/lib/billing/advances';
+import { purchaseRoundingFils } from '@/lib/finance/supplier-balance';
 
 /*
  * Statements of account — what a customer owes the workshop, and what the
@@ -428,6 +429,24 @@ export async function getSupplierStatement(
     }),
     resolveDefaultVatRate(organizationId),
   ]);
+  // The bills' round-offs, owed once each purchase is received in full.
+  const rounded = await prisma.purchase.findMany({
+    where: {
+      organizationId,
+      supplierId,
+      status: 'RECEIVED',
+      receivedAt: { not: null },
+      roundingAdjustment: { not: 0 },
+    },
+    select: {
+      id: true,
+      purchaseNumber: true,
+      supplierInvoiceNumber: true,
+      receivedAt: true,
+      roundingAdjustment: true,
+      status: true,
+    },
+  });
 
   // A discounted line values each delivery from the ones before it.
   const before = await receivedBefore(
@@ -475,6 +494,21 @@ export async function getSupplierStatement(
   }
 
   const movements: Movement[] = [...deliveries.values()];
+  for (const purchase of rounded) {
+    movements.push({
+      key: `rounding-${purchase.id}`,
+      date: day(purchase.receivedAt!),
+      order: 1,
+      kind: 'Round-off',
+      reference: purchase.purchaseNumber,
+      description: purchase.supplierInvoiceNumber
+        ? `Supplier invoice ${purchase.supplierInvoiceNumber}`
+        : 'Adjusted on the bill',
+      href: `/inventory/purchases/${purchase.id}`,
+      // Signed: a round-off down is owed less.
+      fils: purchaseRoundingFils(purchase),
+    });
+  }
   const numbers = new Map(payments.map((p) => [p.id, p.supplierPaymentNumber]));
   for (const payment of payments) {
     const amount = toFils(payment.amount.toString());
