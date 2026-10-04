@@ -253,6 +253,11 @@ describe('customer documents and sharing', () => {
       wrapText('x'.repeat(400), 'regular', 10, 100).length > 1,
       'very long words are split',
     );
+    assert.deepEqual(
+      wrapText('PERIODIC SERVICE\r\n10K OIL & FILTER\nTPMS SIGN CHECK', 'regular', 9.5, 400),
+      ['PERIODIC SERVICE', '10K OIL & FILTER', 'TPMS SIGN CHECK'],
+      'each line typed prints on its own line',
+    );
   });
 
   test('customer link: opens with one tap, only for its own kind, until it expires — and the customer sees only their document', async () => {
