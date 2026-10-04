@@ -468,26 +468,29 @@ describe('customer documents and sharing', () => {
     assert.equal(documents.invoice?.receipts.length, 2);
   });
 
-  test('job card sheet: the invoiced work without prices, ready to print', async () => {
+  test('job card sheet: complaint, vehicle diagram and supervisor box — no quotation, no prices', async () => {
     const document = await getJobCardDocument(a.owner, jobCardId);
     const jobCard = await prisma.jobCard.findUniqueOrThrow({ where: { id: jobCardId } });
-    const invoice = await prisma.invoice.findUniqueOrThrow({
-      where: { id: invoiceId },
-      include: { items: true },
-    });
+    const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
+    const estimate = await prisma.estimate.findUniqueOrThrow({ where: { id: estimateId } });
     assert.equal(document.kind, 'JOB_CARD');
     assert.equal(document.number, jobCard.jobNumber);
-    assert.equal(
-      document.sections.flatMap((s) => s.lines).length,
-      invoice.items.length,
-      'once invoiced, the work list is the invoice',
-    );
+    assert.equal(document.narrative[0]?.label, 'Customer complaint');
+    assert.deepEqual(document.sections, [], 'the quotation is not printed on the job card');
     assert.deepEqual(document.totals, []);
     const pdf = pdfText(renderDocumentPdf(document));
-    for (const expected of ['JOB CARD', jobCard.jobNumber, invoice.invoiceNumber, 'DONE']) {
+    for (const expected of [
+      'JOB CARD',
+      jobCard.jobNumber,
+      'CUSTOMER COMPLAINT',
+      'VEHICLE CONDITION',
+      'WORKSHOP SUPERVISOR COMMENTS',
+    ]) {
       assert.ok(pdf.includes(expected), `job card PDF shows ${expected}`);
     }
     assert.ok(!pdf.includes('AED'), 'no prices on the job card');
+    assert.ok(!pdf.includes(estimate.estimateNumber), 'no quotation on the job card');
+    assert.ok(!pdf.includes(invoice.invoiceNumber), 'no invoice on the job card');
     await expectDomainError(getJobCardDocument(b.owner, jobCardId), /could not be found/);
   });
 
