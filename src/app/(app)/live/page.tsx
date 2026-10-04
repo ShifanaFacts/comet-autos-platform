@@ -11,8 +11,8 @@ export default async function LivePage() {
   try {
     board = await getLiveBoard(user);
   } catch (error) {
-    if (error instanceof AuthError) return <AccessDenied what="the live workshop board" />;
+    if (error instanceof AuthError) return <AccessDenied what="the workshop board" />;
     throw error;
   }
-  return <LiveBoardView board={board} audience="staff" />;
+  return <LiveBoardView board={board} />;
 }

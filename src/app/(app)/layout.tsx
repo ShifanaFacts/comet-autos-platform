@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
 import { NAV_GROUPS, isMenuShown } from '@/lib/nav';
+import { findMyEmployee } from '@/lib/hr/self-attendance';
 import { getWorkshopPreferences } from '@/lib/organization/settings';
 import { getBrand } from '@/lib/brand/brand';
 import { SidebarNav } from '@/components/shell/sidebar-nav';
@@ -13,7 +14,7 @@ import { PageContainer } from '@/components/layout/primitives';
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const user = await requireUser();
-  const [branch, preferences, brand] = await Promise.all([
+  const [branch, preferences, brand, employee] = await Promise.all([
     user.primaryBranchId
       ? prisma.branch.findUnique({
           where: { id: user.primaryBranchId },
@@ -22,13 +23,18 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       : null,
     getWorkshopPreferences(user.organizationId),
     getBrand(user.organizationId),
+    findMyEmployee(user),
   ]);
   // Navigation shows only what the user's permissions allow and the workshop
   // chose to show. Convenience only: every page and action checks
   // permissions again on the server.
   const branchScope = user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined;
   const allowedHrefs = NAV_GROUPS.flatMap((group) => group.items)
-    .filter((item) => !item.permission || hasPermission(user, item.permission, branchScope))
+    .filter((item) =>
+      item.forEmployees
+        ? employee !== null
+        : !item.permission || hasPermission(user, item.permission, branchScope),
+    )
     .filter((item) => isMenuShown(item.href, preferences))
     .map((item) => item.href);
 

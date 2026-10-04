@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ChevronRight, ListTodo, LogIn, MonitorPlay } from 'lucide-react';
+import { ChevronRight, Gauge, ListTodo, LogIn } from 'lucide-react';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { hasPermission } from '@/lib/auth/authorize';
 import { getMyDay } from '@/lib/hr/self-attendance';
@@ -70,10 +70,10 @@ export async function MyDayStrip({ user }: { user: AuthenticatedUser }) {
       ) : null}
       {canLive ? (
         <Link href="/live" className={tile}>
-          <MonitorPlay className="size-5 shrink-0 text-muted-foreground" />
+          <Gauge className="size-5 shrink-0 text-muted-foreground" />
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="text-sm font-medium">Workshop live</span>
-            <span className="truncate text-xs text-muted-foreground">Every car in, by status — also for the TV</span>
+            <span className="text-sm font-medium">Workshop today</span>
+            <span className="truncate text-xs text-muted-foreground">Every car in, by status, and who is in</span>
           </span>
           <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
         </Link>

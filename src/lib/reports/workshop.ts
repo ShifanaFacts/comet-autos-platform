@@ -1,7 +1,7 @@
 import type { InvoiceStatus } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
-import { AuthError, hasPermission } from '@/lib/auth/authorize';
+import { AuthError, hasPermission, requirePermission } from '@/lib/auth/authorize';
 import { filsToString, formatMilli, toFils } from '@/lib/money';
 import { parseCalendarDate } from '@/lib/format';
 import { resolvePeriod, type ResolvedPeriod } from '@/lib/finance/dashboard';
@@ -46,7 +46,9 @@ function top<T extends { valueFils: number }>(rows: T[], count = 10) {
   return [...rows].sort((a, b) => b.valueFils - a.valueFils).slice(0, count);
 }
 
+/** For a role given reports; inside it, each area only for whoever may view that area. */
 export async function getWorkshopReport(user: AuthenticatedUser, input: ReportInput = {}) {
+  requirePermission(user, 'reports.view');
   const access = reportAccess(user);
   if (!access.sales && !access.workshop && !access.parts) {
     throw new AuthError('Missing permission: invoice.view');

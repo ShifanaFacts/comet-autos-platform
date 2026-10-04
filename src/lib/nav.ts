@@ -47,7 +47,7 @@ import {
   UserRoundCheck,
   ListTodo,
   ListChecks,
-  MonitorPlay,
+  Gauge,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -57,6 +57,11 @@ export interface NavItem {
   icon: LucideIcon;
   /** Permission needed to see the item (the page itself still checks on the server). */
   permission?: string;
+  /**
+   * A self-service page (an employee's own attendance and to-dos): shown to a
+   * login linked to an employee record instead of by permission.
+   */
+  forEmployees?: boolean;
   /** Module not built yet: shown muted with a "Soon" tag; the route shows a placeholder. */
   soon?: boolean;
 }
@@ -81,6 +86,7 @@ export interface NavGroup {
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: null,
+    // Everyone's home page: each panel on it checks its own permission.
     items: [{ label: 'Dashboard', href: '/', icon: LayoutDashboard }],
   },
   {
@@ -88,7 +94,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'New job card', href: '/check-in', icon: LogIn, permission: 'job_card.create' },
       { label: 'Job Cards', href: '/job-cards', icon: ClipboardList, permission: 'job_card.view' },
-      { label: 'Workshop live', href: '/live', icon: MonitorPlay, permission: 'job_card.view' },
+      { label: 'Workshop today', href: '/live', icon: Gauge, permission: 'job_card.view' },
       {
         label: 'Appointments',
         href: '/appointments',
@@ -108,7 +114,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Team',
     items: [
       // Everyone with an employee record: their attendance and to-do list.
-      { label: 'My work', href: '/my-work', icon: ListTodo },
+      { label: 'My work', href: '/my-work', icon: ListTodo, forEmployees: true },
       { label: 'Team tasks', href: '/team', icon: ListChecks, permission: 'task.view' },
     ],
   },
@@ -263,7 +269,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Sheet,
         permission: 'reports.view',
       },
-      { label: 'Reports', href: '/reports', icon: BarChart3 },
+      { label: 'Reports', href: '/reports', icon: BarChart3, permission: 'reports.view' },
     ],
   },
   {
@@ -357,7 +363,7 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'user.view',
       },
       { label: 'Audit log', href: '/settings/audit', icon: History, permission: 'audit.view' },
-      { label: 'Letterhead', href: '/letterhead', icon: ScrollText },
+      { label: 'Letterhead', href: '/letterhead', icon: ScrollText, permission: 'settings.view' },
     ],
   },
 ];

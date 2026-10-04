@@ -3,9 +3,7 @@ import { Building2, ChevronRight, History, Info, ShieldCheck } from 'lucide-reac
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { getOrganizationSettings } from '@/lib/organization/settings';
 import { getBranchLocation, listBranches } from '@/lib/organization/branches';
-import { getDisplayLinkState } from '@/lib/workshop/live-board';
 import { BranchLocationForm } from '@/components/settings/branch-location-form';
-import { DisplayLinkForm } from '@/components/settings/display-link-form';
 import { formatDateTime } from '@/lib/format';
 import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
@@ -20,10 +18,9 @@ export default async function SettingsPage() {
   if (!hasPermission(user, 'settings.view')) {
     return <AccessDenied what="the workshop's settings" />;
   }
-  const [settings, branches, displayLink] = await Promise.all([
+  const [settings, branches] = await Promise.all([
     getOrganizationSettings(user),
     listBranches(user),
-    getDisplayLinkState(user),
   ]);
   const locations = await Promise.all(
     branches.map((branch) => getBranchLocation(user.organizationId, branch.id)),
@@ -98,15 +95,6 @@ export default async function SettingsPage() {
             ) : null,
           )}
         </Stack>
-      </Section>
-
-      <Section
-        title="Customer TV screen"
-        description="A live board for the waiting area, showing where each car stands."
-      >
-        <Panel>
-          <DisplayLinkForm active={displayLink.active} canEdit={canEdit} />
-        </Panel>
       </Section>
 
       <Section

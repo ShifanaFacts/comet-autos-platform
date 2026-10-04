@@ -244,9 +244,9 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     key: 'reports',
     label: 'Financial statements & reports',
     description:
-      'Profit & loss, balance sheet, cash flow and trial balance. The workshop report shows each area to whoever can view it.',
+      'Profit & loss, balance sheet, cash flow, trial balance and the workshop report (Finance → Reports), which shows each of its areas only to whoever can view that area.',
     actions: {
-      view: 'Profit & loss, balance sheet, cash flow and trial balance.',
+      view: 'Profit & loss, balance sheet, cash flow, trial balance and the workshop report.',
       export: 'Download the financial statements as spreadsheets.',
     },
   },

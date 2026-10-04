@@ -32,7 +32,7 @@ import {
   setTaskHighlight,
   setTaskStatus,
 } from '@/lib/team/tasks';
-import { getDisplayBoard, getLiveBoard, createDisplayLink, revokeDisplayLink } from '@/lib/workshop/live-board';
+import { getLiveBoard } from '@/lib/workshop/live-board';
 import { addDays } from '@/lib/team/client';
 import { createTestOrg, expectDomainError, type TestOrg } from './support';
 
@@ -290,16 +290,11 @@ describe('tasks', () => {
 });
 
 describe('the live board', () => {
-  test('staff need job_card.view; the TV link shows no names', async () => {
+  test('needs job_card.view, and shows the whole team', async () => {
     const board = await getLiveBoard(a.owner);
-    assert.ok(board.team && board.team.length >= 2);
-    const { token } = await createDisplayLink(a.owner);
-    const tv = await getDisplayBoard(token);
-    assert.ok(tv);
-    assert.equal(tv.team, null);
-    for (const lane of tv.lanes) for (const job of lane.jobs) assert.equal('customer' in job, false);
-    await revokeDisplayLink(a.owner);
-    assert.equal(await getDisplayBoard(token), null);
-    assert.equal(await getDisplayBoard('not-a-real-token-at-all-0000000000'), null);
+    assert.ok(board.team.length >= 2);
+    assert.ok(board.team.some((member) => member.id === techEmployee && member.left));
+    const viewerOnly = { ...tech, orgWidePermissions: new Set<string>() };
+    await assert.rejects(getLiveBoard(viewerOnly), AuthError);
   });
 });

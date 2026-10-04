@@ -54,9 +54,7 @@ export function proxy(request: NextRequest) {
 
   const isPublicRoute =
     request.nextUrl.pathname.startsWith('/login') ||
-    request.nextUrl.pathname.startsWith('/customer/') ||
-    // The waiting-area TV: its link carries its own secret (lib/workshop/live-board).
-    request.nextUrl.pathname.startsWith('/display/');
+    request.nextUrl.pathname.startsWith('/customer/');
 
   if (!isPublicRoute && !request.cookies.has(SESSION_COOKIE_NAME)) {
     // Come back to the same page after signing in.
