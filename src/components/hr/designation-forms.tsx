@@ -25,21 +25,21 @@ export function NewDesignationForm({ presets }: { presets: { key: string; label:
           name="name"
           required
           error={errors.name}
-          placeholder="e.g. Technician"
-          hint="If a role of the same name already exists, its permissions are used."
+          placeholder="e.g. Technician, Supervisor, Cleaner"
+          hint="The position, as it shows on the employee. If a role of the same name already exists, its permissions are used."
           className={INPUT}
         />
         <Field
-          label="Start permissions from"
+          label="What it can open in the app"
           htmlFor="preset"
           error={errors.preset}
-          hint="You tick exactly what it may do on the next page."
+          hint="A ready-made starting point — not a role you made. You can tick and untick everything on the next page."
         >
           <NativeSelect id="preset" name="preset" defaultValue="" className="h-11 text-base md:text-sm">
-            <option value="">Nothing — I’ll tick them</option>
+            <option value="">Nothing yet (e.g. Cleaner) — only My work</option>
             {presets.map((preset) => (
               <option key={preset.key} value={preset.key}>
-                {preset.label}
+                Like {preset.label}
               </option>
             ))}
           </NativeSelect>
