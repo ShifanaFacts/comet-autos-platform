@@ -74,7 +74,10 @@ export function textWidth(text: string, font: PdfFont, size: number): number {
 /** Word-wraps text to a width; very long words are split so nothing overflows. */
 export function wrapText(text: string, font: PdfFont, size: number, maxWidth: number): string[] {
   const lines: string[] = [];
-  for (const paragraph of sanitizePdfText(text.replace(/\r\n/g, '\n')).split('\n')) {
+  // Split on the line breaks first: sanitizing turns them into spaces, and a
+  // complaint typed one point per line must print one point per line.
+  for (const raw of text.replace(/\r\n?/g, '\n').split('\n')) {
+    const paragraph = sanitizePdfText(raw);
     let current = '';
     for (const word of paragraph.split(/ +/)) {
       const candidate = current ? `${current} ${word}` : word;
