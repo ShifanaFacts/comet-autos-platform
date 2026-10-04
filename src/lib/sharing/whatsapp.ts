@@ -7,10 +7,11 @@ import { formatAed } from '@/lib/documents/model';
  *
  * Messages carry only what the customer needs: their name, the vehicle, the
  * document number and amounts, and the secure link, which opens the
- * document with one tap. WhatsApp shows that link as a preview card drawn
- * as a "View" button (lib/brand/share-card); the line above the link is in
- * *bold* (WhatsApp's own formatting) so it reads as the call to action.
- * No internal ids, no staff details, no notes.
+ * document with one tap. They read like a note from the workshop, not a
+ * printout: a warm hello, each fact on its own marked line, a pointing hand
+ * right above the link, and an invitation to reply. WhatsApp shows the link
+ * as a preview card drawn as a button (lib/brand/share-card). *Bold* is
+ * WhatsApp's own formatting. No internal ids, no staff details, no notes.
  */
 
 /**
@@ -56,13 +57,22 @@ export interface ShareMessageInput {
   link: string;
 }
 
-const greeting = (name: string) => `Hello ${name.trim() || 'there'},`;
-const signOff = (workshop: string) => `Thank you,\n${workshop}`;
-const vehicleLines = (input: ShareMessageInput) =>
-  [
-    input.vehicle ? `Vehicle: ${input.vehicle}` : null,
-    input.plateNumber ? `Registration: ${input.plateNumber}` : null,
-  ].filter((line): line is string => line !== null);
+const greeting = (name: string) => `Hello ${name.trim() || 'there'} 👋`;
+
+/** The close: an open door, then who it is from. */
+const signOff = (workshop: string) => ['Any questions? Just reply to this message.', `*${workshop}*`];
+
+/** "🚗 *Toyota Camry* · A 12345" — the car, as the customer knows it. */
+const vehicleLine = (input: ShareMessageInput) => {
+  if (!input.vehicle && !input.plateNumber) return [];
+  const parts = [input.vehicle ? `*${input.vehicle}*` : null, input.plateNumber].filter(Boolean);
+  return [`🚗 ${parts.join(' · ')}`];
+};
+
+/** The call to action, right above the link WhatsApp turns into the preview card. */
+const tapLine = (text: string) => `👇 *${text}*`;
+
+const isZero = (amount: string) => Number(amount) === 0;
 
 export function quotationMessage(
   input: ShareMessageInput & { number: string; total: string; awaitingDecision: boolean },
@@ -70,39 +80,38 @@ export function quotationMessage(
   return [
     greeting(input.customerName),
     '',
-    `Your quotation from ${input.workshopName} is ready.`,
+    `Your quotation from *${input.workshopName}* is ready.`,
     '',
-    ...vehicleLines(input),
-    `Quotation: ${input.number}`,
-    `Total: ${formatAed(input.total)}`,
+    ...vehicleLine(input),
+    `🧾 Quotation *${input.number}*`,
+    `💰 Total *${formatAed(input.total)}*`,
     '',
-    input.awaitingDecision
-      ? '👉 *Tap to view and approve your quotation:*'
-      : '👉 *View your quotation:*',
+    tapLine(input.awaitingDecision ? 'Tap below to view and approve' : 'Tap below to view your quotation'),
     input.link,
     '',
-    signOff(input.workshopName),
+    ...signOff(input.workshopName),
   ].join('\n');
 }
 
 export function invoiceMessage(
   input: ShareMessageInput & { number: string; total: string; paid: string; balance: string },
 ): string {
+  const settled = isZero(input.balance);
   return [
     greeting(input.customerName),
     '',
-    `Your invoice from ${input.workshopName} is ready.`,
+    `Thank you for choosing *${input.workshopName}*. Your invoice is ready.`,
     '',
-    ...vehicleLines(input),
-    `Invoice: ${input.number}`,
-    `Total: ${formatAed(input.total)}`,
-    `Paid: ${formatAed(input.paid)}`,
-    `Balance: ${formatAed(input.balance)}`,
+    ...vehicleLine(input),
+    `🧾 Invoice *${input.number}*`,
+    `💰 Total ${formatAed(input.total)}`,
+    ...(isZero(input.paid) ? [] : [`✅ Paid ${formatAed(input.paid)}`]),
+    settled ? '🎉 *Paid in full — thank you!*' : `⏳ *Balance due ${formatAed(input.balance)}*`,
     '',
-    '👉 *View your invoice:*',
+    tapLine('Tap below to view your invoice'),
     input.link,
     '',
-    signOff(input.workshopName),
+    ...signOff(input.workshopName),
   ].join('\n');
 }
 
@@ -117,17 +126,18 @@ export function receiptMessage(
   return [
     greeting(input.customerName),
     '',
-    `Thank you for your payment to ${input.workshopName}.`,
+    '✅ *Payment received — thank you!*',
     '',
-    ...vehicleLines(input),
-    `Receipt: ${input.number}`,
-    `Invoice: ${input.invoiceNumber}`,
-    `Amount paid: ${formatAed(input.amount)}`,
-    `Remaining balance: ${formatAed(input.balance)}`,
+    ...vehicleLine(input),
+    `🧾 Receipt *${input.number}* · invoice ${input.invoiceNumber}`,
+    `💵 Amount paid *${formatAed(input.amount)}*`,
+    isZero(input.balance)
+      ? '🎉 *Your invoice is now fully paid.*'
+      : `⏳ Remaining balance *${formatAed(input.balance)}*`,
     '',
-    '👉 *View your invoice and receipts:*',
+    tapLine('Tap below to view your invoice and receipts'),
     input.link,
     '',
-    signOff(input.workshopName),
+    ...signOff(input.workshopName),
   ].join('\n');
 }

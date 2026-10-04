@@ -2,9 +2,14 @@ import { randomBytes, createHash } from 'node:crypto';
 import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { prisma } from '@/lib/prisma';
+import {
+  isRememberedSession,
+  needsRenewal,
+  REMEMBER_TTL_MS,
+  SESSION_TTL_MS,
+} from '@/lib/auth/remember';
 
 export const SESSION_COOKIE_NAME = 'garage_session';
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 
 // Session tokens are high-entropy random values, not user-chosen secrets —
 // a fast SHA-256 lookup hash is appropriate here (unlike passwords, which
@@ -30,7 +35,12 @@ export interface AuthenticatedUser {
   branchPermissions: Map<string, Set<string>>;
 }
 
-export async function createSession(userId: string, organizationId: string): Promise<string> {
+/** A new login. `remember`: it stays signed in until logged out (lib/auth/remember.ts). */
+export async function createSession(
+  userId: string,
+  organizationId: string,
+  remember = false,
+): Promise<string> {
   const rawToken = randomBytes(32).toString('hex');
 
   await prisma.session.create({
@@ -38,7 +48,7 @@ export async function createSession(userId: string, organizationId: string): Pro
       organizationId,
       userId,
       tokenHash: hashSessionToken(rawToken),
-      expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+      expiresAt: new Date(Date.now() + (remember ? REMEMBER_TTL_MS : SESSION_TTL_MS)),
     },
   });
 
@@ -87,6 +97,16 @@ export const getCurrentUser = cache(async (): Promise<AuthenticatedUser | null> 
   }
   if (!session.user.isActive) {
     return null;
+  }
+  // A remembered login is renewed while it is used (at most once a day), so it
+  // never runs out for someone who keeps opening the app.
+  if (isRememberedSession(session) && needsRenewal(session.expiresAt)) {
+    await prisma.session
+      .update({
+        where: { id: session.id },
+        data: { expiresAt: new Date(Date.now() + REMEMBER_TTL_MS) },
+      })
+      .catch(() => undefined);
   }
 
   const orgWidePermissions = new Set<string>();

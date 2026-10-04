@@ -86,6 +86,21 @@ export function LoginForm({ next }: { next: string }) {
         </div>
       </div>
 
+      {/* Stays signed in, on this browser or the installed app, until Log out. */}
+      <label className="-mt-2 flex min-h-11 cursor-pointer items-center gap-3 text-sm">
+        <input
+          type="checkbox"
+          name="remember"
+          className="size-5 shrink-0 cursor-pointer rounded border-input accent-primary"
+        />
+        <span>
+          Remember me
+          <span className="block text-xs text-muted-foreground">
+            Stay signed in on this device until you log out. Not on a shared computer.
+          </span>
+        </span>
+      </label>
+
       <button
         type="submit"
         disabled={isPending}
