@@ -57,13 +57,53 @@ const KEEP_KEY = 'garage:speech-keep-voice';
 const MAX_RECORDING_MS = 3 * 60 * 1000;
 
 const ERRORS: Record<string, string> = {
-  'not-allowed': 'The microphone is blocked. Allow it for this site in the browser’s settings, then try again.',
-  'service-not-allowed': 'The microphone is blocked. Allow it for this site in the browser’s settings, then try again.',
   'no-speech': 'Nothing was heard. Hold the phone closer and try again.',
   'audio-capture': 'No microphone was found, or another app is using it.',
   network: 'Voice typing needs an internet connection. Type instead, or try again.',
-  'language-not-supported': 'This phone can’t type in that language. Pick another, or type.',
 };
+
+/** Errors that mean “no”: the microphone, the page, or the browser’s voice service refused. */
+const REFUSALS = new Set(['not-allowed', 'service-not-allowed', 'language-not-supported']);
+
+/**
+ * Why the microphone or voice typing was refused — three different causes
+ * that browsers report with the same few codes, each with its own fix.
+ */
+async function explainRefusal(code: string, languageName: string): Promise<{ message: string; canRecord: boolean }> {
+  if (!window.isSecureContext) {
+    return {
+      message:
+        'The microphone only works on a secure address. Open the app with https:// (or as localhost on this computer) — on an http:// address the browser blocks it.',
+      canRecord: false,
+    };
+  }
+  const policy = (document as unknown as { featurePolicy?: { allowsFeature(name: string): boolean } }).featurePolicy;
+  if (policy && !policy.allowsFeature('microphone')) {
+    return {
+      message:
+        'The app server is still running with the microphone switched off. Restart it (or redeploy the latest version), then reload this page.',
+      canRecord: false,
+    };
+  }
+  let state: string | null = null;
+  try {
+    state = (await navigator.permissions.query({ name: 'microphone' as PermissionName })).state;
+  } catch {
+    // Not every browser can be asked.
+  }
+  if (state === 'denied' || (code === 'not-allowed' && state !== 'granted')) {
+    return {
+      message:
+        'The microphone is blocked for this site. Tap the icon left of the address (lock or settings) → Microphone → Allow, then reload the page.',
+      canRecord: false,
+    };
+  }
+  // The microphone is allowed: it is the browser’s speech service saying no.
+  return {
+    message: `This browser can’t type ${languageName} speech. Use Google Chrome (Edge, Brave and Firefox don’t offer it for every language) — or record the voice and type a short line yourself.`,
+    canRecord: true,
+  };
+}
 
 function pickMimeType() {
   if (typeof MediaRecorder === 'undefined') return null;
@@ -109,6 +149,10 @@ export function SpeechField({
   const [interim, setInterim] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const [keepVoice, setKeepVoice] = useState(false);
+  /** Voice typing refused, but recording would work: offer it. */
+  const [offerRecord, setOfferRecord] = useState(false);
+  /** Words are being typed as they are heard (false: recording only). */
+  const [typing, setTyping] = useState(true);
 
   const recognition = useRef<Recognition | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -192,8 +236,17 @@ export function SpeechField({
     rec.onerror = (event) => {
       if (event.error === 'aborted') return;
       if (event.error === 'no-speech' && committed.current) return; // a pause, not a failure
-      setProblem(ERRORS[event.error] ?? 'Voice typing stopped. Try again, or type.');
       if (event.error !== 'no-speech') wanted.current = false;
+      if (REFUSALS.has(event.error)) {
+        const name = languageLabel(latest.current.language) ?? 'this language';
+        void explainRefusal(event.error, name).then(({ message, canRecord }) => {
+          const recording = recorder.current?.state === 'recording';
+          setProblem(recording ? `${message} The voice is still being recorded — tap the red button when done, then type the text.` : message);
+          setOfferRecord(canRecord && allowKeepVoice && !recording);
+        });
+        return;
+      }
+      setProblem(ERRORS[event.error] ?? 'Voice typing stopped. Try again, or type.');
     };
     rec.onend = () => {
       setInterim('');
@@ -205,16 +258,20 @@ export function SpeechField({
           wanted.current = false;
         }
       }
-      setListening(false);
+      // Typing stopped, but a recording may still be running.
+      setListening(recorder.current?.state === 'recording');
     };
     recognition.current = rec;
     rec.start();
   }
 
-  async function start() {
+  /** Starts listening. `recordOnly`: record the voice without typing it (typing was refused). */
+  async function start(recordOnly = false) {
     setProblem(null);
-    const Ctor = recognitionCtor();
-    const record = allowKeepVoice && (keepVoice || !Ctor);
+    setOfferRecord(false);
+    const Ctor = recordOnly ? null : recognitionCtor();
+    const record = allowKeepVoice && (recordOnly || keepVoice || !Ctor);
+    setTyping(Ctor !== null);
     if (!Ctor && !record) {
       setProblem('Voice typing isn’t available in this browser. Use Chrome, or Safari on an iPhone — or type.');
       return;
@@ -240,7 +297,8 @@ export function SpeechField({
           recorder.current = rec;
           timer.current = setTimeout(stop, MAX_RECORDING_MS);
         } catch {
-          setProblem(ERRORS['not-allowed']);
+          const { message } = await explainRefusal('not-allowed', languageLabel(latest.current.language) ?? 'this language');
+          setProblem(message);
           return;
         }
       }
@@ -309,7 +367,7 @@ export function SpeechField({
         />
         <button
           type="button"
-          onClick={listening ? stop : start}
+          onClick={listening ? stop : () => start()}
           aria-label={listening ? 'Stop listening' : `Speak in ${languageLabel(value.language)}`}
           className={cn(
             'absolute top-2 right-2 flex size-12 items-center justify-center rounded-full transition-colors',
@@ -325,7 +383,9 @@ export function SpeechField({
       {listening ? (
         <p className="flex items-center gap-2 text-xs text-primary">
           <Loader2 className="size-3.5 animate-spin" />
-          Listening in {languageLabel(value.language)}… tap the red button when you’re done.
+          {typing
+            ? `Listening in ${languageLabel(value.language)}… tap the red button when you’re done.`
+            : 'Recording your voice… tap the red button when you’re done, then type a short line above.'}
         </p>
       ) : value.heard && value.text ? (
         <p className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
@@ -336,10 +396,25 @@ export function SpeechField({
       ) : null}
 
       {problem ? (
-        <p role="alert" className="flex items-start gap-1.5 text-xs text-destructive">
-          <TriangleAlert className="mt-px size-3.5 shrink-0" />
-          {problem}
-        </p>
+        <div role="alert" className="flex flex-col gap-2">
+          <p className="flex items-start gap-1.5 text-xs text-destructive">
+            <TriangleAlert className="mt-px size-3.5 shrink-0" />
+            {problem}
+          </p>
+          {offerRecord ? (
+            <button
+              type="button"
+              onClick={() => {
+                toggleKeep(true);
+                void start(true);
+              }}
+              className="inline-flex h-11 w-fit items-center gap-2 rounded-lg border border-border bg-card px-3.5 text-sm font-medium hover:bg-muted"
+            >
+              <Mic className="size-4" />
+              Record the voice instead
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
