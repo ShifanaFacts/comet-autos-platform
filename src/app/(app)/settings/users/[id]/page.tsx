@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { Clock, IdCard, Mail, MapPin, Phone, Pencil, ShieldCheck } from 'lucide-react';
+import { Clock, IdCard, KeyRound, Mail, MapPin, Phone, Pencil, ShieldCheck } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getUserDetail } from '@/lib/access/users';
@@ -110,7 +110,10 @@ export default async function UserDetailPage({
                 </StatusPill>
               </div>
               <div className="flex flex-col gap-4 border-t border-border pt-5">
-                <Line icon={Mail} label="Email" value={detail.email} />
+                {detail.username ? (
+                  <Line icon={KeyRound} label="Signs in as" value={detail.username} />
+                ) : null}
+                {detail.email ? <Line icon={Mail} label="Email" value={detail.email} /> : null}
                 {detail.phone ? <Line icon={Phone} label="Mobile" value={detail.phone} /> : null}
                 <Line
                   icon={MapPin}

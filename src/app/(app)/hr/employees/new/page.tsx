@@ -15,7 +15,7 @@ export default async function NewEmployeePage() {
       <PageHeader
         eyebrow="Team"
         title="Add employee"
-        description="Who they are and where they work. A system login is optional."
+        description="Who they are, their designation and where they work. Their login is made with them."
       />
       <Panel>
         <EmployeeForm action={createEmployeeAction} options={options} cancelHref="/hr/employees" />

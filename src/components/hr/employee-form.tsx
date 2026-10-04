@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+import Link from 'next/link';
 import { Field, FormError, NativeSelect, TextField } from '@/components/forms/fields';
 import { SubmitButton } from '@/components/forms/submit-button';
 import { useFormAction } from '@/components/forms/use-form-action';
@@ -8,9 +10,16 @@ import type { ActionResult } from '@/lib/errors';
 
 const INPUT = '[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm';
 
+/** The login choice that creates a new login (lib/hr/employees NEW_LOGIN). */
+const NEW_LOGIN = 'new';
+
 export interface EmployeeFormOptions {
   branches: { id: string; name: string }[];
-  users: { id: string; fullName: string; email: string }[];
+  /** Logins not yet anyone's, with what each signs in with. */
+  users: { id: string; fullName: string; signsInAs: string }[];
+  designations: { id: string; name: string; roleId: string | null }[];
+  /** Whether this user may create logins. */
+  canCreateLogin: boolean;
 }
 
 export function EmployeeForm({
@@ -26,6 +35,7 @@ export function EmployeeForm({
     lastName: string;
     employeeCode: string;
     jobTitle: string | null;
+    designationId: string | null;
     phone: string | null;
     email: string | null;
     department: string | null;
@@ -39,6 +49,11 @@ export function EmployeeForm({
 }) {
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(action, { ok: false });
   const errors = state.fieldErrors ?? {};
+  const offerNewLogin = options.canCreateLogin && !initial?.userId;
+  const [login, setLogin] = useState(
+    initial ? (initial.userId ?? '') : offerNewLogin ? NEW_LOGIN : '',
+  );
+  const legacyTitle = initial && !initial.designationId ? initial.jobTitle : null;
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-8">
@@ -69,20 +84,44 @@ export function EmployeeForm({
           <TextField
             label="Employee code"
             name="employeeCode"
-            required
             defaultValue={initial?.employeeCode}
             error={errors.employeeCode}
-            hint="How the workshop refers to them, e.g. EMP-004."
-            className={INPUT}
+            autoCapitalize="characters"
+            hint={
+              initial
+                ? 'Also their sign-in name, if they have a login.'
+                : 'Leave empty for the next code (EMP-001, EMP-002…). Also their sign-in name.'
+            }
+            className={`${INPUT} [&_input]:font-mono`}
           />
-          <TextField
-            label="Job title"
-            name="jobTitle"
-            defaultValue={initial?.jobTitle ?? ''}
-            error={errors.jobTitle}
-            hint="e.g. Senior Technician."
-            className={INPUT}
-          />
+          <Field
+            label="Designation"
+            htmlFor="designationId"
+            error={errors.designationId}
+            hint={
+              <>
+                {legacyTitle ? `Job title on record: ${legacyTitle}. ` : null}
+                Decides what their login can do.{' '}
+                <Link href="/hr/designations" className="underline underline-offset-2">
+                  Manage designations
+                </Link>
+              </>
+            }
+          >
+            <NativeSelect
+              id="designationId"
+              name="designationId"
+              defaultValue={initial?.designationId ?? ''}
+              className="h-11 text-base md:text-sm"
+            >
+              <option value="">No designation</option>
+              {options.designations.map((designation) => (
+                <option key={designation.id} value={designation.id}>
+                  {designation.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
         </div>
         <div className="grid gap-6 sm:grid-cols-2">
           <TextField
@@ -163,18 +202,27 @@ export function EmployeeForm({
           label="System login"
           htmlFor="userId"
           error={errors.userId}
-          hint="Optional. A technician who never signs in is still recorded against their work."
+          hint={
+            login === NEW_LOGIN
+              ? 'They sign in with their employee code, and their first password is the code too — they choose their own at the first sign-in. What they can do comes from the designation.'
+              : 'Optional. A technician who never signs in is still recorded against their work.'
+          }
         >
           <NativeSelect
             id="userId"
             name="userId"
-            defaultValue={initial?.userId ?? ''}
+            value={login}
+            onChange={(event) => setLogin(event.target.value)}
             className="h-11 text-base md:text-sm"
           >
             <option value="">No login</option>
+            {offerNewLogin ? (
+              <option value={NEW_LOGIN}>Create a login (employee code as username)</option>
+            ) : null}
             {options.users.map((account) => (
               <option key={account.id} value={account.id}>
-                {account.fullName} — {account.email}
+                {account.fullName}
+                {account.signsInAs ? ` — ${account.signsInAs}` : ''}
               </option>
             ))}
           </NativeSelect>

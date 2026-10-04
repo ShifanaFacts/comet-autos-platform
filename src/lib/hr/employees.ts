@@ -2,13 +2,14 @@ import { z } from 'zod';
 import type { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
-import { requirePermission } from '@/lib/auth/authorize';
+import { hasPermission, requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { parseInput } from '@/lib/form-data';
 import { emptyToNull, normalizePhone } from '@/lib/normalize';
 import { hashPassword } from '@/lib/auth/password';
+import { getDesignationOptions } from '@/lib/hr/designations';
 
 /*
  * The workshop's people. An Employee is who did the work — the record the
@@ -199,7 +200,9 @@ async function createEmployeeLogin(
   employee: { id: string; employeeCode: string; firstName: string; lastName: string; branchId: string },
   designation: { name: string; roleId: string | null } | null,
 ) {
-  requirePermission(actor, 'user.create');
+  if (!hasPermission(actor, 'user.create')) {
+    throw new DomainError('Creating a login needs permission to create users.', 'userId');
+  }
   if (!designation) {
     throw new DomainError(
       'Choose a designation first — it decides what their login is allowed to do.',
@@ -292,12 +295,12 @@ async function moveDesignationRole(
       data: { revokedAt: new Date(), revokedByUserId: actor.id },
     });
   }
-  if (toRoleId && !held.some((grant) => grant.roleId === toRoleId)) {
+  if (grant) {
     await tx.userRole.create({
       data: {
         organizationId: actor.organizationId,
         userId: loginId,
-        roleId: toRoleId,
+        roleId: toRoleId!,
         assignedByUserId: actor.id,
       },
     });
@@ -555,7 +558,8 @@ export async function listEmployees(
     orderBy: [{ isActive: 'desc' }, { firstName: 'asc' }, { lastName: 'asc' }],
     include: {
       branch: { select: { name: true } },
-      user: { select: { id: true, email: true, phone: true, fullName: true } },
+      user: { select: { id: true, email: true, username: true, phone: true, fullName: true } },
+      designation: { select: { id: true, name: true } },
       _count: { select: { jobAssignments: true, labours: true, qualityChecks: true } },
     },
   });
@@ -571,7 +575,19 @@ export async function getEmployeeDetail(user: AuthenticatedUser, employeeId: str
     where: { id: employeeId, organizationId: user.organizationId },
     include: {
       branch: { select: { name: true } },
-      user: { select: { id: true, email: true, phone: true, fullName: true, isActive: true } },
+      user: {
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          phone: true,
+          fullName: true,
+          isActive: true,
+          mustChangePassword: true,
+          lastLoginAt: true,
+        },
+      },
+      designation: { select: { id: true, name: true } },
     },
   });
   if (!employee) throw new NotFoundError('employee');
@@ -639,10 +655,19 @@ export async function getEmployeeForEdit(user: AuthenticatedUser, employeeId: st
   return employee;
 }
 
-/** Branches and the logins that aren't already somebody's, for the employee form. */
+/**
+ * Branches, designations and the logins that aren't already somebody's, for
+ * the employee form — and whether this user may create a login there.
+ */
 export async function getEmployeeFormOptions(user: AuthenticatedUser, employeeId?: string) {
   requirePermission(user, 'employee.edit');
-  const [branches, users] = await Promise.all([
+  const current = employeeId
+    ? await prisma.employee.findFirst({
+        where: { id: employeeId, organizationId: user.organizationId },
+        select: { designationId: true },
+      })
+    : null;
+  const [branches, users, designations] = await Promise.all([
     prisma.branch.findMany({
       where: { organizationId: user.organizationId, isActive: true },
       orderBy: { name: 'asc' },
@@ -654,8 +679,18 @@ export async function getEmployeeFormOptions(user: AuthenticatedUser, employeeId
         OR: [{ employee: { is: null } }, ...(employeeId ? [{ employee: { id: employeeId } }] : [])],
       },
       orderBy: { fullName: 'asc' },
-      select: { id: true, fullName: true, email: true },
+      select: { id: true, fullName: true, email: true, username: true },
     }),
+    getDesignationOptions(user.organizationId, current?.designationId),
   ]);
-  return { branches, users };
+  return {
+    branches,
+    users: users.map((account) => ({
+      id: account.id,
+      fullName: account.fullName,
+      signsInAs: account.email ?? account.username ?? '',
+    })),
+    designations,
+    canCreateLogin: hasPermission(user, 'user.create'),
+  };
 }

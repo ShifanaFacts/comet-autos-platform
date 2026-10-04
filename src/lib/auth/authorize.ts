@@ -12,6 +12,11 @@ export async function requireUser(): Promise<AuthenticatedUser> {
   if (!user) {
     redirect('/login');
   }
+  // A password someone else set (an employee's first one is their code)
+  // must be replaced before anything else can be done.
+  if (user.mustChangePassword) {
+    redirect('/set-password');
+  }
   return user;
 }
 

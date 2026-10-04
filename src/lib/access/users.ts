@@ -52,7 +52,8 @@ const baseUserSchema = z.object({
     .trim()
     .min(2, 'Enter the person’s name.')
     .max(120),
-  email: z.email('Enter a valid email address.'),
+  /** Optional when editing a login that signs in with an employee code. */
+  email: z.union([z.literal(''), z.email('Enter a valid email address.')]).optional(),
   phone: z
     .string()
     .trim()
@@ -69,6 +70,7 @@ const baseUserSchema = z.object({
 });
 
 const createUserSchema = baseUserSchema.extend({
+  email: z.email('Enter a valid email address.'),
   employeeId: z.union([z.literal(''), z.uuid('Choose an employee.')]).optional(),
   password: passwordSchema,
 });
@@ -86,6 +88,7 @@ const listSelect = {
   id: true,
   fullName: true,
   email: true,
+  username: true,
   phone: true,
   isActive: true,
   lastLoginAt: true,
@@ -488,7 +491,7 @@ export async function updateUser(user: AuthenticatedUser, userId: string, rawInp
   const input = parseInput(baseUserSchema, rawInput);
   requirePermission(user, 'user.edit');
 
-  const email = input.email.trim().toLowerCase();
+  const email = emptyToNull(input.email)?.trim().toLowerCase() ?? null;
   const roleIds = roleIdList(input.roleIds);
 
   return prisma.$transaction(async (tx) => {
@@ -498,6 +501,7 @@ export async function updateUser(user: AuthenticatedUser, userId: string, rawInp
         id: true,
         fullName: true,
         email: true,
+        username: true,
         phone: true,
         primaryBranchId: true,
         userRoles: {
@@ -536,7 +540,11 @@ export async function updateUser(user: AuthenticatedUser, userId: string, rawInp
         await refuseIfLastOwner(tx, user.organizationId, userId, 'Removing the Owner role');
     }
 
-    if (email !== before.email) {
+    // Every login needs a way in: an email, or the employee code it signs in with.
+    if (!email && !before.username) {
+      throw new DomainError('Enter an email address — it is how they sign in.', 'email');
+    }
+    if (email && email !== before.email) {
       const taken = await tx.user.findFirst({
         where: { organizationId: user.organizationId, email, id: { not: userId } },
         select: { id: true },
@@ -675,7 +683,8 @@ export async function resetUserPassword(
     });
     if (!target) throw new NotFoundError('user');
 
-    await tx.user.update({ where: { id: userId }, data: { passwordHash } });
+    // A password handed out by someone else is changed at the next sign-in.
+    await tx.user.update({ where: { id: userId }, data: { passwordHash, mustChangePassword: true } });
     const { count } = await tx.session.updateMany({
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },

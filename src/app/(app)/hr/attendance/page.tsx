@@ -14,6 +14,8 @@ import { AccessDenied } from '@/components/shared/access-denied';
 import { EmptyState } from '@/components/shared/empty-state';
 import { AttendanceRow } from '@/components/hr/attendance-row';
 import { AttendanceDatePicker } from '@/components/hr/attendance-date-picker';
+import { AttendanceReview } from '@/components/hr/attendance-review';
+import { listAttendanceToReview } from '@/lib/hr/self-attendance';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,14 +52,17 @@ export default async function AttendancePage({
     }
   }
   const canEdit = hasPermission(user, 'attendance.create');
+  const toReview = hasPermission(user, 'attendance.edit') ? await listAttendanceToReview(user) : [];
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
         eyebrow="Team"
         title="Attendance"
-        description="Who is in today. One tap to clock someone in or out."
+        description="Who is in today. Staff check themselves in on their phones (My work); you can still clock someone in or out here."
       />
+
+      <AttendanceReview rows={toReview} />
 
       <AttendanceDatePicker date={day.date} isToday={day.isToday} />
 

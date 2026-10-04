@@ -2,7 +2,10 @@ import Link from 'next/link';
 import { Building2, ChevronRight, History, Info, ShieldCheck } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { getOrganizationSettings } from '@/lib/organization/settings';
-import { listBranches } from '@/lib/organization/branches';
+import { getBranchLocation, listBranches } from '@/lib/organization/branches';
+import { getDisplayLinkState } from '@/lib/workshop/live-board';
+import { BranchLocationForm } from '@/components/settings/branch-location-form';
+import { DisplayLinkForm } from '@/components/settings/display-link-form';
 import { formatDateTime } from '@/lib/format';
 import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
@@ -17,10 +20,14 @@ export default async function SettingsPage() {
   if (!hasPermission(user, 'settings.view')) {
     return <AccessDenied what="the workshop's settings" />;
   }
-  const [settings, branches] = await Promise.all([
+  const [settings, branches, displayLink] = await Promise.all([
     getOrganizationSettings(user),
     listBranches(user),
+    getDisplayLinkState(user),
   ]);
+  const locations = await Promise.all(
+    branches.map((branch) => getBranchLocation(user.organizationId, branch.id)),
+  );
   const canEdit = hasPermission(user, 'settings.edit');
 
   return (
@@ -65,6 +72,41 @@ export default async function SettingsPage() {
             </Panel>
           ))}
         </Stack>
+      </Section>
+
+      <Section
+        title="Location lock"
+        description="Staff check themselves in and out on their phones, only when they are at the workshop. Set where it is once."
+      >
+        <Stack gap="base">
+          {locations.map((location) =>
+            location ? (
+              <Panel key={location.id}>
+                {branches.length > 1 ? (
+                  <p className="mb-4 text-sm font-medium">{location.name}</p>
+                ) : null}
+                {canEdit ? (
+                  <BranchLocationForm branch={location} />
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {location.fence
+                      ? `Set — within ${location.radiusM} m; the day ends at ${location.shiftEndTime}.`
+                      : 'Not set yet.'}
+                  </p>
+                )}
+              </Panel>
+            ) : null,
+          )}
+        </Stack>
+      </Section>
+
+      <Section
+        title="Customer TV screen"
+        description="A live board for the waiting area, showing where each car stands."
+      >
+        <Panel>
+          <DisplayLinkForm active={displayLink.active} canEdit={canEdit} />
+        </Panel>
       </Section>
 
       <Section

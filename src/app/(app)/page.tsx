@@ -47,6 +47,7 @@ import { cn } from '@/lib/utils';
 import { getWorkshopPreferences } from '@/lib/organization/settings';
 import { isMenuShown } from '@/lib/nav';
 import { visibleStages } from '@/lib/workshop/stages';
+import { MyDayStrip } from '@/components/team/my-day-strip';
 
 // Several independently-streamed sections read the same queries; cache()
 // dedupes them to one database round-trip per request.
@@ -111,6 +112,10 @@ export default async function DashboardPage() {
         </h1>
         <p className="text-base text-muted-foreground">What do you need?</p>
       </header>
+
+      <Suspense fallback={null}>
+        <MyDayStrip user={user} />
+      </Suspense>
 
       {/* The three things done every day, first and biggest. */}
       <StartActions

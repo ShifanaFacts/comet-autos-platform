@@ -31,7 +31,7 @@ export function Topbar({
   branchName,
   brand,
 }: {
-  user: { fullName: string; email: string; roleNames: string[] };
+  user: { fullName: string; email: string | null; roleNames: string[] };
   branchName: string | null;
   brand: Pick<Brand, 'shortName' | 'initial'>;
 }) {

@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   FileText,
   BadgeCheck,
+  BriefcaseBusiness,
   Users,
   Car,
   Cog,
@@ -44,6 +45,9 @@ import {
   TrendingUp,
   WalletCards,
   UserRoundCheck,
+  ListTodo,
+  ListChecks,
+  MonitorPlay,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -84,6 +88,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'New job card', href: '/check-in', icon: LogIn, permission: 'job_card.create' },
       { label: 'Job Cards', href: '/job-cards', icon: ClipboardList, permission: 'job_card.view' },
+      { label: 'Workshop live', href: '/live', icon: MonitorPlay, permission: 'job_card.view' },
       {
         label: 'Appointments',
         href: '/appointments',
@@ -97,6 +102,14 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'job_card.view',
       },
       { label: 'Approvals', href: '/approvals', icon: BadgeCheck, permission: 'quotation.view' },
+    ],
+  },
+  {
+    label: 'Team',
+    items: [
+      // Everyone with an employee record: their attendance and to-do list.
+      { label: 'My work', href: '/my-work', icon: ListTodo },
+      { label: 'Team tasks', href: '/team', icon: ListChecks, permission: 'task.view' },
     ],
   },
   {
@@ -317,6 +330,12 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'HR',
     items: [
       { label: 'Employees', href: '/hr/employees', icon: IdCard, permission: 'employee.view' },
+      {
+        label: 'Designations',
+        href: '/hr/designations',
+        icon: BriefcaseBusiness,
+        permission: 'employee.view',
+      },
       {
         label: 'Attendance',
         href: '/hr/attendance',
