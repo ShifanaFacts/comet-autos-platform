@@ -1,6 +1,7 @@
 import {
   A4,
   PdfDocument,
+  type PathSegment,
   type PdfPage,
   type Rgb,
   textWidth,
@@ -298,117 +299,284 @@ function sections(layout: Layout, doc: CustomerDocumentModel) {
 }
 
 /*
- * The job card's work list: S.No · Type · Description · Qty · Done, with no
- * prices — a sheet for the workshop floor and the customer's copy at
- * check-in. Each line has a box to tick when done; with no work list yet it
- * prints numbered blank lines to fill in by hand.
+ * The job card sheet: no prices and no quotation — the customer's complaint,
+ * the vehicle diagram to mark damage on at check-in, a box for the workshop
+ * supervisor's comments, and signatures. Boxes print what was typed, then
+ * ruled lines to write on by hand.
  */
-const JOB = {
-  no: MARGIN + 30,
-  type: MARGIN + 40,
-  desc: MARGIN + 92,
-  qty: RIGHT - 70,
-  done: RIGHT - 12,
-};
-const JOB_DESC_WIDTH = JOB.qty - JOB.desc - 40;
-const BLANK_LINES = 8;
+const BOX_LINE = 16;
 
-function jobTableHeader(layout: Layout) {
+function writingBox(layout: Layout, title: string, text: string, minLines: number) {
+  const lines = text.trim() ? wrapText(text.trim(), 'regular', 9.5, CONTENT - 28) : [];
+  const ruled = Math.max(0, minLines - lines.length);
+  const height = 24 + (lines.length + ruled) * BOX_LINE + 8;
+  layout.ensure(height + 12);
   const { page } = layout;
-  page.rect(MARGIN, layout.y, CONTENT, 22, { fill: NIGHT, radius: 5 });
-  const y = layout.y + 14.5;
-  const style = { font: 'bold' as const, size: 7.5, color: WHITE };
-  page.text('S.NO', JOB.no, y, { ...style, align: 'right' });
-  page.text('TYPE', JOB.type, y, style);
-  page.text('WORK TO DO', JOB.desc, y, style);
-  page.text('QTY', JOB.qty, y, { ...style, align: 'right' });
-  page.text('DONE', JOB.done, y, { ...style, align: 'right' });
-  layout.y += 30;
+  const top = layout.y;
+  page.rect(MARGIN, top, CONTENT, height, { stroke: RULE, radius: 8 });
+  page.text(title.toUpperCase(), MARGIN + 14, top + 17, { font: 'bold', size: 7.5, color: MUTED });
+  lines.forEach((line, index) =>
+    page.text(line, MARGIN + 14, top + 24 + index * BOX_LINE + 11, { size: 9.5, color: INK }),
+  );
+  for (let index = lines.length; index < lines.length + ruled; index += 1) {
+    const y = top + 24 + (index + 1) * BOX_LINE - 1;
+    page.line(MARGIN + 14, y, RIGHT - 14, y, { color: RULE, width: 0.6 });
+  }
+  layout.y += height + 12;
 }
 
-function jobLines(layout: Layout, doc: CustomerDocumentModel) {
-  layout.ensure(80);
-  jobTableHeader(layout);
-  const tick = (base: number) =>
-    layout.page.rect(JOB.done - 18, base - 9, 12, 12, { stroke: MUTED, radius: 2 });
-  let number = 0;
-  for (const section of doc.sections) {
-    if (section.title) {
-      if (layout.ensure(40)) jobTableHeader(layout);
-      layout.page.text(section.title.toUpperCase(), JOB.type, layout.y + 8, {
-        font: 'bold',
-        size: 7.5,
-        color: BRAND,
-      });
-      layout.y += 16;
-    }
-    for (const line of section.lines) {
-      number += 1;
-      const description = wrapText(line.description, 'regular', 9.5, JOB_DESC_WIDTH);
-      const height = Math.max(description.length * 12.5, 12.5) + 12;
-      if (layout.ensure(height)) jobTableHeader(layout);
-      const { page } = layout;
-      const base = layout.y + 10;
-      page.text(String(number), JOB.no, base, { size: 9.5, color: MUTED, align: 'right' });
-      if (line.type)
-        page.text(line.type, JOB.type, base, { font: 'bold', size: 7.5, color: MUTED });
-      description.forEach((text, index) =>
-        page.text(text, JOB.desc, base + index * 12.5, { size: 9.5, color: INK }),
+/*
+ * Vehicle outlines, drawn in their own design units (y down) and scaled into
+ * place: a side view facing right (the car's left side; mirrored, its right
+ * side), the top view, and the front and rear.
+ */
+const SIDE_W = 200;
+const SIDE_BODY: PathSegment[] = [
+  ['M', 6, 58],
+  ['L', 4, 40],
+  ['C', 4, 34, 8, 31, 14, 30],
+  ['L', 52, 28],
+  ['C', 60, 14, 68, 8, 80, 7],
+  ['L', 118, 7],
+  ['C', 128, 7, 136, 12, 146, 26],
+  ['L', 186, 32],
+  ['C', 194, 33, 198, 38, 198, 44],
+  ['L', 198, 58],
+  ['L', 174, 58],
+  ['C', 174, 49.2, 166.8, 42, 158, 42],
+  ['C', 149.2, 42, 142, 49.2, 142, 58],
+  ['L', 61, 58],
+  ['C', 61, 49.2, 53.8, 42, 45, 42],
+  ['C', 36.2, 42, 29, 49.2, 29, 58],
+  ['Z'],
+];
+const SIDE_GLASS: PathSegment[] = [
+  ['M', 58, 28],
+  ['C', 64, 17, 70, 12, 80, 11],
+  ['L', 117, 11],
+  ['C', 125, 11, 131, 15, 139, 26],
+  ['Z'],
+];
+const TOP_BODY: PathSegment[] = [
+  ['M', 30, 8],
+  ['L', 165, 8],
+  ['C', 186, 8, 196, 22, 196, 42],
+  ['C', 196, 62, 186, 76, 165, 76],
+  ['L', 30, 76],
+  ['C', 12, 76, 4, 64, 4, 42],
+  ['C', 4, 20, 12, 8, 30, 8],
+  ['Z'],
+];
+const TOP_WINDSHIELD: PathSegment[] = [
+  ['M', 128, 16],
+  ['L', 146, 20],
+  ['C', 150, 32, 150, 52, 146, 64],
+  ['L', 128, 68],
+  ['C', 132, 52, 132, 32, 128, 16],
+  ['Z'],
+];
+const TOP_REAR_GLASS: PathSegment[] = [
+  ['M', 48, 20],
+  ['L', 64, 17],
+  ['C', 61, 32, 61, 52, 64, 67],
+  ['L', 48, 64],
+  ['C', 45, 52, 45, 32, 48, 20],
+  ['Z'],
+];
+const END_BODY: PathSegment[] = [
+  ['M', 8, 58],
+  ['L', 8, 38],
+  ['C', 8, 32, 12, 30, 18, 29],
+  ['L', 26, 12],
+  ['C', 28, 8, 31, 7, 36, 7],
+  ['L', 64, 7],
+  ['C', 69, 7, 72, 8, 74, 12],
+  ['L', 82, 29],
+  ['C', 88, 30, 92, 32, 92, 38],
+  ['L', 92, 58],
+  ['Z'],
+];
+const END_GLASS: PathSegment[] = [
+  ['M', 30, 13],
+  ['L', 70, 13],
+  ['L', 77, 27],
+  ['L', 23, 27],
+  ['Z'],
+];
+
+/** Scales design units to the page: `x`, `y` is the view's top-left, `s` its scale. */
+function placer(page: PdfPage, x: number, y: number, s: number, mirrorWidth?: number) {
+  const px = (dx: number) => x + (mirrorWidth ? mirrorWidth - dx : dx) * s;
+  const py = (dy: number) => y + dy * s;
+  const outline = { stroke: INK, lineWidth: 0.9 };
+  return {
+    shape(segments: PathSegment[], options: { fill?: Rgb; stroke?: Rgb; lineWidth?: number }) {
+      page.path(
+        segments.map((seg): PathSegment => {
+          if (seg[0] === 'Z') return seg;
+          if (seg[0] === 'C')
+            return ['C', px(seg[1]), py(seg[2]), px(seg[3]), py(seg[4]), px(seg[5]), py(seg[6])];
+          return [seg[0], px(seg[1]), py(seg[2])];
+        }),
+        options,
       );
-      page.text(formatQuantity(line.quantity), JOB.qty, base, {
-        size: 9.5,
-        color: INK,
-        align: 'right',
+    },
+    box(dx: number, dy: number, w: number, h: number, options: Parameters<PdfPage['rect']>[4]) {
+      const left = mirrorWidth ? px(dx + w) : px(dx);
+      page.rect(left, py(dy), w * s, h * s, { ...options, radius: (options.radius ?? 0) * s });
+    },
+    circle(cx: number, cy: number, r: number, options: { fill?: Rgb; stroke?: Rgb }) {
+      page.rect(px(cx) - r * s, py(cy) - r * s, 2 * r * s, 2 * r * s, {
+        ...options,
+        radius: r * s,
+        lineWidth: 0.9,
       });
-      tick(base);
-      layout.y += height;
-      page.line(MARGIN, layout.y - 4, RIGHT, layout.y - 4, { color: RULE, width: 0.6 });
-    }
-    layout.y += 6;
+    },
+    line(x1: number, y1: number, x2: number, y2: number) {
+      page.line(px(x1), py(y1), px(x2), py(y2), { color: MUTED, width: 0.6 });
+    },
+    outline,
+  };
+}
+
+function sideView(page: PdfPage, x: number, y: number, s: number, mirrored: boolean) {
+  const v = placer(page, x, y, s, mirrored ? SIDE_W : undefined);
+  v.shape(SIDE_BODY, { ...v.outline, fill: WHITE });
+  v.shape(SIDE_GLASS, { stroke: MUTED, lineWidth: 0.7 });
+  v.line(100, 11, 100, 56);
+  v.line(139, 27, 139, 52);
+  v.line(62, 30, 62, 54);
+  v.line(88, 33, 95, 33);
+  v.line(127, 33, 134, 33);
+  for (const cx of [45, 158]) {
+    v.circle(cx, 58, 12, { stroke: INK, fill: WHITE });
+    v.circle(cx, 58, 4.5, { stroke: MUTED });
   }
-  if (number === 0) {
-    for (let blank = 1; blank <= BLANK_LINES; blank += 1) {
-      if (layout.ensure(26)) jobTableHeader(layout);
-      layout.page.text(String(blank), JOB.no, layout.y + 12, {
-        size: 9.5,
-        color: MUTED,
-        align: 'right',
-      });
-      tick(layout.y + 12);
-      layout.y += 26;
-      layout.page.line(MARGIN, layout.y - 4, RIGHT, layout.y - 4, { color: RULE, width: 0.6 });
-    }
-    layout.y += 6;
+  v.box(193, 37, 4, 5, { stroke: MUTED, radius: 1 });
+  v.box(4, 33, 4, 6, { stroke: MUTED, radius: 1 });
+}
+
+function topView(page: PdfPage, x: number, y: number, s: number) {
+  const v = placer(page, x, y, s);
+  for (const [wx, wy] of [
+    [34, 3],
+    [150, 3],
+    [34, 75],
+    [150, 75],
+  ])
+    v.box(wx, wy, 24, 6, { fill: MUTED, radius: 2 });
+  v.box(134, 2, 7, 7, { stroke: INK, fill: WHITE, radius: 1.5 });
+  v.box(134, 75, 7, 7, { stroke: INK, fill: WHITE, radius: 1.5 });
+  v.shape(TOP_BODY, { ...v.outline, fill: WHITE });
+  v.shape(TOP_WINDSHIELD, { stroke: MUTED, lineWidth: 0.7 });
+  v.shape(TOP_REAR_GLASS, { stroke: MUTED, lineWidth: 0.7 });
+  v.box(66, 18, 60, 48, { stroke: MUTED, radius: 6 });
+  v.line(150, 24, 186, 28);
+  v.line(150, 60, 186, 56);
+}
+
+function endView(page: PdfPage, x: number, y: number, s: number, front: boolean) {
+  const v = placer(page, x, y, s);
+  v.box(12, 54, 14, 14, { fill: MUTED, radius: 3 });
+  v.box(74, 54, 14, 14, { fill: MUTED, radius: 3 });
+  v.box(2, 26, 7, 5, { stroke: INK, fill: WHITE, radius: 1.5 });
+  v.box(91, 26, 7, 5, { stroke: INK, fill: WHITE, radius: 1.5 });
+  v.shape(END_BODY, { ...v.outline, fill: WHITE });
+  v.shape(END_GLASS, { stroke: MUTED, lineWidth: 0.7 });
+  v.line(10, 50, 90, 50);
+  if (front) {
+    v.box(13, 35, 17, 7, { stroke: MUTED, radius: 2 });
+    v.box(70, 35, 17, 7, { stroke: MUTED, radius: 2 });
+    v.box(36, 36, 28, 10, { stroke: MUTED, radius: 2 });
+  } else {
+    v.box(12, 34, 16, 8, { stroke: MUTED, radius: 2 });
+    v.box(72, 34, 16, 8, { stroke: MUTED, radius: 2 });
+    v.box(38, 38, 24, 9, { stroke: MUTED, radius: 1 });
   }
-  layout.y += 8;
+}
+
+/** The vehicle diagram panel: left and right sides, top, front and rear, with the marking key. */
+function vehicleDiagram(layout: Layout) {
+  const height = 188;
+  layout.ensure(height + 12);
+  const { page } = layout;
+  const top = layout.y;
+  page.rect(MARGIN, top, CONTENT, height, { stroke: RULE, radius: 8 });
+  page.text('VEHICLE CONDITION', MARGIN + 14, top + 17, { font: 'bold', size: 7.5, color: MUTED });
+  page.text(
+    'Mark on the drawing:  S scratch  ·  D dent  ·  C crack  ·  B broken',
+    RIGHT - 14,
+    top + 17,
+    {
+      size: 7.5,
+      color: MUTED,
+      align: 'right',
+    },
+  );
+
+  const side = 0.86;
+  const end = 0.78;
+  const inner = CONTENT - 28;
+  const gap = (inner - SIDE_W * side * 2 - 100 * end) / 2;
+  const colA = MARGIN + 14;
+  const colB = colA + SIDE_W * side + gap;
+  const colC = colB + SIDE_W * side + gap;
+  const rowOne = top + 30;
+  const rowTwo = top + 108;
+  const label = (text: string, x: number, width: number, y: number) =>
+    page.text(text, x + width / 2, y, { font: 'bold', size: 7, color: MUTED, align: 'center' });
+
+  sideView(page, colA, rowOne, side, false);
+  label('LEFT SIDE', colA, SIDE_W * side, rowOne + 71);
+  sideView(page, colA, rowTwo, side, true);
+  label('RIGHT SIDE', colA, SIDE_W * side, rowTwo + 71);
+
+  const topY = top + (height - 84 * side) / 2 + 4;
+  topView(page, colB, topY, side);
+  label('TOP', colB, SIDE_W * side, topY + 84 * side + 12);
+
+  endView(page, colC, rowOne + 6, end, true);
+  label('FRONT', colC, 100 * end, rowOne + 71);
+  endView(page, colC, rowTwo + 6, end, false);
+  label('REAR', colC, 100 * end, rowTwo + 71);
+
+  layout.y += height + 12;
+}
+
+function jobCardBody(layout: Layout, doc: CustomerDocumentModel) {
+  doc.narrative.forEach((block, index) =>
+    writingBox(layout, block.label, block.value, index === 0 ? 3 : 0),
+  );
+  vehicleDiagram(layout);
+  writingBox(layout, 'Workshop supervisor comments', '', 4);
 }
 
 /** Two signature boxes: the customer handing the vehicle over, and the workshop taking it in. */
 function signatures(layout: Layout) {
-  const height = 78;
-  layout.ensure(height + 10);
+  const height = 64;
+  layout.ensure(height);
   const half = (CONTENT - 12) / 2;
   const boxes = [
-    { title: 'Customer', caption: 'I hand over the vehicle and agree to the work above.' },
+    { title: 'Customer', caption: 'I hand over the vehicle in the condition marked above.' },
     { title: 'For the workshop', caption: 'Vehicle received by' },
   ];
   boxes.forEach((box, index) => {
     const x = MARGIN + index * (half + 12);
     const { page } = layout;
     page.rect(x, layout.y, half, height, { stroke: RULE, radius: 8 });
-    page.text(box.title.toUpperCase(), x + 14, layout.y + 18, {
+    page.text(box.title.toUpperCase(), x + 14, layout.y + 16, {
       font: 'bold',
       size: 7.5,
       color: MUTED,
     });
-    page.text(box.caption, x + 14, layout.y + 31, { size: 8, color: MUTED });
-    page.line(x + 14, layout.y + 62, x + half - 90, layout.y + 62, { color: MUTED, width: 0.6 });
-    page.text('Signature', x + 14, layout.y + 72, { size: 7, color: MUTED });
-    page.line(x + half - 80, layout.y + 62, x + half - 14, layout.y + 62, {
+    page.text(box.caption, x + 14, layout.y + 28, { size: 8, color: MUTED });
+    page.line(x + 14, layout.y + 49, x + half - 90, layout.y + 49, { color: MUTED, width: 0.6 });
+    page.text('Signature', x + 14, layout.y + 58, { size: 7, color: MUTED });
+    page.line(x + half - 80, layout.y + 49, x + half - 14, layout.y + 49, {
       color: MUTED,
       width: 0.6,
     });
-    page.text('Date', x + half - 80, layout.y + 72, { size: 7, color: MUTED });
+    page.text('Date', x + half - 80, layout.y + 58, { size: 7, color: MUTED });
   });
   layout.y += height + 20;
 }
@@ -559,15 +727,19 @@ export function renderDocumentPdf(doc: CustomerDocumentModel): Buffer {
   let y = header(first, doc);
   y = parties(first, doc, y);
   const layout = new Layout(pdf, first, y);
-  highlight(layout, doc);
-  narrative(layout, doc);
-  if (doc.kind === 'RECEIPT') fields(layout, doc.detailsTitle, doc.details);
-  if (doc.kind === 'JOB_CARD') jobLines(layout, doc);
-  else sections(layout, doc);
-  totals(layout, doc);
-  if (doc.kind !== 'RECEIPT') fields(layout, doc.detailsTitle, doc.details);
-  notes(layout, doc);
-  if (doc.kind === 'JOB_CARD') signatures(layout);
+  if (doc.kind === 'JOB_CARD') {
+    jobCardBody(layout, doc);
+    notes(layout, doc);
+    signatures(layout);
+  } else {
+    highlight(layout, doc);
+    narrative(layout, doc);
+    if (doc.kind === 'RECEIPT') fields(layout, doc.detailsTitle, doc.details);
+    sections(layout, doc);
+    totals(layout, doc);
+    if (doc.kind !== 'RECEIPT') fields(layout, doc.detailsTitle, doc.details);
+    notes(layout, doc);
+  }
   footers(pdf, doc);
   return pdf.toBuffer();
 }

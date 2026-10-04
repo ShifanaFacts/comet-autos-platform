@@ -863,12 +863,10 @@ export type JobDocuments = Awaited<ReturnType<typeof getJobDocuments>>;
 // ---------------------------------------------------------------------------
 
 /**
- * The job card as a printed sheet: who brought which vehicle in, what they
- * asked for, what was found, and the work to do — without prices (those are
- * on the quotation and the invoice), with a box to tick each line done and
- * room for signatures. The work list is the invoice once there is one,
- * otherwise the current quotations; with neither it prints blank lines to
- * fill in by hand.
+ * The job card as a printed sheet for check-in: who brought which vehicle
+ * in and what they asked for, the vehicle diagram to mark its condition on,
+ * a box for the workshop supervisor's comments, and signatures. No prices
+ * and no quotation lines — those have their own documents.
  */
 export async function getJobCardDocument(
   user: AuthenticatedUser,
@@ -896,61 +894,15 @@ export async function getJobCardDocument(
         take: 1,
         select: { findings: true, recommendedAction: true },
       },
-      estimates: {
-        where: { status: { notIn: ['REJECTED', 'EXPIRED'] }, nextVersions: { none: {} } },
-        orderBy: [{ kind: 'asc' }, { createdAt: 'asc' }],
-        select: {
-          kind: true,
-          estimateNumber: true,
-          items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
-        },
-      },
-      invoices: {
-        where: { status: { notIn: ['VOID', 'CANCELLED'] } },
-        take: 1,
-        select: {
-          invoiceNumber: true,
-          items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
-        },
-      },
     },
   });
   if (!jobCard) throw new NotFoundError('job card');
   requirePermission(user, 'job_card.view', { branchId: jobCard.branchId });
   const seller = await loadSeller(user.organizationId);
 
-  const toLine = (item: {
-    itemType: EstimateItemType | null;
-    description: string;
-    quantity: { toString(): string };
-    unitPrice: { toString(): string };
-    taxRate: { toString(): string } | null;
-    lineTotal: { toString(): string };
-  }): DocumentLine => ({
-    type: lineType(item.itemType),
-    description: item.description,
-    quantity: item.quantity.toString(),
-    unitPrice: item.unitPrice.toString(),
-    taxRate: item.taxRate?.toString() ?? null,
-    discount: null,
-    lineTotal: item.lineTotal.toString(),
-  });
-  const invoice = jobCard.invoices[0];
-  const sections: DocumentSection[] = invoice
-    ? invoice.items.length > 0
-      ? [{ title: '', lines: invoice.items.map(toLine) }]
-      : []
-    : jobCard.estimates
-        .filter((e) => e.items.length > 0)
-        .map((e) => ({
-          title: e.kind === 'ADDITIONAL' ? `Additional work (${e.estimateNumber})` : '',
-          lines: e.items.map(toLine),
-        }));
-
   const technicians = jobCard.assignments.map((a) => employeeName(a.employee));
   const inspection = jobCard.inspections[0];
   const diagnosis = jobCard.diagnoses[0];
-  const quotations = jobCard.estimates.map((e) => e.estimateNumber);
 
   return {
     kind: 'JOB_CARD',
@@ -962,8 +914,6 @@ export async function getJobCardDocument(
       { label: 'Checked in', value: formatDateTime(jobCard.openedAt) },
       { label: 'Received by', value: jobCard.createdBy.fullName },
       ...(technicians.length > 0 ? [{ label: 'Technician', value: technicians.join(', ') }] : []),
-      ...(quotations.length > 0 ? [{ label: 'Quotation', value: quotations.join(', ') }] : []),
-      ...(invoice ? [{ label: 'Invoice', value: invoice.invoiceNumber }] : []),
       ...(jobCard.deliveredAt
         ? [
             {
@@ -988,17 +938,20 @@ export async function getJobCardDocument(
           ? `${jobCard.odometerReading.toLocaleString('en-US')} km`
           : null,
     },
+    // The complaint always comes first: blank, it prints lines to write on.
     narrative: [
-      ...(jobCard.customerComplaint
-        ? [{ label: 'Customer complaint / work requested', value: jobCard.customerComplaint }]
-        : []),
+      { label: 'Customer complaint', value: jobCard.customerComplaint ?? '' },
       ...(inspection?.summary ? [{ label: 'Inspection', value: inspection.summary }] : []),
-      ...(diagnosis ? [{ label: 'Diagnosis', value: diagnosis.findings }] : []),
-      ...(diagnosis?.recommendedAction
-        ? [{ label: 'Recommended work', value: diagnosis.recommendedAction }]
+      ...(diagnosis
+        ? [
+            {
+              label: 'Diagnosis',
+              value: [diagnosis.findings, diagnosis.recommendedAction].filter(Boolean).join('\n'),
+            },
+          ]
         : []),
     ],
-    sections,
+    sections: [],
     totals: [],
     highlight: null,
     detailsTitle: null,

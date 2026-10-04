@@ -1,7 +1,7 @@
 /*
  * A deliberately small PDF 1.4 writer for the customer documents: text in
  * the two built-in Helvetica faces (no font files to embed), filled and
- * stroked rectangles, rounded rectangles and lines, on A4 pages. That is all
+ * stroked rectangles, rounded rectangles, lines and paths, on A4 pages. That is all
  * a quotation, invoice or receipt needs, and it keeps PDF generation free of
  * a multi-megabyte dependency.
  *
@@ -113,6 +113,12 @@ function encode(text: string): string {
 const num = (value: number) => (Math.round(value * 100) / 100).toString();
 const color = (rgb: Rgb) => rgb.map((c) => num(c)).join(' ');
 
+/** Move, line, cubic Bézier, close — like SVG's M / L / C / Z. */
+export type PathSegment =
+  | readonly ['M' | 'L', number, number]
+  | readonly ['C', number, number, number, number, number, number]
+  | readonly ['Z'];
+
 export interface TextOptions {
   font?: PdfFont;
   size?: number;
@@ -154,6 +160,26 @@ export class PdfPage {
     const paint = options.fill && options.stroke ? 'B' : options.fill ? 'f' : 'S';
     this.ops.push(
       `q ${options.fill ? `${color(options.fill)} rg ` : ''}${options.stroke ? `${color(options.stroke)} RG ${num(options.lineWidth ?? 0.75)} w ` : ''}${path} ${paint} Q`,
+    );
+  }
+
+  /** Draws a path of straight and Bézier segments (points from the top-left). */
+  path(segments: PathSegment[], options: { fill?: Rgb; stroke?: Rgb; lineWidth?: number }) {
+    const y = (value: number) => num(this.height - value);
+    const d = segments
+      .map((s) =>
+        s[0] === 'M'
+          ? `${num(s[1])} ${y(s[2])} m`
+          : s[0] === 'L'
+            ? `${num(s[1])} ${y(s[2])} l`
+            : s[0] === 'C'
+              ? `${num(s[1])} ${y(s[2])} ${num(s[3])} ${y(s[4])} ${num(s[5])} ${y(s[6])} c`
+              : 'h',
+      )
+      .join(' ');
+    const paint = options.fill && options.stroke ? 'B' : options.fill ? 'f' : 'S';
+    this.ops.push(
+      `q 1 j ${options.fill ? `${color(options.fill)} rg ` : ''}${options.stroke ? `${color(options.stroke)} RG ${num(options.lineWidth ?? 0.75)} w ` : ''}${d} ${paint} Q`,
     );
   }
 
