@@ -518,9 +518,6 @@ model Organization {
   openingBalanceDate DateTime? @map("opening_balance_date") @db.Date
   /// Where its supplies are made; VAT201 reports Box 1 by emirate.
   emirate            Emirate   @default(DUBAI)
-  /// SHA-256 of the secret in the workshop TV link (/display/<token>). Null:
-  /// no TV link is active. Only the hash is kept; a new link replaces it.
-  displayTokenHash   String?   @unique @map("display_token_hash")
   isActive           Boolean   @default(true) @map("is_active")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz

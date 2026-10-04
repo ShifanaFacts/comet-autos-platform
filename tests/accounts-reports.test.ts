@@ -286,7 +286,13 @@ describe('reports', () => {
   });
 
   test('a section the role does not cover is not produced', async () => {
-    const report = await getWorkshopReport(a.viewer, { period: 'month' });
+    // Only a role given reports opens the report at all.
+    await assert.rejects(getWorkshopReport(a.viewer, { period: 'month' }), AuthError);
+    const withReports = {
+      ...a.viewer,
+      orgWidePermissions: new Set([...a.viewer.orgWidePermissions, 'reports.view']),
+    };
+    const report = await getWorkshopReport(withReports, { period: 'month' });
     assert.equal(report.sales, null, 'the viewer has no invoice.view');
     assert.ok(report.workshop, 'but may see the workshop');
     assert.ok(report.parts);

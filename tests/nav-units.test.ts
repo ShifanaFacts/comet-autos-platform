@@ -103,6 +103,13 @@ describe('the sidebar sections', () => {
     }
   });
 
+  test('every menu item is shown by a permission — except the home page and the employee self-service page', () => {
+    const open = NAV_GROUPS.flatMap((group) => group.items)
+      .filter((item) => !item.permission)
+      .map((item) => `${item.href}${item.forEmployees ? ' (employees)' : ''}`);
+    assert.deepEqual(open, ['/', '/my-work (employees)']);
+  });
+
   test('pages sit in the section of their module; only Finance has sub-sections', () => {
     assert.equal(sectionOf('/job-cards'), 'Workshop');
     assert.equal(sectionOf('/finance/invoices'), 'Sales');

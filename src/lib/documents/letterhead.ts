@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getBrand } from '@/lib/brand/brand';
 
@@ -28,6 +29,8 @@ export interface Letterhead extends Omit<LetterheadDetails, 'filePrefix'> {
 }
 
 export async function getLetterheadDetails(user: AuthenticatedUser): Promise<LetterheadDetails> {
+  // The letterhead is part of the workshop settings.
+  requirePermission(user, 'settings.view');
   const [organization, brand] = await Promise.all([
     prisma.organization.findUnique({
       where: { id: user.organizationId },
