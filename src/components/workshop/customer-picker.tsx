@@ -9,6 +9,7 @@ import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { searchCustomersAction } from '@/app/(app)/customers/search-action';
 import type { CustomerOption, PickerVehicle } from '@/lib/customers/picker';
 import { cn } from '@/lib/utils';
+import { NewCustomerDialog } from '@/components/workshop/new-customer-dialog';
 
 /*
  * Who a document is for. The customer is the one thing every quotation and
@@ -39,6 +40,8 @@ export function CustomerPicker({
   const [results, setResults] = useState<CustomerOption[]>([]);
   const [searchedFor, setSearchedFor] = useState('');
   const [loading, setLoading] = useState(false);
+  /** The "new customer" popup, open with what was searched for. */
+  const [adding, setAdding] = useState<string | null>(null);
   const trimmed = query.trim();
 
   useEffect(() => {
@@ -112,8 +115,8 @@ export function CustomerPicker({
           )}
           {vehicleId === '' ? (
             <p className="text-xs text-muted-foreground">
-              Without a vehicle the document still saves, prints and takes payment — only the
-              secure customer link needs a registration number to check against.
+              Without a vehicle the document still saves, prints and takes payment — only the secure
+              customer link needs a registration number to check against.
             </p>
           ) : null}
         </fieldset>
@@ -173,6 +176,14 @@ export function CustomerPicker({
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+        <span>Not on file yet?</span>
+        <Button type="button" variant="outline" className="h-11" onClick={() => setAdding(trimmed)}>
+          <UserPlus />
+          Add new customer
+        </Button>
+      </div>
+
       {visible.length > 0 ? (
         <ul className="flex flex-col divide-y divide-border overflow-hidden rounded-xl border border-border">
           {visible.map((customer) => (
@@ -203,24 +214,36 @@ export function CustomerPicker({
           ))}
         </ul>
       ) : trimmed.length >= 2 && !loading && searchedFor === trimmed ? (
-        <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-          No customer matches “{trimmed}”.
-        </p>
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+          <p>No customer matches “{trimmed}”.</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11"
+            onClick={() => setAdding(trimmed)}
+          >
+            <UserPlus />
+            Add “{trimmed}” as a new customer
+          </Button>
+        </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-        <span>A new customer?</span>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11"
-          nativeButton={false}
-          render={<Link href="/customers/new" />}
-        >
-          <UserPlus />
-          New customer
-        </Button>
-      </div>
+      {/* A short popup, never a new page: what was typed on the document stays. */}
+      {adding !== null ? (
+        <NewCustomerDialog
+          query={adding}
+          onClose={() => setAdding(null)}
+          onCreated={(customer) => {
+            setAdding(null);
+            setQuery('');
+            onChange({
+              customer,
+              vehicleId: customer.vehicles.length === 1 ? customer.vehicles[0].id : '',
+              jobCardId: '',
+            });
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -281,7 +304,9 @@ function VehicleChoice({
         <span className="truncate text-sm font-medium">
           {vehicle.make} {vehicle.model}
         </span>
-        <span className="truncate text-xs text-muted-foreground">{vehicle.year ?? 'Year not recorded'}</span>
+        <span className="truncate text-xs text-muted-foreground">
+          {vehicle.year ?? 'Year not recorded'}
+        </span>
       </span>
     </button>
   );

@@ -4,6 +4,7 @@ import type { PurchaseStatus } from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { hasPermission, requirePermission } from '@/lib/auth/authorize';
+import { loadPartOptions } from '@/lib/inventory/part-options';
 import { writeAuditLog } from '@/lib/audit';
 import { allocateDocumentNumber } from '@/lib/numbering';
 import { DomainError, NotFoundError } from '@/lib/errors';
@@ -1139,31 +1140,12 @@ export async function getPurchaseFormOptions(user: AuthenticatedUser) {
       orderBy: { name: 'asc' },
       select: { id: true, name: true },
     }),
-    prisma.part.findMany({
-      where: { organizationId: user.organizationId, isActive: true },
-      orderBy: { name: 'asc' },
-      select: {
-        id: true,
-        sku: true,
-        name: true,
-        unitOfMeasure: true,
-        defaultCostPrice: true,
-        defaultTaxRate: true,
-        preferredSupplierId: true,
-      },
-    }),
+    loadPartOptions(user),
   ]);
   return {
     suppliers,
-    parts: parts.map((p) => ({
-      id: p.id,
-      sku: p.sku,
-      name: p.name,
-      unit: p.unitOfMeasure,
-      cost: p.defaultCostPrice?.toString() ?? '',
-      taxRate: p.defaultTaxRate?.toString() ?? '',
-      supplierId: p.preferredSupplierId,
-    })),
+    parts,
+    canCreateParts: hasPermission(user, 'inventory.create'),
     defaultVat: await resolveDefaultVatRate(user.organizationId),
     taxCodes: await getTaxCodeOptions(user.organizationId, 'purchases'),
   };

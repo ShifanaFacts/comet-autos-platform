@@ -13,11 +13,12 @@ const SECURITY_HEADERS = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   // Other sites see only our domain, never a page path or a customer link.
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  // Only this site may ask for the camera (photos); nothing may ask for
-  // the microphone, location, payments or USB devices.
+  // Only this site may ask for the camera (photos), the microphone (spoken
+  // tasks and notes) and the location (checking in at the workshop); nothing
+  // may ask for payments or USB devices.
   {
     key: 'Permissions-Policy',
-    value: 'camera=(self), microphone=(), geolocation=(), payment=(), usb=()',
+    value: 'camera=(self), microphone=(self), geolocation=(self), payment=(), usb=()',
   },
   { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
 ];

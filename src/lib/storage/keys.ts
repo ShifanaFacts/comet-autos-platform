@@ -13,6 +13,7 @@ import { localDateString } from '@/lib/format';
  *   comet-autos/receipts/2026-09/…     files kept with receipts and payments
  *   comet-autos/job-photos/2026-09/…   photos taken on a job
  *   comet-autos/signatures/2026-09/…   customer signatures
+ *   comet-autos/team/2026-09/…         photos and voice notes on staff tasks
  *   comet-autos/accounts/2026-09/…     journals, fixed assets, payroll, VAT
  *   comet-autos/other/2026-09/…        anything else
  *
@@ -22,7 +23,14 @@ import { localDateString } from '@/lib/format';
  */
 
 export type StorageFolder =
-  'bills' | 'invoices' | 'receipts' | 'job-photos' | 'signatures' | 'accounts' | 'other';
+  | 'bills'
+  | 'invoices'
+  | 'receipts'
+  | 'job-photos'
+  | 'signatures'
+  | 'team'
+  | 'accounts'
+  | 'other';
 
 /** The top folder. Another workshop on the same storage account sets its own. */
 const root = () =>

@@ -6,6 +6,7 @@ import { runAction, toClientResult } from '@/lib/action';
 import type { ActionResult } from '@/lib/errors';
 import { formDataToObject } from '@/lib/form-data';
 import { clockIn, clockOut, markAttendance } from '@/lib/hr/attendance';
+import { reviewAttendance } from '@/lib/hr/self-attendance';
 
 /*
  * Server actions for attendance. Each re-reads the session and hands to the
@@ -48,5 +49,19 @@ export async function markAttendanceAction(
     markAttendance(user, employeeId, formDataToObject(formData)),
   );
   if (result.ok) refresh(employeeId);
+  return toClientResult(result);
+}
+
+/** Confirms a missed or reported check-out, or sets the time it should have been. */
+export async function reviewAttendanceAction(
+  attendanceId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() =>
+    reviewAttendance(user, attendanceId, formDataToObject(formData)),
+  );
+  if (result.ok) refresh();
   return toClientResult(result);
 }

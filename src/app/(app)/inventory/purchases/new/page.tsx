@@ -43,6 +43,7 @@ export default async function NewPurchasePage({
         <ScanPurchase
           action={createPurchaseAction}
           parts={options.parts}
+          canCreateParts={options.canCreateParts}
           suppliers={options.suppliers}
           defaultVat={options.defaultVat}
           taxCodes={options.taxCodes}

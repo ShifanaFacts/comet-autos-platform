@@ -1,5 +1,6 @@
 'use client';
 
+import type { PartCatalog } from '@/lib/inventory/part-options';
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import { useState } from 'react';
 import Link from 'next/link';
@@ -32,6 +33,7 @@ export function EditInvoiceForm({
   defaultVatRate,
   incomeAccounts,
   taxCodes,
+  catalog,
   rounding: initialRounding = '',
 }: {
   invoiceId: string;
@@ -49,6 +51,8 @@ export function EditInvoiceForm({
   defaultVatRate: string;
   /** The sales tax codes a line can be given. */
   taxCodes?: TaxCodeOption[];
+  /** The inventory, for picking a part on a Parts line. */
+  catalog?: PartCatalog;
 }) {
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
     (prev, formData) => updateInvoiceAction(invoiceId, prev, formData),
@@ -77,6 +81,7 @@ export function EditInvoiceForm({
           defaultVatRate={defaultVatRate}
           incomeAccounts={incomeAccounts}
           taxCodes={taxCodes}
+          catalog={catalog}
           rounding={rounding}
           onRoundingChange={setRounding}
         />

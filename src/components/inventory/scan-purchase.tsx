@@ -55,6 +55,7 @@ function toInitial(draft: BillDraft, fallback: PurchaseFormInitial | undefined, 
 export function ScanPurchase({
   action,
   parts,
+  canCreateParts,
   suppliers,
   defaultVat,
   taxCodes,
@@ -67,6 +68,8 @@ export function ScanPurchase({
   /** The usual create action, used when nothing was scanned. */
   action: (prev: ActionResult, formData: FormData) => Promise<ActionResult>;
   parts: PurchasePart[];
+  /** Whether a missing part can be added from the line picker. */
+  canCreateParts?: boolean;
   suppliers: { id: string; name: string }[];
   defaultVat: string;
   taxCodes: TaxCodeOption[];
@@ -82,6 +85,7 @@ export function ScanPurchase({
   const scanned = phase.name === 'ready' ? phase : null;
   const form = {
     parts,
+    canCreateParts,
     suppliers,
     defaultVat,
     taxCodes,

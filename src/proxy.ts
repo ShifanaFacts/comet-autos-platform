@@ -22,6 +22,8 @@ function contentSecurityPolicy(nonce: string) {
     "style-src 'self' 'unsafe-inline'",
     // blob: for photo previews before upload, data: for signatures.
     "img-src 'self' blob: data:",
+    // Voice notes: played from this site, or from the recording before it is sent.
+    "media-src 'self' blob:",
     "font-src 'self' data:",
     "connect-src 'self'",
     "worker-src 'self'",
@@ -52,7 +54,9 @@ export function proxy(request: NextRequest) {
 
   const isPublicRoute =
     request.nextUrl.pathname.startsWith('/login') ||
-    request.nextUrl.pathname.startsWith('/customer/');
+    request.nextUrl.pathname.startsWith('/customer/') ||
+    // The waiting-area TV: its link carries its own secret (lib/workshop/live-board).
+    request.nextUrl.pathname.startsWith('/display/');
 
   if (!isPublicRoute && !request.cookies.has(SESSION_COOKIE_NAME)) {
     // Come back to the same page after signing in.

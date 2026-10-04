@@ -42,6 +42,9 @@ const WIN_ANSI_EXTRA: Record<string, { code: number; regular: number; bold: numb
   '·': { code: 183, regular: 278, bold: 278 },
   '×': { code: 215, regular: 584, bold: 584 },
   '°': { code: 176, regular: 400, bold: 400 },
+  '¼': { code: 188, regular: 834, bold: 834 },
+  '½': { code: 189, regular: 834, bold: 834 },
+  '¾': { code: 190, regular: 834, bold: 834 },
 };
 
 /** Replaces what the built-in fonts can't draw: non-breaking spaces become spaces, anything outside WinAnsi "?". */

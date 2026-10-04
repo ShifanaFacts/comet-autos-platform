@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { getTaxCodeOptions } from '@/lib/accounting/tax-codes';
+import { getPartCatalog } from '@/lib/inventory/part-options';
 import { hasPermission, requirePermission, requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
 import { resolveDefaultVatRate } from '@/lib/tax';
@@ -107,6 +108,7 @@ export default async function NewInvoicePage({
           quotation={quotation}
           defaultVatRate={await resolveDefaultVatRate(user.organizationId)}
           taxCodes={await getTaxCodeOptions(user.organizationId, 'sales')}
+          catalog={await getPartCatalog(user)}
           modes={await getPaymentModeOptions(user.organizationId, 'receipts')}
           initialPayNow={params.pay === 'now'}
           canTakePayment={hasPermission(user, 'payment.create', {

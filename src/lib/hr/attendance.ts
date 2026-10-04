@@ -315,7 +315,12 @@ export async function clockIn(user: AuthenticatedUser, employeeId: string, rawIn
 
     const record = await tx.attendance.upsert({
       where: { employeeId_attendanceDate: { employeeId: employee.id, attendanceDate: date } },
-      update: { clockInAt: at, status: 'PRESENT', notes: emptyToNull(input.notes) ?? undefined },
+      update: {
+        clockInAt: at,
+        status: 'PRESENT',
+        clockInMethod: 'STAFF',
+        notes: emptyToNull(input.notes) ?? undefined,
+      },
       create: {
         organizationId: user.organizationId,
         branchId: employee.branchId,
@@ -323,6 +328,7 @@ export async function clockIn(user: AuthenticatedUser, employeeId: string, rawIn
         attendanceDate: date,
         clockInAt: at,
         status: 'PRESENT',
+        clockInMethod: 'STAFF',
         notes: emptyToNull(input.notes),
       },
       select: recordSelect,
@@ -371,7 +377,13 @@ export async function clockOut(user: AuthenticatedUser, employeeId: string, rawI
 
     const record = await tx.attendance.update({
       where: { id: existing.id },
-      data: { clockOutAt: at, notes: emptyToNull(input.notes) ?? undefined },
+      data: {
+        clockOutAt: at,
+        clockOutMethod: 'STAFF',
+        // Closed by someone at the workshop: nothing left to review.
+        needsReview: false,
+        notes: emptyToNull(input.notes) ?? undefined,
+      },
       select: recordSelect,
     });
     await audit(
@@ -417,7 +429,13 @@ export async function markAttendance(
       update: {
         status: input.status,
         notes: emptyToNull(input.notes),
-        ...(worked ? {} : { clockInAt: null, clockOutAt: null }),
+        // A day recorded by hand is a decision, not something to review.
+        needsReview: false,
+        reviewedAt: new Date(),
+        reviewedByUserId: user.id,
+        ...(worked
+          ? {}
+          : { clockInAt: null, clockOutAt: null, clockInMethod: null, clockOutMethod: null }),
       },
       create: {
         organizationId: user.organizationId,

@@ -458,6 +458,8 @@ enum DocumentCategory {
   SIGNATURE
   /// A supplier's bill or receipt kept against an expense or purchase.
   SUPPLIER_BILL
+  /// A spoken note kept with a task (only when the speaker chose to keep it).
+  VOICE_NOTE
 }
 
 /// Where in the job a photo was taken.
@@ -516,6 +518,9 @@ model Organization {
   openingBalanceDate DateTime? @map("opening_balance_date") @db.Date
   /// Where its supplies are made; VAT201 reports Box 1 by emirate.
   emirate            Emirate   @default(DUBAI)
+  /// SHA-256 of the secret in the workshop TV link (/display/<token>). Null:
+  /// no TV link is active. Only the hash is kept; a new link replaces it.
+  displayTokenHash   String?   @unique @map("display_token_hash")
   isActive           Boolean   @default(true) @map("is_active")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
@@ -586,22 +591,37 @@ model Organization {
 
   ownerReimbursements OwnerReimbursement[]
 
+  tasks       Task[]
+  taskUpdates TaskUpdate[]
+
+  designations Designation[]
+
   @@map("organizations")
 }
 
 model Branch {
-  id             String   @id @default(uuid(7)) @db.Uuid
-  organizationId String   @map("organization_id") @db.Uuid
-  code           String
-  name           String
-  address        String?
-  phone          String?
-  isActive       Boolean  @default(true) @map("is_active")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id              String   @id @default(uuid(7)) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  code            String
+  name            String
+  address         String?
+  phone           String?
+  /// The workshop's position. Staff can only check themselves in or out
+  /// within `geofenceRadiusM` metres of it. Null: not set yet, so nobody can
+  /// check themselves in (staff with attendance rights still can for them).
+  latitude        Decimal? @db.Decimal(9, 6)
+  longitude       Decimal? @db.Decimal(9, 6)
+  geofenceRadiusM Int      @default(150) @map("geofence_radius_m")
+  /// When the working day ends, "HH:MM" in Dubai time. A day left open past
+  /// it is closed at this time and flagged for review.
+  shiftEndTime    String   @default("20:00") @map("shift_end_time")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
+  tasks                   Task[]
   primaryUsers            User[]
   appointments            Appointment[]
   jobCards                JobCard[]
@@ -628,17 +648,24 @@ model Branch {
 }
 
 model User {
-  id              String    @id @default(uuid(7)) @db.Uuid
-  organizationId  String    @map("organization_id") @db.Uuid
-  primaryBranchId String?   @map("primary_branch_id") @db.Uuid
-  email           String
-  passwordHash    String    @map("password_hash")
-  fullName        String    @map("full_name")
-  phone           String?
-  isActive        Boolean   @default(true) @map("is_active")
-  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  primaryBranchId    String?   @map("primary_branch_id") @db.Uuid
+  /// Optional: a login made for an employee signs in with their employee
+  /// code (`username`) and may have no email at all.
+  email              String?
+  /// The sign-in name of an employee's login: their employee code, upper case.
+  username           String?
+  passwordHash       String    @map("password_hash")
+  /// The password was set by someone else (an employee's first password is
+  /// their code): the next sign-in must choose their own before anything else.
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  fullName           String    @map("full_name")
+  phone              String?
+  isActive           Boolean   @default(true) @map("is_active")
+  lastLoginAt        DateTime? @map("last_login_at") @db.Timestamptz
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   primaryBranch Branch?      @relation(fields: [organizationId, primaryBranchId], references: [organizationId, id], onDelete: Restrict)
@@ -696,8 +723,14 @@ model User {
   reimbursementsReceived OwnerReimbursement[] @relation("OwnerReimbursementPerson")
   reimbursementsRecorded OwnerReimbursement[] @relation("OwnerReimbursementRecordedBy")
 
+  createdTasks        Task[]       @relation("TaskCreatedBy")
+  completedTasks      Task[]       @relation("TaskCompletedBy")
+  taskUpdates         TaskUpdate[]
+  reviewedAttendances Attendance[] @relation("AttendanceReviewedBy")
+
   @@unique([organizationId, id])
   @@unique([organizationId, email])
+  @@unique([organizationId, username])
   @@index([organizationId])
   @@index([organizationId, primaryBranchId])
   @@map("users")
@@ -739,11 +772,38 @@ model Role {
 
   userRoles       UserRole[]
   rolePermissions RolePermission[]
+  designations    Designation[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, name])
   @@index([organizationId])
   @@map("roles")
+}
+
+/// A position in the workshop (Technician, Supervisor, Manager…), set up
+/// under HR. What it may do in the app is its role's permissions: an
+/// employee's login is given their designation's role, and moves to the new
+/// one when their designation changes. Never deleted, only made inactive.
+model Designation {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  description    String?
+  roleId         String?  @map("role_id") @db.Uuid
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  role         Role?        @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Restrict)
+
+  employees Employee[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([organizationId, roleId])
+  @@map("designations")
 }
 
 /// Global platform capability catalog. Deliberately has NO organization_id:
@@ -971,6 +1031,7 @@ model JobCard {
   advances      CustomerAdvance[]
   documents     Document[]
   signatures    Signature[]
+  tasks         Task[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, jobNumber])
@@ -2300,7 +2361,10 @@ model Employee {
   employeeCode    String    @map("employee_code")
   firstName       String    @map("first_name")
   lastName        String    @map("last_name")
+  /// Shown wherever the person is named; follows the designation's name
+  /// when one is chosen.
   jobTitle        String?   @map("job_title")
+  designationId   String?   @map("designation_id") @db.Uuid
   /// The employee's own contact details, independent of any system login:
   /// a technician who never signs in can still be reached.
   phone           String?
@@ -2315,6 +2379,7 @@ model Employee {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branch       Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
   user         User?        @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Restrict)
+  designation  Designation? @relation(fields: [organizationId, designationId], references: [organizationId, id], onDelete: Restrict)
 
   jobAssignments JobAssignment[]
   inspections    Inspection[]
@@ -2327,33 +2392,56 @@ model Employee {
   leaves         Leave[]
   salaries       Salary[]
   payrollItems   PayrollItem[]
+  tasks          Task[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, employeeCode])
   @@unique([organizationId, userId])
   @@index([organizationId])
   @@index([organizationId, branchId])
+  @@index([organizationId, designationId])
   @@map("employees")
 }
 
 model Attendance {
-  id             String           @id @default(uuid(7)) @db.Uuid
-  organizationId String           @map("organization_id") @db.Uuid
-  branchId       String           @map("branch_id") @db.Uuid
-  employeeId     String           @map("employee_id") @db.Uuid
-  attendanceDate DateTime         @map("attendance_date") @db.Date
-  clockInAt      DateTime?        @map("clock_in_at") @db.Timestamptz
-  clockOutAt     DateTime?        @map("clock_out_at") @db.Timestamptz
-  status         AttendanceStatus
-  notes          String?
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+  id                String           @id @default(uuid(7)) @db.Uuid
+  organizationId    String           @map("organization_id") @db.Uuid
+  branchId          String           @map("branch_id") @db.Uuid
+  employeeId        String           @map("employee_id") @db.Uuid
+  attendanceDate    DateTime         @map("attendance_date") @db.Date
+  clockInAt         DateTime?        @map("clock_in_at") @db.Timestamptz
+  clockOutAt        DateTime?        @map("clock_out_at") @db.Timestamptz
+  status            AttendanceStatus
+  notes             String?
+  /// How each stamp was made, and — for a self check-in — where the phone
+  /// was: its position, how precise it said it was, and how far that is from
+  /// the workshop. Null on days recorded before the location lock.
+  clockInMethod     ClockMethod?     @map("clock_in_method")
+  clockInLatitude   Decimal?         @map("clock_in_latitude") @db.Decimal(9, 6)
+  clockInLongitude  Decimal?         @map("clock_in_longitude") @db.Decimal(9, 6)
+  clockInAccuracyM  Int?             @map("clock_in_accuracy_m")
+  clockInDistanceM  Int?             @map("clock_in_distance_m")
+  clockOutMethod    ClockMethod?     @map("clock_out_method")
+  clockOutLatitude  Decimal?         @map("clock_out_latitude") @db.Decimal(9, 6)
+  clockOutLongitude Decimal?         @map("clock_out_longitude") @db.Decimal(9, 6)
+  clockOutAccuracyM Int?             @map("clock_out_accuracy_m")
+  clockOutDistanceM Int?             @map("clock_out_distance_m")
+  /// A day whose check-out was not made at the workshop — closed
+  /// automatically at the shift end, or reported afterwards by the employee.
+  /// Stays true until someone with attendance.edit confirms or corrects it.
+  needsReview       Boolean          @default(false) @map("needs_review")
+  reviewedAt        DateTime?        @map("reviewed_at") @db.Timestamptz
+  reviewedByUserId  String?          @map("reviewed_by_user_id") @db.Uuid
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branch       Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
   employee     Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Restrict)
+  reviewedBy   User?        @relation("AttendanceReviewedBy", fields: [organizationId, reviewedByUserId], references: [organizationId, id], onDelete: Restrict)
 
   @@unique([employeeId, attendanceDate])
+  @@index([organizationId, needsReview])
   @@index([organizationId])
   @@index([organizationId, branchId, attendanceDate])
   @@map("attendances")
@@ -2558,16 +2646,22 @@ model Document {
   description      String?
   /// Who removed the file (soft delete — the stored file is kept).
   deletedByUserId  String?          @map("deleted_by_user_id") @db.Uuid
+  /// Task media (photos, voice notes): the task it belongs to, whether it was
+  /// added with the task itself (entityType "Task") or with an update on it
+  /// (entityType "TaskUpdate", entityId the update).
+  taskId           String?          @map("task_id") @db.Uuid
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
   uploadedBy   User         @relation("DocumentUploadedBy", fields: [organizationId, uploadedByUserId], references: [organizationId, id], onDelete: Restrict)
   jobCard      JobCard?     @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Restrict)
   deletedBy    User?        @relation("DocumentDeletedBy", fields: [organizationId, deletedByUserId], references: [organizationId, id], onDelete: Restrict)
+  task         Task?        @relation(fields: [organizationId, taskId], references: [organizationId, id], onDelete: Restrict)
   signature    Signature?
 
   @@unique([organizationId, id])
   @@index([organizationId, jobCardId, stage])
+  @@index([organizationId, taskId])
   @@index([organizationId])
   @@index([organizationId, entityType, entityId])
   @@index([organizationId, uploadedByUserId])
@@ -3065,4 +3159,123 @@ model CustomerAdvanceRefund {
   @@unique([organizationId, id])
   @@index([organizationId, advanceId])
   @@map("customer_advance_refunds")
+}
+
+// =============================================================================
+// TEAM — attendance methods and tasks
+// =============================================================================
+
+/// How an attendance stamp was made.
+enum ClockMethod {
+  /// The employee, on their own phone, inside the workshop's location lock.
+  SELF
+  /// Someone with attendance rights, for them.
+  STAFF
+  /// Closed by the system at the shift end: the day was left open.
+  AUTO
+  /// The employee said afterwards when they left (away from the workshop).
+  REPORTED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TaskUpdateKind {
+  /// A note, a photo or a voice note added to the task.
+  NOTE
+  /// The task moved between statuses (body: the optional comment).
+  STATUS
+  /// Its details, due date, priority or assignee were changed.
+  CHANGED
+  /// Moved to another day (body: the reason, which is required).
+  MOVED
+}
+
+/// One piece of work for one employee — given to them by someone with
+/// task.create (`isAssigned`), or their own to-do. An assigned task's
+/// title, due date, priority and assignee can only be changed by someone
+/// with task.edit: the employee works it, comments on it and closes it.
+///
+/// The text is kept exactly as written or as the employee confirmed it from
+/// speech, in the language it was spoken (`language`, a BCP-47 tag such as
+/// "ml-IN"); nothing is translated behind anyone's back.
+model Task {
+  id                 String       @id @default(uuid(7)) @db.Uuid
+  organizationId     String       @map("organization_id") @db.Uuid
+  branchId           String       @map("branch_id") @db.Uuid
+  assigneeEmployeeId String       @map("assignee_employee_id") @db.Uuid
+  title              String
+  details            String?
+  language           String?
+  isAssigned         Boolean      @default(false) @map("is_assigned")
+  priority           TaskPriority @default(NORMAL)
+  dueDate            DateTime?    @map("due_date") @db.Date
+  /// The day it was first due, kept when it is moved, and how often it was.
+  originalDueDate    DateTime?    @map("original_due_date") @db.Date
+  timesMoved         Int          @default(0) @map("times_moved")
+  /// Starred by the assignee so it stands out on their list — their own
+  /// marker, separate from the priority whoever gave the task chose.
+  highlighted        Boolean      @default(false)
+  jobCardId          String?      @map("job_card_id") @db.Uuid
+  status             TaskStatus   @default(TODO)
+  startedAt          DateTime?    @map("started_at") @db.Timestamptz
+  completedAt        DateTime?    @map("completed_at") @db.Timestamptz
+  completedByUserId  String?      @map("completed_by_user_id") @db.Uuid
+  cancelledAt        DateTime?    @map("cancelled_at") @db.Timestamptz
+  createdByUserId    String       @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  assignee     Employee     @relation(fields: [organizationId, assigneeEmployeeId], references: [organizationId, id], onDelete: Restrict)
+  jobCard      JobCard?     @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Restrict)
+  createdBy    User         @relation("TaskCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+  completedBy  User?        @relation("TaskCompletedBy", fields: [organizationId, completedByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  updates   TaskUpdate[]
+  documents Document[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, assigneeEmployeeId, status])
+  @@index([organizationId, status, dueDate])
+  @@index([organizationId, jobCardId])
+  @@map("tasks")
+}
+
+/// The task's history and conversation, oldest first. Append-only: an
+/// update is never edited, so what was said and when stays as it was.
+model TaskUpdate {
+  id             String         @id @default(uuid(7)) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  taskId         String         @map("task_id") @db.Uuid
+  authorUserId   String         @map("author_user_id") @db.Uuid
+  kind           TaskUpdateKind @default(NOTE)
+  body           String?
+  language       String?
+  fromStatus     TaskStatus?    @map("from_status")
+  toStatus       TaskStatus?    @map("to_status")
+  /// For CHANGED: what changed, as { field: [before, after] }.
+  changes        Json?
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  task         Task         @relation(fields: [organizationId, taskId], references: [organizationId, id], onDelete: Restrict)
+  author       User         @relation(fields: [organizationId, authorUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, taskId, createdAt])
+  @@map("task_updates")
 }
