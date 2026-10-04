@@ -21,6 +21,8 @@ export interface UserFormValues {
   id?: string;
   fullName: string;
   email: string;
+  /** The employee code a login made from HR signs in with; it may then have no email. */
+  username?: string | null;
   phone: string;
   primaryBranchId: string;
   roleIds: string[];
@@ -79,11 +81,15 @@ export function UserForm({
             name="email"
             type="email"
             inputMode="email"
-            required
+            required={!initial.username}
             autoComplete="email"
             defaultValue={initial.email}
             error={errors.email}
-            hint="They sign in with this."
+            hint={
+              initial.username
+                ? `Optional — they sign in with ${initial.username}, or with this email if given.`
+                : 'They sign in with this.'
+            }
             className={INPUT}
           />
         </div>

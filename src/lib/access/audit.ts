@@ -416,6 +416,14 @@ const RESOLVERS: Record<string, Resolver> = {
       }),
       (row) => ({ ref: row.fullName, href: `/settings/users/${row.id}` }),
     ),
+  Designation: async (organizationId, ids) =>
+    byId(
+      await prisma.designation.findMany({
+        where: { organizationId, id: { in: ids } },
+        select: { id: true, name: true },
+      }),
+      (row) => ({ ref: row.name, href: `/hr/designations/${row.id}` }),
+    ),
   Role: async (organizationId, ids) =>
     byId(
       await prisma.role.findMany({
@@ -494,6 +502,7 @@ const NOUNS: Record<string, string> = {
   Supplier: 'supplier',
   Employee: 'employee',
   User: 'user',
+  Designation: 'designation',
   Role: 'role',
   FixedAsset: 'fixed asset',
   ChartOfAccount: 'account',

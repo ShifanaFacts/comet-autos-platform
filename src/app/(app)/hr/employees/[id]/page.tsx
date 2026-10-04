@@ -15,6 +15,7 @@ import { StatusPill } from '@/components/shared/status-pill';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { InlineForm } from '@/components/shared/inline-form';
 import { SalaryForm } from '@/components/hr/payroll-forms';
+import { ResetLoginButton } from '@/components/hr/reset-login-button';
 
 export default async function EmployeePage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -31,6 +32,8 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
   const { employee, openJobs, recentLabour, counts } = detail;
   const canManage = hasPermission(user, 'employee.edit');
   const canSetSalary = hasPermission(user, 'payroll.create');
+  const canResetLogin =
+    hasPermission(user, 'user.edit') && !!employee.user && employee.user.id !== user.id;
   // Pay is shown only to those who prepare or approve payroll.
   const pay = canSeePay(user) ? await getSalaryHistory(user, employee.id) : null;
 
@@ -153,6 +156,23 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
                   <dd className="font-mono">{employee.employeeCode}</dd>
                 </div>
                 <div className="flex flex-col gap-1">
+                  <dt className="text-xs font-medium text-muted-foreground">Designation</dt>
+                  <dd>
+                    {employee.designation ? (
+                      <Link
+                        href={`/hr/designations/${employee.designation.id}`}
+                        className="hover:underline"
+                      >
+                        {employee.designation.name}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">
+                        {employee.jobTitle ? `${employee.jobTitle} (no designation set)` : 'Not set'}
+                      </span>
+                    )}
+                  </dd>
+                </div>
+                <div className="flex flex-col gap-1">
                   <dt className="text-xs font-medium text-muted-foreground">Contact</dt>
                   <dd>
                     {employee.phone || employee.email ? (
@@ -197,12 +217,30 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
                   <dt className="text-xs font-medium text-muted-foreground">System login</dt>
                   <dd>
                     {employee.user ? (
-                      <>
-                        {employee.user.email}
-                        {employee.user.phone ? (
-                          <span className="block text-muted-foreground">{employee.user.phone}</span>
+                      <div className="flex flex-col gap-1">
+                        {employee.user.username ? (
+                          <span>
+                            Signs in as{' '}
+                            <span className="font-mono font-medium">{employee.user.username}</span>
+                          </span>
                         ) : null}
-                      </>
+                        {employee.user.email ? (
+                          <span className="break-all">{employee.user.email}</span>
+                        ) : null}
+                        {employee.user.phone ? (
+                          <span className="text-muted-foreground">{employee.user.phone}</span>
+                        ) : null}
+                        {!employee.user.isActive ? (
+                          <StatusPill tone="neutral">Login switched off</StatusPill>
+                        ) : employee.user.mustChangePassword ? (
+                          <span className="text-xs text-muted-foreground">
+                            {employee.user.lastLoginAt
+                              ? 'Has not chosen their own password yet.'
+                              : 'Not signed in yet. First password: their employee code.'}
+                          </span>
+                        ) : null}
+                        {canResetLogin ? <ResetLoginButton employeeId={employee.id} /> : null}
+                      </div>
                     ) : (
                       <span className="text-muted-foreground">
                         None — recorded against their work without signing in

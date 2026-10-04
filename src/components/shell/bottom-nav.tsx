@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardList, FileText, Home, Menu, Receipt, type LucideIcon } from 'lucide-react';
+import { ClipboardList, FileText, Home, ListTodo, Menu, Receipt, type LucideIcon } from 'lucide-react';
 import { MobileNav } from '@/components/shell/mobile-nav';
 import type { Brand } from '@/lib/brand/brand';
 import { cn } from '@/lib/utils';
@@ -22,6 +22,7 @@ interface Tab {
  */
 const TABS: Tab[] = [
   { label: 'Home', href: '/', icon: Home },
+  { label: 'My work', href: '/my-work', icon: ListTodo, requires: '/my-work' },
   { label: 'Job cards', href: '/job-cards', icon: ClipboardList, requires: '/job-cards' },
   { label: 'Quotes', href: '/quotations', icon: FileText, requires: '/quotations' },
   { label: 'Invoices', href: '/finance/invoices', icon: Receipt, requires: '/finance/invoices' },

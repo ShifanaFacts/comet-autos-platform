@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Languages, Loader2, Mic, Square, Trash2, TriangleAlert } from 'lucide-react';
 import { CONTROL } from '@/components/forms/control';
 import { SPEECH_LANGUAGES, isRtl, languageLabel } from '@/lib/team/labels';
@@ -109,7 +109,6 @@ export function SpeechField({
   const [interim, setInterim] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const [keepVoice, setKeepVoice] = useState(false);
-  const [voiceUrl, setVoiceUrl] = useState<string | null>(null);
 
   const recognition = useRef<Recognition | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -147,15 +146,9 @@ export function SpeechField({
     [],
   );
 
-  useEffect(() => {
-    if (!value.voice) {
-      setVoiceUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(value.voice);
-    setVoiceUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [value.voice]);
+  // The recording, playable before it is sent.
+  const voiceUrl = useMemo(() => (value.voice ? URL.createObjectURL(value.voice) : null), [value.voice]);
+  useEffect(() => () => void (voiceUrl && URL.revokeObjectURL(voiceUrl)), [voiceUrl]);
 
   function update(patch: Partial<SpeechFieldValue>) {
     onChange({ ...latest.current, ...patch });

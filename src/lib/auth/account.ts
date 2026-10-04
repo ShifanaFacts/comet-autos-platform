@@ -103,7 +103,10 @@ export async function changePassword(
   const keep = currentSessionToken ? hashSessionToken(currentSessionToken) : null;
 
   return prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+    await tx.user.update({
+      where: { id: user.id },
+      data: { passwordHash, mustChangePassword: false },
+    });
     const signedOut = await tx.session.updateMany({
       where: { userId: user.id, revokedAt: null, ...(keep ? { tokenHash: { not: keep } } : {}) },
       data: { revokedAt: new Date() },
@@ -117,5 +120,70 @@ export async function changePassword(
       metadata: { otherSessionsSignedOut: signedOut.count },
     });
     return { otherSessionsSignedOut: signedOut.count };
+  });
+}
+
+const firstPasswordSchema = z
+  .object({
+    newPassword: z
+      .string({ error: 'Choose a password.' })
+      .min(8, 'Use at least 8 characters.')
+      .max(128, 'Use at most 128 characters.')
+      .refine(
+        (value) => /[A-Za-z]/.test(value) && /\d/.test(value),
+        'Use at least one letter and one number.',
+      ),
+    confirmPassword: z.string({ error: 'Type the password again.' }),
+  })
+  .refine((value) => value.newPassword === value.confirmPassword, {
+    path: ['confirmPassword'],
+    message: 'The two passwords are different — type it again.',
+  });
+
+/**
+ * The first sign-in on a password someone else set — an employee's login
+ * starts with their employee code as its password. They have just proved it
+ * by signing in, so only the new one is asked for. It may not be the old one
+ * (nor, then, the employee code), and every other session is signed out.
+ */
+export async function setOwnPassword(
+  user: AuthenticatedUser,
+  rawInput: unknown,
+  currentSessionToken: string | null,
+) {
+  const input = parseInput(firstPasswordSchema, rawInput);
+  const account = await prisma.user.findUniqueOrThrow({
+    where: { id: user.id },
+    select: { passwordHash: true, mustChangePassword: true },
+  });
+  if (!account.mustChangePassword) {
+    throw new DomainError('Your password is already your own. Change it from your account page.');
+  }
+  if (await verifyPassword(input.newPassword, account.passwordHash)) {
+    throw new DomainError(
+      'Choose a password different from the one you were given.',
+      'newPassword',
+    );
+  }
+  const passwordHash = await hashPassword(input.newPassword);
+  const keep = currentSessionToken ? hashSessionToken(currentSessionToken) : null;
+
+  return prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: user.id },
+      data: { passwordHash, mustChangePassword: false },
+    });
+    const signedOut = await tx.session.updateMany({
+      where: { userId: user.id, revokedAt: null, ...(keep ? { tokenHash: { not: keep } } : {}) },
+      data: { revokedAt: new Date() },
+    });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      actorUserId: user.id,
+      action: 'user.password_changed',
+      entityType: 'User',
+      entityId: user.id,
+      metadata: { firstPassword: true, otherSessionsSignedOut: signedOut.count },
+    });
   });
 }

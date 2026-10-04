@@ -16,7 +16,8 @@ import { phoneCore } from '@/lib/normalize';
  * limits, the safe return address — are tested directly.
  */
 
-export const INVALID_CREDENTIALS_MESSAGE = 'Email/mobile number or password is incorrect.';
+export const INVALID_CREDENTIALS_MESSAGE =
+  'Email, mobile number, employee code or password is incorrect.';
 
 // Five wrong passwords for one account locks it for 15 minutes. The looser
 // per-address limit catches one device trying many accounts, without
@@ -24,14 +25,27 @@ export const INVALID_CREDENTIALS_MESSAGE = 'Email/mobile number or password is i
 const ACCOUNT_LIMIT = { maxFailures: 5, windowMinutes: 15, lockoutMinutes: 15 };
 const ADDRESS_LIMIT = { maxFailures: 30, windowMinutes: 15, lockoutMinutes: 15 };
 
+/** Has letters and no @: an employee code (EMP-004), not an email or a phone number. */
+const looksLikeCode = (identifier: string) =>
+  !identifier.includes('@') && /[a-z]/i.test(identifier);
+
 /**
- * Finds the active user by email, or by mobile number (compared on its
- * national digits, so "050 123 4567" and "+971501234567" match). The workshop
- * is a single-business deployment, so there is exactly one organization.
+ * Finds the active user by email, by employee code (an employee's login signs
+ * in with it), or by mobile number (compared on its national digits, so
+ * "050 123 4567" and "+971501234567" match). The workshop is a
+ * single-business deployment, so there is exactly one organization.
  */
 async function findUser(identifier: string) {
   if (identifier.includes('@')) {
     return prisma.user.findFirst({ where: { email: identifier.toLowerCase(), isActive: true } });
+  }
+  if (looksLikeCode(identifier)) {
+    const byCode = await prisma.user.findMany({
+      where: { username: { equals: identifier, mode: 'insensitive' }, isActive: true },
+      take: 2,
+    });
+    // Ambiguous codes are refused rather than guessed.
+    return byCode.length === 1 ? byCode[0] : null;
   }
   const core = phoneCore(identifier);
   if (core.length < 7) return null;
@@ -59,13 +73,21 @@ export async function authenticate(
 ): Promise<SignInResult> {
   const identifier = rawIdentifier.trim();
   if (!identifier || !password) {
-    return { ok: false, error: 'Enter your email or mobile number and your password.' };
+    return {
+      ok: false,
+      error: 'Enter your email, mobile number or employee code, and your password.',
+    };
   }
 
   // Phone numbers are counted by their digits, so spacing can't reset the count.
+  // Codes are counted however they are capitalised.
   const accountKey = throttleKey(
     'login',
-    identifier.includes('@') ? identifier : phoneCore(identifier) || identifier,
+    identifier.includes('@')
+      ? identifier
+      : looksLikeCode(identifier)
+        ? identifier.toUpperCase()
+        : phoneCore(identifier) || identifier,
   );
   // An unknown address would pool every caller into one count; skip that rule.
   const rules: ThrottleRule[] = [

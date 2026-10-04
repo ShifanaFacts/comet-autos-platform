@@ -37,7 +37,7 @@ export function LoginForm({ next }: { next: string }) {
 
       <div className="flex flex-col gap-2">
         <Label htmlFor="identifier" className="text-sm font-medium">
-          Email or mobile number
+          Email, mobile or employee code
         </Label>
         <input
           id="identifier"
@@ -50,7 +50,7 @@ export function LoginForm({ next }: { next: string }) {
           spellCheck={false}
           required
           autoFocus
-          placeholder="Email or mobile, e.g. 050 123 4567"
+          placeholder="e.g. 050 123 4567 or EMP-004"
           defaultValue={state.identifier}
           key={state.identifier ?? 'empty'}
           readOnly={isPending}

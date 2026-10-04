@@ -39,6 +39,7 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
             lastName: employee.lastName,
             employeeCode: employee.employeeCode,
             jobTitle: employee.jobTitle,
+            designationId: employee.designationId,
             phone: employee.phone,
             email: employee.email,
             department: employee.department,

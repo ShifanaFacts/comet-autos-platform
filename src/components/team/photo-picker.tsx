@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Camera, ImagePlus, X } from 'lucide-react';
 import { prepareImage } from '@/lib/team/client';
 
@@ -20,13 +20,9 @@ export function PhotoPicker({
 }) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
-  const [urls, setUrls] = useState<string[]>([]);
-
-  useEffect(() => {
-    const next = files.map((file) => URL.createObjectURL(file));
-    setUrls(next);
-    return () => next.forEach((url) => URL.revokeObjectURL(url));
-  }, [files]);
+  // Previews for the chosen photos, let go of when the choice changes.
+  const urls = useMemo(() => files.map((file) => URL.createObjectURL(file)), [files]);
+  useEffect(() => () => urls.forEach((url) => URL.revokeObjectURL(url)), [urls]);
 
   async function add(list: FileList | null) {
     if (!list?.length) return;

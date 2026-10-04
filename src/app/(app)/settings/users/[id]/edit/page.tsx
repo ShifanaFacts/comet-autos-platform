@@ -40,7 +40,8 @@ export default async function EditUserPage({ params }: { params: Promise<{ id: s
           initial={{
             id: detail.id,
             fullName: detail.fullName,
-            email: detail.email,
+            email: detail.email ?? '',
+            username: detail.username,
             phone: detail.phone ?? '',
             primaryBranchId: detail.primaryBranch?.id ?? '',
             roleIds: detail.roles.map((role) => role.id),
