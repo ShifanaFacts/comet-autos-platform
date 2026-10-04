@@ -155,13 +155,12 @@ describe('customer documents and sharing', () => {
     const decoded = decodeURIComponent(shared.whatsappUrl.split('?text=')[1]);
     assert.equal(decoded, shared.message);
     for (const expected of [
-      'Hello Ahmed Al Marzooqi,',
-      'Your quotation from Mohammed Mowla Auto Garage is ready.',
-      'Vehicle: Toyota Camry',
-      `Registration: ${plate}`,
-      'Total: AED 897.75',
+      'Hello Ahmed Al Marzooqi 👋',
+      'Your quotation from *Mohammed Mowla Auto Garage* is ready.',
+      `🚗 *Toyota Camry* · ${plate}`,
+      '💰 Total *AED 897.75*',
       shared.link,
-      '👉 *Tap to view and approve your quotation:*',
+      '👇 *Tap below to view and approve*',
     ]) {
       assert.ok(shared.message.includes(expected), `message contains ${expected}`);
     }
@@ -421,12 +420,12 @@ describe('customer documents and sharing', () => {
     assert.match(shared.link, /\/customer\/invoice\/[A-Za-z0-9_-]{43}$/);
     const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
     for (const expected of [
-      'Your invoice from Mohammed Mowla Auto Garage is ready.',
-      `Invoice: ${invoice.invoiceNumber}`,
-      'Total: AED 897.75',
-      'Paid: AED 897.75',
-      'Balance: AED 0.00',
-      '👉 *View your invoice:*',
+      'Thank you for choosing *Mohammed Mowla Auto Garage*. Your invoice is ready.',
+      `🧾 Invoice *${invoice.invoiceNumber}*`,
+      '💰 Total AED 897.75',
+      '✅ Paid AED 897.75',
+      '🎉 *Paid in full — thank you!*',
+      '👇 *Tap below to view your invoice*',
     ]) {
       assert.ok(shared.message.includes(expected), `invoice message contains ${expected}`);
     }
@@ -435,8 +434,8 @@ describe('customer documents and sharing', () => {
       ORIGIN,
     );
     assert.ok(
-      receipt.message.includes('Amount paid: AED 300.00') &&
-        receipt.message.includes('Remaining balance: AED 597.75'),
+      receipt.message.includes('💵 Amount paid *AED 300.00*') &&
+        receipt.message.includes('⏳ Remaining balance *AED 597.75*'),
     );
 
     const token = shared.link.split('/').pop()!;
@@ -546,9 +545,9 @@ describe('customer documents and sharing', () => {
     assert.ok(!/[\s&#?]/.test(encoded), 'spaces, newlines, & # ? are all encoded');
     assert.equal(decodeURIComponent(encoded), message);
     assert.ok(
-      message.includes('Total: AED 1,250.00') &&
-        message.includes('Paid: AED 500.00') &&
-        message.includes('Balance: AED 750.00'),
+      message.includes('💰 Total AED 1,250.00') &&
+        message.includes('✅ Paid AED 500.00') &&
+        message.includes('⏳ *Balance due AED 750.00*'),
     );
     assert.equal(formatAed('1234567.5'), 'AED 1,234,567.50');
     assert.ok(
@@ -561,7 +560,7 @@ describe('customer documents and sharing', () => {
         total: '10',
         awaitingDecision: false,
         link: 'L',
-      }).startsWith('Hello there,'),
+      }).startsWith('Hello there 👋'),
     );
   });
 });

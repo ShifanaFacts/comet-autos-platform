@@ -20,6 +20,8 @@ export interface LinkPreview {
   amountLabel: string | null;
   amount: string | null;
   button: string;
+  /** A short state on the picture: waiting for the customer, or done. */
+  status?: { text: string; tone: 'waiting' | 'done' } | null;
 }
 
 export async function quotePreview(rawToken: string): Promise<LinkPreview> {
@@ -49,6 +51,11 @@ export async function quotePreview(rawToken: string): Promise<LinkPreview> {
     amountLabel: 'Total',
     amount: total,
     button: awaiting ? 'View & approve' : 'View quotation',
+    status: awaiting
+      ? { text: 'Waiting for your approval', tone: 'waiting' }
+      : quote.approvals.length > 0
+        ? { text: 'Your decision is recorded', tone: 'done' }
+        : null,
   };
 }
 
@@ -82,6 +89,7 @@ export async function invoicePreview(rawToken: string): Promise<LinkPreview> {
     amountLabel: paid ? 'Paid' : 'Balance due',
     amount,
     button: 'View invoice',
+    status: paid ? { text: 'Paid in full — thank you', tone: 'done' } : { text: 'Payment due', tone: 'waiting' },
   };
 }
 

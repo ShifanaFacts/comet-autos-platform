@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE_NAME } from '@/lib/auth/session';
+import { REMEMBER_COOKIE_NAME, sessionCookieOptions } from '@/lib/auth/remember';
 
 // Edge proxy (formerly "middleware") only does a cheap cookie-presence check
 // for UX redirects (Prisma's Node driver adapter can't run in the Edge
@@ -71,6 +72,14 @@ export function proxy(request: NextRequest) {
   requestHeaders.set('Content-Security-Policy', csp);
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set('Content-Security-Policy', csp);
+
+  // "Remember me": every visit gives the login cookie its full life again, so
+  // the website and the installed app stay signed in until logged out.
+  const session = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  if (session && request.cookies.get(REMEMBER_COOKIE_NAME)?.value === '1') {
+    response.cookies.set(SESSION_COOKIE_NAME, session, sessionCookieOptions(true));
+    response.cookies.set(REMEMBER_COOKIE_NAME, '1', sessionCookieOptions(true));
+  }
   return response;
 }
 
