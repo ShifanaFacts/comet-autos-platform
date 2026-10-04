@@ -4,6 +4,7 @@ import { ChevronRight, Gauge, Phone, UserRound, Wrench } from 'lucide-react';
 import type { JobCardStatus } from '@/generated/prisma/enums';
 import { JobStatusBadge } from '@/components/shared/job-status-badge';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
+import { PrintJobCard } from '@/components/documents/print-job-card';
 import { formatDateTime, formatKm } from '@/lib/format';
 
 /**
@@ -91,6 +92,7 @@ export function JobHero({
             <Phone className="size-4 text-muted-foreground" />
             {jobCard.customer.phone}
           </a>
+          <PrintJobCard jobCardId={jobCard.id} />
         </div>
       </div>
 

@@ -25,6 +25,7 @@ import { createInvoice, getJobInvoice, recordPayment } from '@/lib/billing/invoi
 import {
   getInvoiceDocument,
   getInvoiceDocumentForLink,
+  getJobCardDocument,
   getJobDocuments,
   getQuotationDocument,
   getQuotationDocumentForLink,
@@ -460,6 +461,29 @@ describe('customer documents and sharing', () => {
     const documents = await getJobDocuments(a.owner, jobCardId);
     assert.equal(documents.quotations.length, 1);
     assert.equal(documents.invoice?.receipts.length, 2);
+  });
+
+  test('job card sheet: the invoiced work without prices, ready to print', async () => {
+    const document = await getJobCardDocument(a.owner, jobCardId);
+    const jobCard = await prisma.jobCard.findUniqueOrThrow({ where: { id: jobCardId } });
+    const invoice = await prisma.invoice.findUniqueOrThrow({
+      where: { id: invoiceId },
+      include: { items: true },
+    });
+    assert.equal(document.kind, 'JOB_CARD');
+    assert.equal(document.number, jobCard.jobNumber);
+    assert.equal(
+      document.sections.flatMap((s) => s.lines).length,
+      invoice.items.length,
+      'once invoiced, the work list is the invoice',
+    );
+    assert.deepEqual(document.totals, []);
+    const pdf = pdfText(renderDocumentPdf(document));
+    for (const expected of ['JOB CARD', jobCard.jobNumber, invoice.invoiceNumber, 'DONE']) {
+      assert.ok(pdf.includes(expected), `job card PDF shows ${expected}`);
+    }
+    assert.ok(!pdf.includes('AED'), 'no prices on the job card');
+    await expectDomainError(getJobCardDocument(b.owner, jobCardId), /could not be found/);
   });
 
   test('staff access is permission- and organization-checked', async () => {

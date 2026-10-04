@@ -127,7 +127,8 @@ function header(page: PdfPage, doc: CustomerDocumentModel) {
 
   let metaY = 112;
   for (const field of doc.meta) {
-    page.text(field.label, RIGHT - 120, metaY, { size: 8.5, color: MUTED, align: 'right' });
+    const labelRight = RIGHT - Math.max(120, textWidth(field.value, 'bold', 8.5) + 12);
+    page.text(field.label, labelRight, metaY, { size: 8.5, color: MUTED, align: 'right' });
     page.text(field.value, RIGHT, metaY, { font: 'bold', size: 8.5, color: INK, align: 'right' });
     metaY += 13;
   }
@@ -139,7 +140,12 @@ function parties(page: PdfPage, doc: CustomerDocumentModel, top: number) {
   const half = (CONTENT - 12) / 2;
   const blocks: { title: string; lines: { text: string; bold?: boolean }[] }[] = [
     {
-      title: doc.kind === 'QUOTATION' ? 'Prepared for' : 'Billed to',
+      title:
+        doc.kind === 'QUOTATION'
+          ? 'Prepared for'
+          : doc.kind === 'JOB_CARD'
+            ? 'Customer'
+            : 'Billed to',
       lines: [
         { text: doc.customer.name, bold: true },
         ...(doc.customer.phone ? [{ text: doc.customer.phone }] : []),
@@ -291,6 +297,122 @@ function sections(layout: Layout, doc: CustomerDocumentModel) {
   }
 }
 
+/*
+ * The job card's work list: S.No · Type · Description · Qty · Done, with no
+ * prices — a sheet for the workshop floor and the customer's copy at
+ * check-in. Each line has a box to tick when done; with no work list yet it
+ * prints numbered blank lines to fill in by hand.
+ */
+const JOB = {
+  no: MARGIN + 30,
+  type: MARGIN + 40,
+  desc: MARGIN + 92,
+  qty: RIGHT - 70,
+  done: RIGHT - 12,
+};
+const JOB_DESC_WIDTH = JOB.qty - JOB.desc - 40;
+const BLANK_LINES = 8;
+
+function jobTableHeader(layout: Layout) {
+  const { page } = layout;
+  page.rect(MARGIN, layout.y, CONTENT, 22, { fill: NIGHT, radius: 5 });
+  const y = layout.y + 14.5;
+  const style = { font: 'bold' as const, size: 7.5, color: WHITE };
+  page.text('S.NO', JOB.no, y, { ...style, align: 'right' });
+  page.text('TYPE', JOB.type, y, style);
+  page.text('WORK TO DO', JOB.desc, y, style);
+  page.text('QTY', JOB.qty, y, { ...style, align: 'right' });
+  page.text('DONE', JOB.done, y, { ...style, align: 'right' });
+  layout.y += 30;
+}
+
+function jobLines(layout: Layout, doc: CustomerDocumentModel) {
+  layout.ensure(80);
+  jobTableHeader(layout);
+  const tick = (base: number) =>
+    layout.page.rect(JOB.done - 18, base - 9, 12, 12, { stroke: MUTED, radius: 2 });
+  let number = 0;
+  for (const section of doc.sections) {
+    if (section.title) {
+      if (layout.ensure(40)) jobTableHeader(layout);
+      layout.page.text(section.title.toUpperCase(), JOB.type, layout.y + 8, {
+        font: 'bold',
+        size: 7.5,
+        color: BRAND,
+      });
+      layout.y += 16;
+    }
+    for (const line of section.lines) {
+      number += 1;
+      const description = wrapText(line.description, 'regular', 9.5, JOB_DESC_WIDTH);
+      const height = Math.max(description.length * 12.5, 12.5) + 12;
+      if (layout.ensure(height)) jobTableHeader(layout);
+      const { page } = layout;
+      const base = layout.y + 10;
+      page.text(String(number), JOB.no, base, { size: 9.5, color: MUTED, align: 'right' });
+      if (line.type)
+        page.text(line.type, JOB.type, base, { font: 'bold', size: 7.5, color: MUTED });
+      description.forEach((text, index) =>
+        page.text(text, JOB.desc, base + index * 12.5, { size: 9.5, color: INK }),
+      );
+      page.text(formatQuantity(line.quantity), JOB.qty, base, {
+        size: 9.5,
+        color: INK,
+        align: 'right',
+      });
+      tick(base);
+      layout.y += height;
+      page.line(MARGIN, layout.y - 4, RIGHT, layout.y - 4, { color: RULE, width: 0.6 });
+    }
+    layout.y += 6;
+  }
+  if (number === 0) {
+    for (let blank = 1; blank <= BLANK_LINES; blank += 1) {
+      if (layout.ensure(26)) jobTableHeader(layout);
+      layout.page.text(String(blank), JOB.no, layout.y + 12, {
+        size: 9.5,
+        color: MUTED,
+        align: 'right',
+      });
+      tick(layout.y + 12);
+      layout.y += 26;
+      layout.page.line(MARGIN, layout.y - 4, RIGHT, layout.y - 4, { color: RULE, width: 0.6 });
+    }
+    layout.y += 6;
+  }
+  layout.y += 8;
+}
+
+/** Two signature boxes: the customer handing the vehicle over, and the workshop taking it in. */
+function signatures(layout: Layout) {
+  const height = 78;
+  layout.ensure(height + 10);
+  const half = (CONTENT - 12) / 2;
+  const boxes = [
+    { title: 'Customer', caption: 'I hand over the vehicle and agree to the work above.' },
+    { title: 'For the workshop', caption: 'Vehicle received by' },
+  ];
+  boxes.forEach((box, index) => {
+    const x = MARGIN + index * (half + 12);
+    const { page } = layout;
+    page.rect(x, layout.y, half, height, { stroke: RULE, radius: 8 });
+    page.text(box.title.toUpperCase(), x + 14, layout.y + 18, {
+      font: 'bold',
+      size: 7.5,
+      color: MUTED,
+    });
+    page.text(box.caption, x + 14, layout.y + 31, { size: 8, color: MUTED });
+    page.line(x + 14, layout.y + 62, x + half - 90, layout.y + 62, { color: MUTED, width: 0.6 });
+    page.text('Signature', x + 14, layout.y + 72, { size: 7, color: MUTED });
+    page.line(x + half - 80, layout.y + 62, x + half - 14, layout.y + 62, {
+      color: MUTED,
+      width: 0.6,
+    });
+    page.text('Date', x + half - 80, layout.y + 72, { size: 7, color: MUTED });
+  });
+  layout.y += height + 20;
+}
+
 function totals(layout: Layout, doc: CustomerDocumentModel) {
   if (doc.totals.length === 0) return;
   const rowHeight = 18;
@@ -440,10 +562,12 @@ export function renderDocumentPdf(doc: CustomerDocumentModel): Buffer {
   highlight(layout, doc);
   narrative(layout, doc);
   if (doc.kind === 'RECEIPT') fields(layout, doc.detailsTitle, doc.details);
-  sections(layout, doc);
+  if (doc.kind === 'JOB_CARD') jobLines(layout, doc);
+  else sections(layout, doc);
   totals(layout, doc);
   if (doc.kind !== 'RECEIPT') fields(layout, doc.detailsTitle, doc.details);
   notes(layout, doc);
+  if (doc.kind === 'JOB_CARD') signatures(layout);
   footers(pdf, doc);
   return pdf.toBuffer();
 }

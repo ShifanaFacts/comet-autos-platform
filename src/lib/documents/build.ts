@@ -12,6 +12,7 @@ import {
   toFils,
 } from '@/lib/money';
 import { invoiceBalance, receiptBalances } from '@/lib/billing/invoice';
+import { employeeName } from '@/lib/workshop/assignment';
 import {
   formatAed,
   formatRate,
@@ -856,3 +857,153 @@ export async function getJobDocuments(user: AuthenticatedUser, jobCardId: string
 }
 
 export type JobDocuments = Awaited<ReturnType<typeof getJobDocuments>>;
+
+// ---------------------------------------------------------------------------
+// Job card (the workshop's printed job sheet)
+// ---------------------------------------------------------------------------
+
+/**
+ * The job card as a printed sheet: who brought which vehicle in, what they
+ * asked for, what was found, and the work to do — without prices (those are
+ * on the quotation and the invoice), with a box to tick each line done and
+ * room for signatures. The work list is the invoice once there is one,
+ * otherwise the current quotations; with neither it prints blank lines to
+ * fill in by hand.
+ */
+export async function getJobCardDocument(
+  user: AuthenticatedUser,
+  jobCardId: string,
+): Promise<CustomerDocumentModel> {
+  const jobCard = await prisma.jobCard.findFirst({
+    where: { id: jobCardId, organizationId: user.organizationId },
+    include: {
+      customer: { select: customerSelect },
+      vehicle: { select: vehicleSelect },
+      createdBy: { select: { fullName: true } },
+      deliveredBy: { select: { fullName: true } },
+      assignments: {
+        where: { unassignedAt: null },
+        orderBy: [{ assignmentRole: 'asc' }, { assignedAt: 'asc' }],
+        select: { employee: { select: { firstName: true, lastName: true } } },
+      },
+      inspections: {
+        orderBy: { inspectedAt: 'desc' },
+        take: 1,
+        select: { summary: true },
+      },
+      diagnoses: {
+        orderBy: { diagnosedAt: 'desc' },
+        take: 1,
+        select: { findings: true, recommendedAction: true },
+      },
+      estimates: {
+        where: { status: { notIn: ['REJECTED', 'EXPIRED'] }, nextVersions: { none: {} } },
+        orderBy: [{ kind: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          kind: true,
+          estimateNumber: true,
+          items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+        },
+      },
+      invoices: {
+        where: { status: { notIn: ['VOID', 'CANCELLED'] } },
+        take: 1,
+        select: {
+          invoiceNumber: true,
+          items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+        },
+      },
+    },
+  });
+  if (!jobCard) throw new NotFoundError('job card');
+  requirePermission(user, 'job_card.view', { branchId: jobCard.branchId });
+  const seller = await loadSeller(user.organizationId);
+
+  const toLine = (item: {
+    itemType: EstimateItemType | null;
+    description: string;
+    quantity: { toString(): string };
+    unitPrice: { toString(): string };
+    taxRate: { toString(): string } | null;
+    lineTotal: { toString(): string };
+  }): DocumentLine => ({
+    type: lineType(item.itemType),
+    description: item.description,
+    quantity: item.quantity.toString(),
+    unitPrice: item.unitPrice.toString(),
+    taxRate: item.taxRate?.toString() ?? null,
+    discount: null,
+    lineTotal: item.lineTotal.toString(),
+  });
+  const invoice = jobCard.invoices[0];
+  const sections: DocumentSection[] = invoice
+    ? invoice.items.length > 0
+      ? [{ title: '', lines: invoice.items.map(toLine) }]
+      : []
+    : jobCard.estimates
+        .filter((e) => e.items.length > 0)
+        .map((e) => ({
+          title: e.kind === 'ADDITIONAL' ? `Additional work (${e.estimateNumber})` : '',
+          lines: e.items.map(toLine),
+        }));
+
+  const technicians = jobCard.assignments.map((a) => employeeName(a.employee));
+  const inspection = jobCard.inspections[0];
+  const diagnosis = jobCard.diagnoses[0];
+  const quotations = jobCard.estimates.map((e) => e.estimateNumber);
+
+  return {
+    kind: 'JOB_CARD',
+    title: 'Job card',
+    number: jobCard.jobNumber,
+    status: null,
+    seller,
+    meta: [
+      { label: 'Checked in', value: formatDateTime(jobCard.openedAt) },
+      { label: 'Received by', value: jobCard.createdBy.fullName },
+      ...(technicians.length > 0 ? [{ label: 'Technician', value: technicians.join(', ') }] : []),
+      ...(quotations.length > 0 ? [{ label: 'Quotation', value: quotations.join(', ') }] : []),
+      ...(invoice ? [{ label: 'Invoice', value: invoice.invoiceNumber }] : []),
+      ...(jobCard.deliveredAt
+        ? [
+            {
+              label: 'Delivered',
+              value: `${formatDateTime(jobCard.deliveredAt)}${jobCard.deliveredBy ? ` by ${jobCard.deliveredBy.fullName}` : ''}`,
+            },
+          ]
+        : []),
+    ],
+    customer: {
+      name: jobCard.customer.name,
+      phone: jobCard.customer.phone,
+      address: jobCard.customer.address,
+      taxNumber: jobCard.customer.taxNumber,
+    },
+    vehicle: {
+      description: vehicleLabel(jobCard.vehicle),
+      plateNumber: jobCard.vehicle.plateNumber,
+      vin: jobCard.vehicle.vin,
+      mileage:
+        jobCard.odometerReading != null
+          ? `${jobCard.odometerReading.toLocaleString('en-US')} km`
+          : null,
+    },
+    narrative: [
+      ...(jobCard.customerComplaint
+        ? [{ label: 'Customer complaint / work requested', value: jobCard.customerComplaint }]
+        : []),
+      ...(inspection?.summary ? [{ label: 'Inspection', value: inspection.summary }] : []),
+      ...(diagnosis ? [{ label: 'Diagnosis', value: diagnosis.findings }] : []),
+      ...(diagnosis?.recommendedAction
+        ? [{ label: 'Recommended work', value: diagnosis.recommendedAction }]
+        : []),
+    ],
+    sections,
+    totals: [],
+    highlight: null,
+    detailsTitle: null,
+    details: [],
+    notes: jobCard.deliveryNotes ? [jobCard.deliveryNotes] : [],
+    fileName: fileName(seller, 'Job card', jobCard.jobNumber),
+  };
+}
