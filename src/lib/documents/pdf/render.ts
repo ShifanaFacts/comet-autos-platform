@@ -98,10 +98,31 @@ function brandMark(page: PdfPage, x: number, y: number) {
 function header(page: PdfPage, doc: CustomerDocumentModel) {
   page.rect(0, 0, A4.width, 6, { fill: BRAND });
   brandMark(page, MARGIN, 34);
-  page.text(doc.seller.name, MARGIN + 46, 48, { font: 'bold', size: 15, color: INK });
-  page.text('Automotive workshop', MARGIN + 46, 62, { size: 8.5, color: MUTED });
 
-  let y = 88;
+  /*
+   * The title keeps the right-hand side (shrunk a little if it is long); the
+   * workshop's name has what is left of the line and wraps to a second line
+   * rather than running under the title.
+   */
+  const title = doc.title.toUpperCase();
+  let titleSize = 19;
+  while (titleSize > 13 && textWidth(title, 'bold', titleSize) > CONTENT * 0.45) titleSize -= 0.5;
+  const nameLeft = MARGIN + 46;
+  const nameWidth = RIGHT - textWidth(title, 'bold', titleSize) - 18 - nameLeft;
+  let nameSize = 15;
+  let nameLines = wrapText(doc.seller.name, 'bold', nameSize, nameWidth);
+  if (nameLines.length > 2) {
+    nameSize = 12.5;
+    nameLines = wrapText(doc.seller.name, 'bold', nameSize, nameWidth);
+  }
+  const nameStep = nameSize + 3;
+  nameLines.forEach((line, index) =>
+    page.text(line, nameLeft, 48 + index * nameStep, { font: 'bold', size: nameSize, color: INK }),
+  );
+  const taglineY = 48 + (nameLines.length - 1) * nameStep + 14;
+  page.text('Automotive workshop', nameLeft, taglineY, { size: 8.5, color: MUTED });
+
+  let y = Math.max(88, taglineY + 26);
   const contact = [
     doc.seller.legalName && doc.seller.legalName !== doc.seller.name ? doc.seller.legalName : null,
     doc.seller.address,
@@ -117,9 +138,9 @@ function header(page: PdfPage, doc: CustomerDocumentModel) {
     }
   }
 
-  page.text(doc.title.toUpperCase(), RIGHT, 48, {
+  page.text(title, RIGHT, 48, {
     font: 'bold',
-    size: 19,
+    size: titleSize,
     color: BRAND,
     align: 'right',
   });
@@ -327,80 +348,175 @@ function writingBox(layout: Layout, title: string, text: string, minLines: numbe
 
 /*
  * Vehicle outlines, drawn in their own design units (y down) and scaled into
- * place: a side view facing right (the car's left side; mirrored, its right
- * side), the top view, and the front and rear.
+ * place. Each view is drawn as you'd see it standing beside the car: the
+ * side profile faces right as drawn — the car's right side — and mirrored it
+ * is the left side; the top view has the nose to the right; front and rear
+ * are seen face on.
  */
+const GLASS: Rgb = [0.925, 0.941, 0.965];
+const TYRE: Rgb = [0.78, 0.8, 0.835];
+
+/** The same outline flipped left to right within `width`. */
+function mirrorX(segments: PathSegment[], width: number): PathSegment[] {
+  return segments.map((seg): PathSegment => {
+    if (seg[0] === 'Z') return seg;
+    if (seg[0] === 'C')
+      return ['C', width - seg[1], seg[2], width - seg[3], seg[4], width - seg[5], seg[6]];
+    return [seg[0], width - seg[1], seg[2]];
+  });
+}
+
 const SIDE_W = 200;
+const SIDE_H = 64;
+/** Saloon profile, nose right, with the wheel arches cut out of the sill. */
 const SIDE_BODY: PathSegment[] = [
-  ['M', 6, 58],
-  ['L', 4, 40],
-  ['C', 4, 34, 8, 31, 14, 30],
-  ['L', 52, 28],
-  ['C', 60, 14, 68, 8, 80, 7],
-  ['L', 118, 7],
-  ['C', 128, 7, 136, 12, 146, 26],
-  ['L', 186, 32],
-  ['C', 194, 33, 198, 38, 198, 44],
-  ['L', 198, 58],
-  ['L', 174, 58],
-  ['C', 174, 49.2, 166.8, 42, 158, 42],
-  ['C', 149.2, 42, 142, 49.2, 142, 58],
-  ['L', 61, 58],
-  ['C', 61, 49.2, 53.8, 42, 45, 42],
-  ['C', 36.2, 42, 29, 49.2, 29, 58],
+  ['M', 8, 51],
+  ['C', 4.5, 51, 3, 48.5, 3, 45],
+  ['L', 3, 33],
+  ['C', 3, 29.5, 5, 27.2, 9, 26.8],
+  ['L', 44, 24.5],
+  ['C', 52, 17, 61, 10.5, 72, 8.6],
+  ['C', 88, 6, 108, 6, 120, 7.6],
+  ['C', 130, 9, 140, 17, 150, 24],
+  ['C', 168, 26, 184, 28.5, 192, 31],
+  ['C', 196, 32.2, 198, 35, 198, 39],
+  ['L', 198, 46],
+  ['C', 198, 49, 196, 51, 192, 51],
+  ['L', 172, 51],
+  ['C', 172, 43.27, 165.73, 37, 158, 37],
+  ['C', 150.27, 37, 144, 43.27, 144, 51],
+  ['L', 60, 51],
+  ['C', 60, 43.27, 53.73, 37, 46, 37],
+  ['C', 38.27, 37, 32, 43.27, 32, 51],
   ['Z'],
 ];
 const SIDE_GLASS: PathSegment[] = [
-  ['M', 58, 28],
-  ['C', 64, 17, 70, 12, 80, 11],
-  ['L', 117, 11],
-  ['C', 125, 11, 131, 15, 139, 26],
+  ['M', 57, 23.6],
+  ['C', 63, 16.5, 70, 12.2, 78, 11.2],
+  ['C', 92, 9.8, 108, 9.8, 117, 11],
+  ['C', 124, 12, 132, 17.6, 140, 23.6],
   ['Z'],
 ];
+const SIDE_HEADLIGHT: PathSegment[] = [
+  ['M', 185, 30.4],
+  ['L', 195.4, 32.8],
+  ['C', 196.8, 34, 197, 35.4, 196.2, 36.4],
+  ['L', 187, 35.2],
+  ['Z'],
+];
+const SIDE_MIRROR: PathSegment[] = [
+  ['M', 139.5, 23.5],
+  ['L', 141, 19.2],
+  ['C', 143.5, 18.6, 146.5, 19, 147.6, 20.4],
+  ['L', 146.4, 24.6],
+  ['Z'],
+];
+
+const TOP_W = 200;
+const TOP_H = 86;
 const TOP_BODY: PathSegment[] = [
-  ['M', 30, 8],
-  ['L', 165, 8],
-  ['C', 186, 8, 196, 22, 196, 42],
-  ['C', 196, 62, 186, 76, 165, 76],
-  ['L', 30, 76],
-  ['C', 12, 76, 4, 64, 4, 42],
-  ['C', 4, 20, 12, 8, 30, 8],
+  ['M', 30, 9],
+  ['L', 160, 9],
+  ['C', 180, 9, 192, 14, 195, 26],
+  ['C', 197, 35, 197, 51, 195, 60],
+  ['C', 192, 72, 180, 77, 160, 77],
+  ['L', 30, 77],
+  ['C', 14, 77, 6, 72, 5, 60],
+  ['C', 3.5, 50, 3.5, 36, 5, 26],
+  ['C', 6, 14, 14, 9, 30, 9],
   ['Z'],
 ];
-const TOP_WINDSHIELD: PathSegment[] = [
-  ['M', 128, 16],
-  ['L', 146, 20],
-  ['C', 150, 32, 150, 52, 146, 64],
-  ['L', 128, 68],
-  ['C', 132, 52, 132, 32, 128, 16],
+const TOP_WINDSCREEN: PathSegment[] = [
+  ['M', 121, 15.5],
+  ['L', 140, 13.5],
+  ['C', 145.5, 30, 145.5, 56, 140, 72.5],
+  ['L', 121, 70.5],
+  ['C', 124, 56, 124, 30, 121, 15.5],
   ['Z'],
 ];
 const TOP_REAR_GLASS: PathSegment[] = [
-  ['M', 48, 20],
-  ['L', 64, 17],
-  ['C', 61, 32, 61, 52, 64, 67],
-  ['L', 48, 64],
-  ['C', 45, 52, 45, 32, 48, 20],
+  ['M', 73, 15.5],
+  ['L', 58, 17.5],
+  ['C', 54, 32, 54, 54, 58, 68.5],
+  ['L', 73, 70.5],
+  ['C', 71, 56, 71, 30, 73, 15.5],
   ['Z'],
 ];
+const TOP_BONNET: PathSegment[] = [
+  ['M', 146, 14],
+  ['L', 181, 16.5],
+  ['C', 187.5, 30, 187.5, 56, 181, 69.5],
+  ['L', 146, 72],
+];
+const TOP_BOOT: PathSegment[] = [
+  ['M', 53, 18.5],
+  ['L', 20, 20],
+  ['C', 16, 31, 16, 55, 20, 66],
+  ['L', 53, 67.5],
+];
+const TOP_MIRROR: PathSegment[] = [
+  ['M', 132, 9.5],
+  ['L', 134, 3],
+  ['C', 137, 2.4, 140, 2.6, 141.5, 3.6],
+  ['L', 140.5, 9.5],
+  ['Z'],
+];
+
+const END_W = 100;
+const END_H = 66;
+/** Front or rear silhouette: body, cabin and shoulders. */
 const END_BODY: PathSegment[] = [
-  ['M', 8, 58],
+  ['M', 12, 60],
+  ['C', 9.5, 60, 8, 58.5, 8, 56],
   ['L', 8, 38],
-  ['C', 8, 32, 12, 30, 18, 29],
-  ['L', 26, 12],
-  ['C', 28, 8, 31, 7, 36, 7],
-  ['L', 64, 7],
-  ['C', 69, 7, 72, 8, 74, 12],
-  ['L', 82, 29],
-  ['C', 88, 30, 92, 32, 92, 38],
-  ['L', 92, 58],
+  ['C', 8, 33, 10, 30, 15, 28.5],
+  ['L', 24, 12],
+  ['C', 26, 8, 29, 6.5, 34, 6.5],
+  ['L', 66, 6.5],
+  ['C', 71, 6.5, 74, 8, 76, 12],
+  ['L', 85, 28.5],
+  ['C', 90, 30, 92, 33, 92, 38],
+  ['L', 92, 56],
+  ['C', 92, 58.5, 90.5, 60, 88, 60],
   ['Z'],
 ];
-const END_GLASS: PathSegment[] = [
-  ['M', 30, 13],
-  ['L', 70, 13],
-  ['L', 77, 27],
-  ['L', 23, 27],
+const END_MIRROR: PathSegment[] = [
+  ['M', 15, 24],
+  ['L', 5.5, 22.2],
+  ['C', 3.6, 22, 2.6, 23, 2.6, 24.8],
+  ['L', 3, 27.6],
+  ['C', 3.4, 29, 4.6, 29.6, 6.2, 29.6],
+  ['L', 15, 29.2],
+  ['Z'],
+];
+const FRONT_GLASS: PathSegment[] = [
+  ['M', 28.5, 12.5],
+  ['L', 71.5, 12.5],
+  ['L', 80, 27],
+  ['L', 20, 27],
+  ['Z'],
+];
+const HEADLIGHT: PathSegment[] = [
+  ['M', 11, 34],
+  ['L', 28, 36.2],
+  ['L', 27, 41],
+  ['L', 12.5, 40.2],
+  ['C', 11.2, 40, 10.8, 39.4, 10.8, 38.4],
+  ['Z'],
+];
+const REAR_GLASS: PathSegment[] = [
+  ['M', 29.5, 13],
+  ['L', 70.5, 13],
+  ['L', 77.5, 26],
+  ['L', 22.5, 26],
+  ['Z'],
+];
+const TAIL_LIGHT: PathSegment[] = [
+  ['M', 9.5, 33],
+  ['L', 28, 34],
+  ['L', 28, 40.5],
+  ['L', 10, 39.6],
+  ['C', 9.6, 39.5, 9.5, 39.2, 9.5, 38.8],
   ['Z'],
 ];
 
@@ -408,8 +524,11 @@ const END_GLASS: PathSegment[] = [
 function placer(page: PdfPage, x: number, y: number, s: number, mirrorWidth?: number) {
   const px = (dx: number) => x + (mirrorWidth ? mirrorWidth - dx : dx) * s;
   const py = (dy: number) => y + dy * s;
-  const outline = { stroke: INK, lineWidth: 0.9 };
   return {
+    /** The body outline: inked, filled white so it covers what's drawn behind it. */
+    body: { stroke: INK, fill: WHITE, lineWidth: 1 },
+    /** Glass, lamps and other details inside the body. */
+    detail: { stroke: MUTED, lineWidth: 0.6 },
     shape(segments: PathSegment[], options: { fill?: Rgb; stroke?: Rgb; lineWidth?: number }) {
       page.path(
         segments.map((seg): PathSegment => {
@@ -425,120 +544,226 @@ function placer(page: PdfPage, x: number, y: number, s: number, mirrorWidth?: nu
       const left = mirrorWidth ? px(dx + w) : px(dx);
       page.rect(left, py(dy), w * s, h * s, { ...options, radius: (options.radius ?? 0) * s });
     },
-    circle(cx: number, cy: number, r: number, options: { fill?: Rgb; stroke?: Rgb }) {
+    circle(
+      cx: number,
+      cy: number,
+      r: number,
+      options: { fill?: Rgb; stroke?: Rgb; lineWidth?: number },
+    ) {
       page.rect(px(cx) - r * s, py(cy) - r * s, 2 * r * s, 2 * r * s, {
+        lineWidth: 0.6,
         ...options,
         radius: r * s,
-        lineWidth: 0.9,
       });
     },
-    line(x1: number, y1: number, x2: number, y2: number) {
-      page.line(px(x1), py(y1), px(x2), py(y2), { color: MUTED, width: 0.6 });
+    line(x1: number, y1: number, x2: number, y2: number, color: Rgb = MUTED) {
+      page.line(px(x1), py(y1), px(x2), py(y2), { color, width: 0.6 });
     },
-    outline,
   };
 }
 
+/** A side profile; `mirrored` turns the nose to the left — the car's left side. */
 function sideView(page: PdfPage, x: number, y: number, s: number, mirrored: boolean) {
   const v = placer(page, x, y, s, mirrored ? SIDE_W : undefined);
-  v.shape(SIDE_BODY, { ...v.outline, fill: WHITE });
-  v.shape(SIDE_GLASS, { stroke: MUTED, lineWidth: 0.7 });
-  v.line(100, 11, 100, 56);
-  v.line(139, 27, 139, 52);
-  v.line(62, 30, 62, 54);
-  v.line(88, 33, 95, 33);
-  v.line(127, 33, 134, 33);
-  for (const cx of [45, 158]) {
-    v.circle(cx, 58, 12, { stroke: INK, fill: WHITE });
-    v.circle(cx, 58, 4.5, { stroke: MUTED });
+  v.line(-2, 62.5, 202, 62.5, RULE);
+  v.shape(SIDE_BODY, v.body);
+  v.shape(SIDE_GLASS, { ...v.detail, fill: GLASS });
+  v.box(99, 10.2, 3, 13.6, { fill: WHITE, stroke: MUTED, lineWidth: 0.6 });
+  // Shoulder crease, sill, and the door shut lines.
+  v.line(10, 30.5, 182, 33.2);
+  v.line(61, 47.5, 143, 47.5);
+  v.line(140.5, 24, 141.5, 50.5);
+  v.line(100.5, 24, 100.5, 50.5);
+  v.line(59, 24.5, 61.5, 50.5);
+  v.box(86, 28.6, 8, 2.4, { stroke: MUTED, lineWidth: 0.6, radius: 1.2 });
+  v.box(126, 28.6, 8, 2.4, { stroke: MUTED, lineWidth: 0.6, radius: 1.2 });
+  // Bumpers, lamps and mirror.
+  v.line(3, 40.5, 30, 40.5);
+  v.line(174, 41, 198, 41);
+  v.shape(SIDE_HEADLIGHT, { ...v.detail, fill: GLASS });
+  v.box(3.2, 28.2, 6, 5.2, { stroke: MUTED, lineWidth: 0.6, radius: 1 });
+  v.shape(SIDE_MIRROR, { ...v.body, lineWidth: 0.8 });
+  for (const cx of [46, 158]) {
+    v.circle(cx, 51, 11, { stroke: INK, fill: TYRE, lineWidth: 0.9 });
+    v.circle(cx, 51, 7, { stroke: MUTED, fill: WHITE });
+    v.circle(cx, 51, 2.2, { stroke: MUTED });
   }
-  v.box(193, 37, 4, 5, { stroke: MUTED, radius: 1 });
-  v.box(4, 33, 4, 6, { stroke: MUTED, radius: 1 });
 }
 
+/** Seen from above, nose to the right. */
 function topView(page: PdfPage, x: number, y: number, s: number) {
   const v = placer(page, x, y, s);
-  for (const [wx, wy] of [
-    [34, 3],
-    [150, 3],
-    [34, 75],
-    [150, 75],
-  ])
-    v.box(wx, wy, 24, 6, { fill: MUTED, radius: 2 });
-  v.box(134, 2, 7, 7, { stroke: INK, fill: WHITE, radius: 1.5 });
-  v.box(134, 75, 7, 7, { stroke: INK, fill: WHITE, radius: 1.5 });
-  v.shape(TOP_BODY, { ...v.outline, fill: WHITE });
-  v.shape(TOP_WINDSHIELD, { stroke: MUTED, lineWidth: 0.7 });
-  v.shape(TOP_REAR_GLASS, { stroke: MUTED, lineWidth: 0.7 });
-  v.box(66, 18, 60, 48, { stroke: MUTED, radius: 6 });
-  v.line(150, 24, 186, 28);
-  v.line(150, 60, 186, 56);
+  for (const wx of [34, 146]) {
+    v.box(wx, 4.5, 24, 6, { fill: TYRE, stroke: INK, lineWidth: 0.7, radius: 2 });
+    v.box(wx, 75.5, 24, 6, { fill: TYRE, stroke: INK, lineWidth: 0.7, radius: 2 });
+  }
+  v.shape(TOP_MIRROR, { ...v.body, lineWidth: 0.8 });
+  v.shape(
+    TOP_MIRROR.map((seg): PathSegment =>
+      seg[0] === 'Z'
+        ? seg
+        : seg[0] === 'C'
+          ? ['C', seg[1], TOP_H - seg[2], seg[3], TOP_H - seg[4], seg[5], TOP_H - seg[6]]
+          : [seg[0], seg[1], TOP_H - seg[2]],
+    ),
+    { ...v.body, lineWidth: 0.8 },
+  );
+  v.shape(TOP_BODY, v.body);
+  v.shape(TOP_WINDSCREEN, { ...v.detail, fill: GLASS });
+  v.shape(TOP_REAR_GLASS, { ...v.detail, fill: GLASS });
+  v.box(76, 18, 42, 50, { stroke: MUTED, lineWidth: 0.6, radius: 5 });
+  v.shape(TOP_BONNET, v.detail);
+  v.shape(TOP_BOOT, v.detail);
+  v.line(150, 30, 178, 31.5);
+  v.line(150, 56, 178, 54.5);
+  v.box(184, 15, 8, 6, { stroke: MUTED, lineWidth: 0.6, radius: 2 });
+  v.box(184, 65, 8, 6, { stroke: MUTED, lineWidth: 0.6, radius: 2 });
+  v.box(6.5, 22, 3.5, 8, { stroke: MUTED, lineWidth: 0.6, radius: 1 });
+  v.box(6.5, 56, 3.5, 8, { stroke: MUTED, lineWidth: 0.6, radius: 1 });
 }
 
+/** Seen face on from the front, or from behind. */
 function endView(page: PdfPage, x: number, y: number, s: number, front: boolean) {
   const v = placer(page, x, y, s);
-  v.box(12, 54, 14, 14, { fill: MUTED, radius: 3 });
-  v.box(74, 54, 14, 14, { fill: MUTED, radius: 3 });
-  v.box(2, 26, 7, 5, { stroke: INK, fill: WHITE, radius: 1.5 });
-  v.box(91, 26, 7, 5, { stroke: INK, fill: WHITE, radius: 1.5 });
-  v.shape(END_BODY, { ...v.outline, fill: WHITE });
-  v.shape(END_GLASS, { stroke: MUTED, lineWidth: 0.7 });
-  v.line(10, 50, 90, 50);
+  v.line(2, 66.5, 98, 66.5, RULE);
+  v.box(12, 52, 15, 14, { fill: TYRE, stroke: INK, lineWidth: 0.8, radius: 3 });
+  v.box(73, 52, 15, 14, { fill: TYRE, stroke: INK, lineWidth: 0.8, radius: 3 });
+  v.shape(END_MIRROR, { ...v.body, lineWidth: 0.8 });
+  v.shape(mirrorX(END_MIRROR, END_W), { ...v.body, lineWidth: 0.8 });
+  v.shape(END_BODY, v.body);
+  v.line(16, 31, 84, 31);
+  v.line(10, 46.5, 90, 46.5);
   if (front) {
-    v.box(13, 35, 17, 7, { stroke: MUTED, radius: 2 });
-    v.box(70, 35, 17, 7, { stroke: MUTED, radius: 2 });
-    v.box(36, 36, 28, 10, { stroke: MUTED, radius: 2 });
+    v.shape(FRONT_GLASS, { ...v.detail, fill: GLASS });
+    v.line(31, 25.5, 47, 23);
+    v.line(53, 25.5, 69, 23);
+    v.shape(HEADLIGHT, { ...v.detail, fill: GLASS });
+    v.shape(mirrorX(HEADLIGHT, END_W), { ...v.detail, fill: GLASS });
+    v.box(32, 35, 36, 9.5, { stroke: MUTED, lineWidth: 0.6, radius: 2 });
+    v.line(34, 38.2, 66, 38.2);
+    v.line(34, 41.4, 66, 41.4);
+    v.box(38, 49, 24, 7, { stroke: MUTED, lineWidth: 0.6, radius: 1 });
+    v.circle(18, 52.5, 2, { stroke: MUTED });
+    v.circle(82, 52.5, 2, { stroke: MUTED });
   } else {
-    v.box(12, 34, 16, 8, { stroke: MUTED, radius: 2 });
-    v.box(72, 34, 16, 8, { stroke: MUTED, radius: 2 });
-    v.box(38, 38, 24, 9, { stroke: MUTED, radius: 1 });
+    v.shape(REAR_GLASS, { ...v.detail, fill: GLASS });
+    v.shape(TAIL_LIGHT, v.detail);
+    v.shape(mirrorX(TAIL_LIGHT, END_W), v.detail);
+    v.box(38, 35.5, 24, 8, { stroke: MUTED, lineWidth: 0.6, radius: 1 });
+    v.box(12, 50, 9, 2.6, { stroke: MUTED, lineWidth: 0.6, radius: 1 });
+    v.box(79, 50, 9, 2.6, { stroke: MUTED, lineWidth: 0.6, radius: 1 });
+    v.box(66, 54.6, 9, 3.6, { stroke: MUTED, lineWidth: 0.6, radius: 1.8 });
   }
 }
 
-/** The vehicle diagram panel: left and right sides, top, front and rear, with the marking key. */
+/** A damage code as drawn on the car: the letter in a ring. Returns its width. */
+function damageCode(page: PdfPage, letter: string, x: number, baseline: number) {
+  page.rect(x, baseline - 7.6, 10, 10, { stroke: MUTED, lineWidth: 0.7, radius: 5 });
+  page.text(letter, x + 5, baseline - 0.2, {
+    font: 'bold',
+    size: 6.5,
+    color: INK,
+    align: 'center',
+  });
+  return 10;
+}
+
+/** A box to tick, with its label. Returns the width taken. */
+function tickBox(page: PdfPage, label: string, x: number, baseline: number) {
+  page.rect(x, baseline - 7, 7.5, 7.5, { stroke: MUTED, lineWidth: 0.7, radius: 1.5 });
+  page.text(label, x + 11, baseline, { size: 7.5, color: INK });
+  return 11 + textWidth(label, 'regular', 7.5);
+}
+
+const DAMAGE_CODES = [
+  ['S', 'Scratch'],
+  ['D', 'Dent'],
+  ['C', 'Crack'],
+  ['B', 'Broken'],
+] as const;
+const FUEL_LEVELS = ['E', '¼', '½', '¾', 'F'];
+const LOOSE_ITEMS = ['Spare tyre', 'Jack & tools', 'Floor mats', 'Audio'];
+
+/**
+ * The vehicle condition panel: right and left sides, top, front and rear to
+ * mark damage on, the damage codes, and a row to tick the fuel level and
+ * what's in the car at check-in.
+ */
 function vehicleDiagram(layout: Layout) {
-  const height = 188;
+  const height = 214;
   layout.ensure(height + 12);
   const { page } = layout;
   const top = layout.y;
-  page.rect(MARGIN, top, CONTENT, height, { stroke: RULE, radius: 8 });
-  page.text('VEHICLE CONDITION', MARGIN + 14, top + 17, { font: 'bold', size: 7.5, color: MUTED });
-  page.text(
-    'Mark on the drawing:  S scratch  ·  D dent  ·  C crack  ·  B broken',
-    RIGHT - 14,
-    top + 17,
-    {
-      size: 7.5,
-      color: MUTED,
-      align: 'right',
-    },
-  );
-
-  const side = 0.86;
-  const end = 0.78;
+  const left = MARGIN + 14;
   const inner = CONTENT - 28;
-  const gap = (inner - SIDE_W * side * 2 - 100 * end) / 2;
-  const colA = MARGIN + 14;
+  page.rect(MARGIN, top, CONTENT, height, { stroke: RULE, radius: 8 });
+  page.text('VEHICLE CONDITION', left, top + 17, { font: 'bold', size: 7.5, color: MUTED });
+
+  // The damage codes, set right to left from the panel's edge.
+  let keyX = RIGHT - 14;
+  for (const [letter, word] of [...DAMAGE_CODES].reverse()) {
+    keyX -= textWidth(word, 'regular', 7.5);
+    page.text(word, keyX, top + 17, { size: 7.5, color: MUTED });
+    keyX -= 13;
+    damageCode(page, letter, keyX, top + 17);
+    keyX -= 10;
+  }
+  page.text('Mark damage', keyX, top + 17, { size: 7.5, color: MUTED, align: 'right' });
+
+  const side = 0.88;
+  const plan = 0.86;
+  const end = 0.8;
+  const gap = (inner - SIDE_W * side - TOP_W * plan - END_W * end) / 2;
+  const colA = left;
   const colB = colA + SIDE_W * side + gap;
-  const colC = colB + SIDE_W * side + gap;
+  const colC = colB + TOP_W * plan + gap;
   const rowOne = top + 30;
-  const rowTwo = top + 108;
+  const rowTwo = top + 106;
+  const labelOffset = SIDE_H * side + 10;
   const label = (text: string, x: number, width: number, y: number) =>
     page.text(text, x + width / 2, y, { font: 'bold', size: 7, color: MUTED, align: 'center' });
 
-  sideView(page, colA, rowOne, side, false);
-  label('LEFT SIDE', colA, SIDE_W * side, rowOne + 71);
-  sideView(page, colA, rowTwo, side, true);
-  label('RIGHT SIDE', colA, SIDE_W * side, rowTwo + 71);
+  sideView(page, colA, rowOne, side, true);
+  label('LEFT SIDE', colA, SIDE_W * side, rowOne + labelOffset);
+  sideView(page, colA, rowTwo, side, false);
+  label('RIGHT SIDE', colA, SIDE_W * side, rowTwo + labelOffset);
 
-  const topY = top + (height - 84 * side) / 2 + 4;
-  topView(page, colB, topY, side);
-  label('TOP', colB, SIDE_W * side, topY + 84 * side + 12);
+  const planHeight = TOP_H * plan + 14;
+  const planY = rowOne + (rowTwo + labelOffset - rowOne - planHeight) / 2;
+  topView(page, colB, planY, plan);
+  label('TOP', colB, TOP_W * plan, planY + planHeight);
 
-  endView(page, colC, rowOne + 6, end, true);
-  label('FRONT', colC, 100 * end, rowOne + 71);
-  endView(page, colC, rowTwo + 6, end, false);
-  label('REAR', colC, 100 * end, rowTwo + 71);
+  // Front and rear: seen face on, so the car's sides swap over between them.
+  const endY = (row: number) => row + SIDE_H * side - END_H * end;
+  const sides = (row: number, near: string, far: string) => {
+    page.text(near, colC + 2, row + labelOffset, { size: 6.5, color: MUTED });
+    page.text(far, colC + END_W * end - 2, row + labelOffset, {
+      size: 6.5,
+      color: MUTED,
+      align: 'right',
+    });
+  };
+  endView(page, colC, endY(rowOne), end, true);
+  label('FRONT', colC, END_W * end, rowOne + labelOffset);
+  sides(rowOne, 'R', 'L');
+  endView(page, colC, endY(rowTwo), end, false);
+  label('REAR', colC, END_W * end, rowTwo + labelOffset);
+  sides(rowTwo, 'L', 'R');
+
+  // Check-in row: fuel level on the left, what's in the car on the right.
+  const rule = top + height - 32;
+  page.line(left, rule, RIGHT - 14, rule, { color: RULE, width: 0.6 });
+  const baseline = rule + 19;
+  page.text('FUEL', left, baseline, { font: 'bold', size: 7, color: MUTED });
+  let x = left + 26;
+  for (const level of FUEL_LEVELS) x += tickBox(page, level, x, baseline) + 9;
+
+  const itemsWidth =
+    LOOSE_ITEMS.reduce((sum, item) => sum + 11 + textWidth(item, 'regular', 7.5), 0) +
+    (LOOSE_ITEMS.length - 1) * 11;
+  x = RIGHT - 14 - itemsWidth;
+  page.text('IN THE CAR', x - 8, baseline, { font: 'bold', size: 7, color: MUTED, align: 'right' });
+  for (const item of LOOSE_ITEMS) x += tickBox(page, item, x, baseline) + 11;
 
   layout.y += height + 12;
 }

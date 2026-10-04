@@ -80,3 +80,104 @@ export async function updateBranch(user: AuthenticatedUser, branchId: string, ra
     return { branchId: before.id };
   });
 }
+
+// ─── Location lock ──────────────────────────────────────────────────────────
+
+const locationSchema = z.object({
+  latitude: z.coerce
+    .number({ error: 'Set the workshop’s position.' })
+    .min(-90, 'Enter a valid latitude.')
+    .max(90, 'Enter a valid latitude.'),
+  longitude: z.coerce
+    .number({ error: 'Set the workshop’s position.' })
+    .min(-180, 'Enter a valid longitude.')
+    .max(180, 'Enter a valid longitude.'),
+  radius: z.coerce
+    .number({ error: 'Enter the radius in metres.' })
+    .int('Enter whole metres.')
+    .min(30, 'Use at least 30 m — phone GPS is rarely closer than that indoors.')
+    .max(2000, 'Use at most 2,000 m.'),
+  shiftEndTime: z
+    .string()
+    .trim()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Enter the time as HH:MM, e.g. 20:00.'),
+});
+
+/** The branch's location lock, for check-in and the settings form. */
+export async function getBranchLocation(organizationId: string, branchId: string) {
+  const branch = await prisma.branch.findFirst({
+    where: { id: branchId, organizationId },
+    select: {
+      id: true,
+      name: true,
+      latitude: true,
+      longitude: true,
+      geofenceRadiusM: true,
+      shiftEndTime: true,
+    },
+  });
+  if (!branch) return null;
+  return {
+    id: branch.id,
+    name: branch.name,
+    fence:
+      branch.latitude !== null && branch.longitude !== null
+        ? {
+            latitude: Number(branch.latitude),
+            longitude: Number(branch.longitude),
+            radiusM: branch.geofenceRadiusM,
+          }
+        : null,
+    radiusM: branch.geofenceRadiusM,
+    shiftEndTime: branch.shiftEndTime,
+  };
+}
+
+export type BranchLocation = NonNullable<Awaited<ReturnType<typeof getBranchLocation>>>;
+
+/**
+ * Sets where the workshop is, how close staff must be to check themselves in
+ * or out, and when the working day ends (a day left open is closed then).
+ */
+export async function updateBranchLocation(
+  user: AuthenticatedUser,
+  branchId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(locationSchema, rawInput);
+  requirePermission(user, 'settings.edit');
+  if (input.latitude === 0 && input.longitude === 0) {
+    throw new DomainError('Set the workshop’s position.', 'latitude');
+  }
+  const data = {
+    latitude: input.latitude.toFixed(6),
+    longitude: input.longitude.toFixed(6),
+    geofenceRadiusM: input.radius,
+    shiftEndTime: input.shiftEndTime,
+  };
+
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.branch.findFirst({
+      where: { id: branchId, organizationId: user.organizationId },
+      select: { id: true, latitude: true, longitude: true, geofenceRadiusM: true, shiftEndTime: true },
+    });
+    if (!before) throw new NotFoundError('branch');
+    await tx.branch.update({ where: { id: before.id }, data });
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: before.id,
+      actorUserId: user.id,
+      action: 'branch.location_set',
+      entityType: 'Branch',
+      entityId: before.id,
+      beforeData: {
+        latitude: before.latitude?.toString() ?? null,
+        longitude: before.longitude?.toString() ?? null,
+        geofenceRadiusM: before.geofenceRadiusM,
+        shiftEndTime: before.shiftEndTime,
+      },
+      afterData: data,
+    });
+    return { branchId: before.id };
+  });
+}

@@ -2,12 +2,14 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { prisma } from '@/lib/prisma';
 import { requireUser } from '@/lib/auth/authorize';
 import { runAction, toClientResult } from '@/lib/action';
 import type { ActionResult } from '@/lib/errors';
 import { formDataToObject } from '@/lib/form-data';
 import { adjustStock, createPart, reverseMovement, updatePart } from '@/lib/inventory/parts';
 import { createSupplier, updateSupplier } from '@/lib/inventory/suppliers';
+import { getPartOption, type PartOption } from '@/lib/inventory/part-options';
 import { mergeSuppliers } from '@/lib/inventory/supplier-merge';
 import {
   cancelPurchase,
@@ -33,6 +35,23 @@ export async function createPartAction(
   if (!result.ok || !id) return toClientResult(result);
   refreshInventory();
   redirect(`/inventory/parts/${id}?created=1`);
+}
+
+/**
+ * A new part added from a line's part picker (invoice, quotation, purchase):
+ * saved like any other part, then handed back so the line can use it — no
+ * page change.
+ */
+export async function quickCreatePartAction(
+  _prev: ActionResult<PartOption>,
+  formData: FormData,
+): Promise<ActionResult<PartOption>> {
+  const user = await requireUser();
+  const result = await runAction(() => createPart(user, formDataToObject(formData)));
+  const id = result.data?.id ?? (result.duplicate ? result.duplicateOf : null);
+  if (!result.ok || !id) return { ...toClientResult(result), data: undefined };
+  refreshInventory();
+  return { ok: true, data: await getPartOption(user, id) };
 }
 
 export async function updatePartAction(
@@ -78,6 +97,23 @@ export async function createSupplierAction(
   if (!result.ok || !id) return toClientResult(result);
   refreshInventory();
   redirect(`/inventory/suppliers/${id}`);
+}
+
+/** A new supplier added from a supplier list (purchase, new part): handed back to be selected — no page change. */
+export async function quickCreateSupplierAction(
+  _prev: ActionResult<{ id: string; name: string }>,
+  formData: FormData,
+): Promise<ActionResult<{ id: string; name: string }>> {
+  const user = await requireUser();
+  const result = await runAction(() => createSupplier(user, formDataToObject(formData)));
+  const id = result.data?.id ?? (result.duplicate ? result.duplicateOf : null);
+  if (!result.ok || !id) return { ...toClientResult(result), data: undefined };
+  refreshInventory();
+  const supplier = await prisma.supplier.findFirst({
+    where: { id, organizationId: user.organizationId },
+    select: { id: true, name: true },
+  });
+  return supplier ? { ok: true, data: supplier } : { ok: false, error: 'Supplier not found.' };
 }
 
 export async function updateSupplierAction(

@@ -1,5 +1,6 @@
 'use client';
 
+import type { PartCatalog } from '@/lib/inventory/part-options';
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
@@ -43,6 +44,7 @@ export function QuotationBuilder({
   customerName,
   defaultVatRate,
   taxCodes,
+  catalog,
 }: {
   estimateId: string;
   initialLines: DraftLine[];
@@ -56,11 +58,15 @@ export function QuotationBuilder({
   defaultVatRate: string;
   /** The sales tax codes a line can be given. */
   taxCodes?: TaxCodeOption[];
+  /** The inventory, for picking a part on a Parts line. */
+  catalog?: PartCatalog;
 }) {
   const router = useRouter();
   // Most lines on a workshop quotation are parts, so a new one starts as a part.
   const [lines, setLines] = useState<DraftLine[]>(
-    initialLines.length > 0 ? initialLines : [newEditableLine('PART', defaultVatRate, taxCodes?.find((code) => code.isDefault) ?? null)],
+    initialLines.length > 0
+      ? initialLines
+      : [newEditableLine('PART', defaultVatRate, taxCodes?.find((code) => code.isDefault) ?? null)],
   );
   const [bill, setBill] = useState<BillDiscount>(initialBill);
   const [validUntil, setValidUntil] = useState(initialValidUntil);
@@ -128,6 +134,7 @@ export function QuotationBuilder({
         onBillChange={setBill}
         defaultVatRate={defaultVatRate}
         taxCodes={taxCodes}
+        catalog={catalog}
       />
 
       <Field

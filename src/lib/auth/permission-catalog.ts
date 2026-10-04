@@ -267,7 +267,19 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     actions: {
       view: 'Daily attendance and each person’s record.',
       create: 'Clock someone in or out.',
-      edit: 'Mark or correct a day’s attendance.',
+      edit: 'Mark or correct a day’s attendance, and review missed check-outs.',
+    },
+  },
+  {
+    key: 'task',
+    label: 'Tasks',
+    description:
+      'Work given to the team. Everyone keeps their own to-do list without any of these.',
+    actions: {
+      view: 'See every employee’s tasks and the team board.',
+      create: 'Give tasks to employees.',
+      edit: 'Change any task — its wording, due date, priority or who it is for.',
+      delete: 'Cancel any task.',
     },
   },
   {
@@ -445,9 +457,35 @@ export const ROLE_PRESETS: RolePreset[] = [
     ],
   },
   {
+    key: 'supervisor',
+    label: 'Supervisor',
+    description:
+      'Runs the floor: works on jobs, assigns technicians, gives and follows up tasks, and sees attendance.',
+    codes: [
+      ...all('task', 'appointment').filter((code) => code !== 'appointment.delete'),
+      ...only(
+        'job_card.view',
+        'job_card.create',
+        'job_card.edit',
+        'job_card.approve',
+        'quotation.view',
+        'customer.view',
+        'customer.create',
+        'vehicle.view',
+        'vehicle.create',
+        'inventory.view',
+        'inventory.edit',
+        'employee.view',
+        'attendance.view',
+        'leave.view',
+      ),
+    ],
+  },
+  {
     key: 'technician',
     label: 'Technician',
-    description: 'Works on jobs: inspection, diagnosis, repair, parts used and photos.',
+    description:
+      'Works on jobs: inspection, diagnosis, repair, parts used and photos. Checks in and keeps a to-do list.',
     codes: only(
       'job_card.view',
       'job_card.edit',

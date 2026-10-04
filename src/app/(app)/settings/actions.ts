@@ -10,7 +10,8 @@ import {
   setHiddenMenus,
   updateOrganizationSettings,
 } from '@/lib/organization/settings';
-import { updateBranch } from '@/lib/organization/branches';
+import { updateBranch, updateBranchLocation } from '@/lib/organization/branches';
+import { createDisplayLink, revokeDisplayLink } from '@/lib/workshop/live-board';
 
 export async function saveOrganizationSettingsAction(
   _prev: ActionResult,
@@ -56,5 +57,36 @@ export async function updateBranchAction(
   const result = await runAction(() => updateBranch(user, branchId, formDataToObject(formData)));
   // The branch name sits in the top bar on every page.
   if (result.ok) revalidatePath('/', 'layout');
+  return toClientResult(result);
+}
+
+export async function updateBranchLocationAction(
+  branchId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() =>
+    updateBranchLocation(user, branchId, formDataToObject(formData)),
+  );
+  if (result.ok) {
+    revalidatePath('/settings');
+    revalidatePath('/my-work');
+  }
+  return toClientResult(result);
+}
+
+/** A new TV link. Its secret is returned this once — only its hash is kept. */
+export async function createDisplayLinkAction(): Promise<ActionResult<{ token: string }>> {
+  const user = await requireUser();
+  const result = await runAction(() => createDisplayLink(user));
+  if (result.ok) revalidatePath('/settings');
+  return { ...toClientResult(result), data: result.data };
+}
+
+export async function revokeDisplayLinkAction(): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => revokeDisplayLink(user));
+  if (result.ok) revalidatePath('/settings');
   return toClientResult(result);
 }

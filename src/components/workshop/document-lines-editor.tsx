@@ -23,6 +23,8 @@ import type { BillDiscount, EditableLine, LineType } from '@/lib/billing/editabl
 import { rateFor, VAT_TREATMENTS, type VatTreatment } from '@/lib/vat-treatment';
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import { cn } from '@/lib/utils';
+import type { PartCatalog, PartOption } from '@/lib/inventory/part-options';
+import { PartCatalogProvider, PartPicker } from '@/components/inventory/part-picker';
 
 /*
  * Typing the lines of a quotation or an invoice, laid out like the
@@ -165,6 +167,7 @@ export function DocumentLinesEditor({
   taxCodes,
   rounding,
   onRoundingChange,
+  catalog,
 }: {
   lines: EditableLine[];
   onChange: (lines: EditableLine[]) => void;
@@ -185,6 +188,11 @@ export function DocumentLinesEditor({
   incomeAccounts?: { id: string; code: string; name: string }[];
   /** The tax code master. Given, each line picks a code instead of a treatment. */
   taxCodes?: TaxCodeOption[];
+  /**
+   * The inventory: given, a Parts line's description offers the parts in
+   * stock as it is typed, and picking one fills its name and selling price.
+   */
+  catalog?: PartCatalog;
 }) {
   const { priced, totals, vatLabel, billError } = useLineTotals(lines, defaultVatRate, bill);
   const billOff = toFils(totals.discountAmount) > 0;
@@ -207,6 +215,10 @@ export function DocumentLinesEditor({
   const update = (key: string, patch: Partial<EditableLine>) =>
     onChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
   const remove = (key: string) => onChange(lines.filter((line) => line.key !== key));
+  /** A part picked for a line: its name, and its selling price when it has one. */
+  const pick = (line: EditableLine, part: PartOption) =>
+    update(line.key, { description: part.name, unitPrice: part.price || line.unitPrice });
+  const picks = (line: EditableLine) => Boolean(catalog) && line.itemType === 'PART';
   const add = (itemType: LineType) => {
     const line = newEditableLine(
       itemType,
@@ -237,7 +249,7 @@ export function DocumentLinesEditor({
     }
   }
 
-  return (
+  const editor = (
     <div ref={rootRef} onKeyDown={onKeyDown} className="flex flex-col gap-4">
       {/* Phone: each line a small card with labelled fields — never a sideways table. */}
       <ol data-layout="cards" className="flex flex-col gap-3 md:hidden">
@@ -270,15 +282,31 @@ export function DocumentLinesEditor({
                   <Trash2 />
                 </Button>
               </div>
-              <LabelledInput
-                label="Description"
-                aria={`Line ${n} description`}
-                value={line.description}
-                onChange={(value) => update(line.key, { description: value })}
-                placeholder={
-                  line.itemType === 'LABOUR' ? 'e.g. Labour and consumables' : 'e.g. Ignition coil'
-                }
-              />
+              {picks(line) ? (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">Description</span>
+                  <PartPicker
+                    aria-label={`Line ${n} description`}
+                    value={line.description}
+                    onValueChange={(value) => update(line.key, { description: value })}
+                    onPick={(part) => pick(line, part)}
+                    placeholder="Type to find a part in stock"
+                    className="h-12 text-base"
+                  />
+                </label>
+              ) : (
+                <LabelledInput
+                  label="Description"
+                  aria={`Line ${n} description`}
+                  value={line.description}
+                  onChange={(value) => update(line.key, { description: value })}
+                  placeholder={
+                    line.itemType === 'LABOUR'
+                      ? 'e.g. Labour and consumables'
+                      : 'e.g. Ignition coil'
+                  }
+                />
+              )}
               <div className="grid grid-cols-[1fr_1.4fr_1fr] gap-2">
                 <LabelledInput
                   label="Qty"
@@ -379,16 +407,26 @@ export function DocumentLinesEditor({
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <Input
-                      aria-label={`Line ${n} description`}
-                      value={line.description}
-                      onChange={(event) => update(line.key, { description: event.target.value })}
-                      placeholder={
-                        line.itemType === 'LABOUR'
-                          ? 'e.g. Labour and consumables'
-                          : 'e.g. Ignition coil'
-                      }
-                    />
+                    {picks(line) ? (
+                      <PartPicker
+                        aria-label={`Line ${n} description`}
+                        value={line.description}
+                        onValueChange={(value) => update(line.key, { description: value })}
+                        onPick={(part) => pick(line, part)}
+                        placeholder="Type to find a part in stock"
+                      />
+                    ) : (
+                      <Input
+                        aria-label={`Line ${n} description`}
+                        value={line.description}
+                        onChange={(event) => update(line.key, { description: event.target.value })}
+                        placeholder={
+                          line.itemType === 'LABOUR'
+                            ? 'e.g. Labour and consumables'
+                            : 'e.g. Ignition coil'
+                        }
+                      />
+                    )}
                   </td>
                   {incomeAccounts ? (
                     <td className="px-2 py-2">
@@ -534,6 +572,7 @@ export function DocumentLinesEditor({
       </dl>
     </div>
   );
+  return catalog ? <PartCatalogProvider catalog={catalog}>{editor}</PartCatalogProvider> : editor;
 }
 
 /** Parts / Labour, as a two-button switch — one tap, no dropdown. */

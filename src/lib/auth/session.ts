@@ -17,8 +17,11 @@ export interface AuthenticatedUser {
   id: string;
   organizationId: string;
   primaryBranchId: string | null;
-  email: string;
+  /** Null for an employee's login, which signs in with its employee code. */
+  email: string | null;
   fullName: string;
+  /** Set until the user chooses their own password; every page sends them to do so. */
+  mustChangePassword?: boolean;
   /** Names of the roles granted to the user (e.g. "Owner"), for display only — never for access decisions. */
   roleNames: string[];
   /** Permission codes effective org-wide (branchId null on the grant). */
@@ -106,6 +109,7 @@ export const getCurrentUser = cache(async (): Promise<AuthenticatedUser | null> 
     primaryBranchId: session.user.primaryBranchId,
     email: session.user.email,
     fullName: session.user.fullName,
+    mustChangePassword: session.user.mustChangePassword,
     roleNames: [...new Set(session.user.userRoles.map((userRole) => userRole.role.name))],
     orgWidePermissions,
     branchPermissions,

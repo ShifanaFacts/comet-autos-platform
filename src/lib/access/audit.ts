@@ -72,6 +72,7 @@ const PREFIX_MODULE: Record<string, string> = {
   vat: 'vat',
   employee: 'employee',
   attendance: 'attendance',
+  task: 'task',
   leave: 'leave',
   payroll: 'payroll',
   salary: 'payroll',
@@ -462,6 +463,7 @@ const RESOLVERS: Record<string, Resolver> = {
 const STATIC_HREF: Record<string, string> = {
   Appointment: '/appointments',
   Attendance: '/hr/attendance',
+  Task: '/team',
   Leave: '/hr/leave',
   VatFiling: '/finance/vat',
   TaxCode: '/finance/accounting/tax-codes',
@@ -498,6 +500,7 @@ const NOUNS: Record<string, string> = {
   Payroll: 'payroll',
   Appointment: 'appointment',
   Attendance: 'attendance',
+  Task: 'task',
   Leave: 'leave',
   VatFiling: 'VAT return',
   TaxCode: 'tax code',

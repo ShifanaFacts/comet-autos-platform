@@ -79,6 +79,15 @@ class CloudinaryStorage implements FileStorage {
     return createHash('sha1').update(payload + this.apiSecret).digest('hex');
   }
 
+  /**
+   * Cloudinary files images and sound separately: audio lives under its
+   * "video" resource type. Told apart by the key's extension, which the
+   * application chose from the file's actual bytes.
+   */
+  private resourceType(key: string) {
+    return AUDIO_EXTENSIONS.has(key.slice(key.lastIndexOf('.') + 1)) ? 'video' : 'image';
+  }
+
   /** An image's public id carries no extension; Cloudinary keeps the format separately. */
   private split(key: string) {
     assertKey(key);
@@ -100,7 +109,7 @@ class CloudinaryStorage implements FileStorage {
     form.set('signature', this.sign(params));
     form.set('file', new Blob([new Uint8Array(bytes)], { type: contentType }), 'upload');
 
-    const response = await fetch(`https://api.cloudinary.com/v1_1/${this.cloudName}/image/upload`, { method: 'POST', body: form });
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${this.cloudName}/${this.resourceType(key)}/upload`, { method: 'POST', body: form });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
       throw new Error(`Cloudinary upload failed (${response.status}): ${body?.error?.message ?? response.statusText}`);
@@ -113,7 +122,7 @@ class CloudinaryStorage implements FileStorage {
     if (format) params.format = format;
     const query = new URLSearchParams({ ...params, api_key: this.apiKey, signature: this.sign(params) });
 
-    const response = await fetch(`https://api.cloudinary.com/v1_1/${this.cloudName}/image/download?${query}`, { cache: 'no-store' });
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${this.cloudName}/${this.resourceType(key)}/download?${query}`, { cache: 'no-store' });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`Cloudinary download failed (${response.status}).`);
     return Buffer.from(await response.arrayBuffer());
@@ -155,6 +164,34 @@ export function sniffImage(bytes: Buffer): ImageType | null {
   }
   if (bytes.length >= 12 && bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP') {
     return { mimeType: 'image/webp', extension: 'webp' };
+  }
+  return null;
+}
+
+export type AudioType = {
+  mimeType: 'audio/webm' | 'audio/ogg' | 'audio/mp4' | 'audio/mpeg' | 'audio/wav';
+  extension: 'webm' | 'ogg' | 'm4a' | 'mp3' | 'wav';
+};
+
+/** Extensions stored as sound (see CloudinaryStorage.resourceType). */
+const AUDIO_EXTENSIONS = new Set(['webm', 'ogg', 'm4a', 'mp3', 'wav']);
+
+/**
+ * The recording's type from its actual bytes. Covers what phones record in a
+ * browser: WebM/Opus (Chrome, Android), MP4/AAC (Safari, iPhone), Ogg
+ * (Firefox) — plus MP3 and WAV for a file chosen from the phone.
+ */
+export function sniffAudio(bytes: Buffer): AudioType | null {
+  if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+    return { mimeType: 'audio/webm', extension: 'webm' };
+  }
+  if (bytes.length >= 4 && bytes.subarray(0, 4).toString('latin1') === 'OggS') return { mimeType: 'audio/ogg', extension: 'ogg' };
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString('latin1') === 'ftyp') return { mimeType: 'audio/mp4', extension: 'm4a' };
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WAVE') {
+    return { mimeType: 'audio/wav', extension: 'wav' };
+  }
+  if (bytes.length >= 3 && (bytes.subarray(0, 3).toString('latin1') === 'ID3' || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0))) {
+    return { mimeType: 'audio/mpeg', extension: 'mp3' };
   }
   return null;
 }

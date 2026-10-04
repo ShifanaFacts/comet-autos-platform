@@ -1,5 +1,6 @@
 'use client';
 
+import type { PartCatalog } from '@/lib/inventory/part-options';
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
 import { PaymentModeField } from '@/components/accounting/payment-mode-field';
@@ -77,6 +78,7 @@ export function NewInvoiceForm({
   incomeAccounts,
   moneyAccounts = [],
   taxCodes,
+  catalog,
   modes = [],
   initialAdvances = null,
 }: {
@@ -96,6 +98,8 @@ export function NewInvoiceForm({
   moneyAccounts?: AccountChoice[];
   /** The sales tax codes a line can be given. */
   taxCodes?: TaxCodeOption[];
+  /** The inventory, for picking a part on a Parts line. */
+  catalog?: PartCatalog;
   /** The receipt modes (payment mode master) for a sales receipt. */
   modes?: PaymentModeOption[];
   /** The first customer's advances with money left (null: none, or not allowed). */
@@ -234,6 +238,7 @@ export function NewInvoiceForm({
           defaultVatRate={defaultVatRate}
           incomeAccounts={incomeAccounts}
           taxCodes={taxCodes}
+          catalog={catalog}
           rounding={rounding}
           onRoundingChange={setRounding}
         />

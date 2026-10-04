@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { CONTROL } from '@/components/forms/control';
-import { SearchableSelect } from '@/components/forms/searchable-select';
+import { SearchableSelect, type SearchableSelectProps } from '@/components/forms/searchable-select';
 import { NumberInput, type NumberKind } from '@/components/forms/number-input';
 
 /** Label → control (8px) → hint/error (8px). Fields are stacked 24px apart by their parent form. */
@@ -150,7 +150,7 @@ export function TextareaField({
  * The app's dropdown. Written like a `<select>` with `<option>`s; shown as a
  * searchable list — see SearchableSelect.
  */
-export function NativeSelect(props: ComponentProps<'select'>) {
+export function NativeSelect(props: SearchableSelectProps) {
   return <SearchableSelect {...props} />;
 }
 

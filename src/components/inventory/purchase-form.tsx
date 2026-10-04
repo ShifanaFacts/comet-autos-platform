@@ -1,11 +1,17 @@
 'use client';
 
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
+import type { PartOption } from '@/lib/inventory/part-options';
+import {
+  PartCatalogProvider,
+  PartPicker,
+  usePartCatalog,
+} from '@/components/inventory/part-picker';
+import { NewSupplierDialog } from '@/components/inventory/new-supplier-dialog';
 import { NumberInput } from '@/components/forms/number-input';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { PackageCheck, Plus, Save, Search, Trash2 } from 'lucide-react';
+import { PackageCheck, Save, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Field,
   FormError,
@@ -39,15 +45,8 @@ import {
   type ReceiptOptions,
 } from '@/components/inventory/receipt-settlement';
 
-export interface PurchasePart {
-  id: string;
-  sku: string;
-  name: string;
-  unit: string;
-  cost: string;
-  taxRate: string;
-  supplierId: string | null;
-}
+/** A part a purchase line can be for — with its stock, as the part picker shows it. */
+export type PurchasePart = PartOption;
 
 interface Line {
   key: number;
@@ -125,9 +124,31 @@ function gross(line: Line): number {
   }
 }
 
-export function PurchaseForm({
+type PurchaseFormProps = Parameters<typeof PurchaseFormBody>[0] & {
+  /** Whether a part missing from the catalogue can be added from the line picker. */
+  canCreateParts?: boolean;
+};
+
+export function PurchaseForm({ canCreateParts = false, ...props }: PurchaseFormProps) {
+  const catalog = useMemo(
+    () => ({
+      parts: props.parts,
+      suppliers: props.suppliers,
+      canCreate: canCreateParts,
+      defaultVat: props.defaultVat,
+    }),
+    [props.parts, props.suppliers, canCreateParts, props.defaultVat],
+  );
+  return (
+    <PartCatalogProvider catalog={catalog}>
+      <PurchaseFormBody {...props} />
+    </PartCatalogProvider>
+  );
+}
+
+function PurchaseFormBody({
   action,
-  parts,
+  parts: givenParts,
   suppliers,
   defaultVat,
   today,
@@ -190,29 +211,21 @@ export function PurchaseForm({
   const [search, setSearch] = useState('');
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(action, { ok: false });
   const errors = state.fieldErrors ?? {};
+  // The catalogue's parts and suppliers, with any added from this page.
+  const catalog = usePartCatalog();
+  const parts = catalog?.parts ?? givenParts;
+  const supplierList = catalog?.suppliers ?? suppliers;
+  const [addingSupplier, setAddingSupplier] = useState<string | null>(null);
   const byId = useMemo(() => new Map(parts.map((part) => [part.id, part])), [parts]);
+  const taken = useMemo(() => new Set(lines.map((line) => line.partId)), [lines]);
 
-  const matches = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return [];
-    const taken = new Set(lines.map((line) => line.partId));
-    return parts
-      .filter(
-        (part) =>
-          !taken.has(part.id) &&
-          (part.sku.toLowerCase().includes(q) || part.name.toLowerCase().includes(q)),
-      )
-      .sort((a, b) => Number(b.supplierId === supplierId) - Number(a.supplierId === supplierId))
-      .slice(0, 8);
-  }, [search, parts, lines, supplierId]);
-
-  function addPart(part: PurchasePart) {
+  function addPart(part: PurchasePart, quantity = '1') {
     setLines((current) => [
       ...current,
       {
         key: nextKey.current++,
         partId: part.id,
-        quantity: '1',
+        quantity,
         unitCost: part.cost,
         discountType: 'PERCENT',
         discountValue: '',
@@ -296,15 +309,28 @@ export function PurchaseForm({
                 required
                 value={supplierId}
                 onChange={(event) => setSupplierId(event.target.value)}
+                onCreate={catalog?.canCreate ? (typed) => setAddingSupplier(typed) : undefined}
+                createLabel="Add new supplier"
                 className="h-11 text-base md:text-sm"
               >
                 <option value="">Choose the supplier…</option>
-                {suppliers.map((supplier) => (
+                {supplierList.map((supplier) => (
                   <option key={supplier.id} value={supplier.id}>
                     {supplier.name}
                   </option>
                 ))}
               </NativeSelect>
+              {addingSupplier !== null ? (
+                <NewSupplierDialog
+                  name={addingSupplier}
+                  onClose={() => setAddingSupplier(null)}
+                  onCreated={(supplier) => {
+                    catalog?.addSupplier(supplier);
+                    setSupplierId(supplier.id);
+                    setAddingSupplier(null);
+                  }}
+                />
+              ) : null}
             </Field>
             <TextField
               label="Supplier invoice no."
@@ -341,46 +367,20 @@ export function PurchaseForm({
         <div className="flex flex-col gap-2">
           <p className="text-sm font-semibold">Parts received</p>
           <div className="relative w-full sm:max-w-md">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
+            <Search className="pointer-events-none absolute top-1/2 left-3 z-10 size-4 -translate-y-1/2 text-muted-foreground" />
+            <PartPicker
+              mode="search"
+              price="cost"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  if (matches[0]) addPart(matches[0]);
-                }
-              }}
+              onValueChange={setSearch}
+              onPick={addPart}
+              exclude={taken}
+              preferSupplierId={supplierId}
+              defaultSupplierId={supplierId}
               placeholder="Add a part — type SKU or name"
               aria-label="Add a part"
               className="h-11 pl-9 text-base md:text-sm"
             />
-            {matches.length > 0 ? (
-              <ul className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-border bg-popover shadow-md">
-                {matches.map((part) => (
-                  <li key={part.id}>
-                    <button
-                      type="button"
-                      onClick={() => addPart(part)}
-                      className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-sm hover:bg-muted"
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium">{part.name}</span>
-                        <span className="font-mono text-xs text-muted-foreground">{part.sku}</span>
-                      </span>
-                      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                        {part.cost ? formatMoney(part.cost) : 'no cost'}
-                        <Plus className="size-4" />
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : search.trim() ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                No active part matches. Add it to the catalogue first.
-              </p>
-            ) : null}
           </div>
         </div>
 

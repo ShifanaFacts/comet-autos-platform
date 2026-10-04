@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { getTaxCodeOptions } from '@/lib/accounting/tax-codes';
+import { getPartCatalog } from '@/lib/inventory/part-options';
 import { notFound } from 'next/navigation';
 import { hasPermission, requireUser, requirePermission } from '@/lib/auth/authorize';
 import { getAccountChoices } from '@/lib/accounting/reports';
@@ -47,6 +48,7 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
             invoiceId={invoice.id}
             defaultVatRate={defaultVatRate}
             taxCodes={await getTaxCodeOptions(user.organizationId, 'sales')}
+            catalog={await getPartCatalog(user)}
             notes={invoice.notes ?? ''}
             issueDate={invoice.issueDate.toISOString().slice(0, 10)}
             dueDate={(invoice.dueDate ?? invoice.issueDate).toISOString().slice(0, 10)}

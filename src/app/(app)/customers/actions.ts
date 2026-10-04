@@ -14,6 +14,7 @@ import {
 import type { ActionResult } from '@/lib/errors';
 import { mergeCustomers } from '@/lib/customers/merge';
 import { formDataToObject } from '@/lib/form-data';
+import { getCustomerOptions, type CustomerOption } from '@/lib/customers/picker';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import {
   createCustomer,
@@ -56,6 +57,34 @@ export async function createCustomerAction(
   if (!result.ok || !customerId) return fail(result);
   revalidatePath('/customers');
   redirect(`/customers/${customerId}/vehicles/new?new=1`);
+}
+
+/**
+ * A new customer added from an invoice or quotation's customer search: saved
+ * like any other, then handed back so the document can use it — no page
+ * change.
+ */
+export async function quickCreateCustomerAction(
+  _prev: ActionResult<CustomerOption>,
+  formData: FormData,
+): Promise<ActionResult<CustomerOption>> {
+  const user = await requireUser();
+  const input = formDataToObject(formData);
+  const result = await runAction(() =>
+    prisma.$transaction(async (tx) => {
+      await claimRequestKey(tx, user, input, 'customer.create');
+      const customer = await createCustomer(tx, user, asCustomer(formData));
+      await settleRequestKey(tx, user, input, customer.id);
+      return customer;
+    }),
+  );
+  const customerId = result.data?.id ?? (result.duplicate ? result.duplicateOf : null);
+  if (!result.ok || !customerId) return { ...fail(result), data: undefined };
+  revalidatePath('/customers');
+  const [customer] = await getCustomerOptions(user, [customerId]);
+  return customer
+    ? { ok: true, data: customer }
+    : { ok: false, error: 'The customer was saved but could not be loaded — search for them.' };
 }
 
 export async function updateCustomerAction(

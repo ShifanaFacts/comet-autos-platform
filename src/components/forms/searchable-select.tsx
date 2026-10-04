@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Popover } from '@base-ui/react/popover';
-import { Check, ChevronDown, Search } from 'lucide-react';
+import { Check, ChevronDown, Plus, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CONTROL } from '@/components/forms/control';
 
@@ -31,6 +31,12 @@ import { CONTROL } from '@/components/forms/control';
  * — is shown with the parts at the two ends of the row rather than joined by
  * a dash or a dot: the name on the left, the code or detail on the right.
  * `data-hint` on an option sets the right-hand part explicitly.
+ *
+ * Typing while the closed control has the focus opens it already searching
+ * for what was typed. Given `onCreate`, the list starts with "Add new …" —
+ * for a supplier or a customer not on file yet, under the search box where it
+ * never scrolls out of reach — which hands what was
+ * typed to the caller (to open a short form) instead of choosing anything.
  */
 
 interface Choice {
@@ -115,9 +121,18 @@ function splitClasses(className: string | undefined) {
 
 const normalise = (value: string) => value.toLowerCase().replace(/[^a-z0-9؀-ۿ]+/g, ' ');
 
+export type SearchableSelectProps = ComponentProps<'select'> & {
+  /** Offers "Add new …" at the end of the list; called with what was typed. */
+  onCreate?: (query: string) => void;
+  /** The add row's words, e.g. "Add new supplier". */
+  createLabel?: string;
+};
+
 export function SearchableSelect({
   className,
   children,
+  onCreate,
+  createLabel = 'Add new',
   id,
   value,
   defaultValue,
@@ -127,7 +142,7 @@ export function SearchableSelect({
   'aria-invalid': ariaInvalid,
   'aria-describedby': ariaDescribedBy,
   ...props
-}: ComponentProps<'select'>) {
+}: SearchableSelectProps) {
   const choices = useMemo(() => readChoices(children), [children]);
   const selectRef = useRef<HTMLSelectElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -193,7 +208,33 @@ export function SearchableSelect({
     onChange?.(event);
   }
 
+  /*
+   * The add row sits above the choices: `active` is -1 on it, otherwise the
+   * index of a choice. Typing keeps the first match active, so Enter still
+   * picks a match; it adds a new one only when nothing matches.
+   */
+  const CREATE_ROW = -1;
+
+  function create() {
+    setOpen(false);
+    onCreate?.(query.trim());
+  }
+
   function move(step: number) {
+    if (onCreate) {
+      setActive((current) => {
+        let next = current;
+        for (let i = 0; i <= shown.length; i += 1) {
+          next += step;
+          if (next > shown.length - 1) next = CREATE_ROW;
+          if (next < CREATE_ROW) next = shown.length - 1;
+          if (next === CREATE_ROW || !shown[next].disabled) break;
+        }
+        if (next >= 0) listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' });
+        return next;
+      });
+      return;
+    }
     if (shown.length === 0) return;
     let next = active;
     for (let i = 0; i < shown.length; i += 1) {
@@ -213,6 +254,7 @@ export function SearchableSelect({
       move(-1);
     } else if (event.key === 'Enter') {
       event.preventDefault();
+      if (onCreate && (active === CREATE_ROW || shown.length === 0)) return create();
       const choice = shown[Math.min(active, shown.length - 1)];
       if (choice) choose(choice);
     }
@@ -241,6 +283,15 @@ export function SearchableSelect({
           aria-invalid={ariaInvalid}
           aria-describedby={ariaDescribedBy}
           aria-haspopup="listbox"
+          onKeyDown={(event) => {
+            if (open || event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey)
+              return;
+            if (event.key === ' ') return;
+            event.preventDefault();
+            setOpen(true);
+            setQuery(event.key);
+            setActive(0);
+          }}
           className={cn(
             CONTROL,
             'relative flex h-9 items-center justify-between gap-2 text-left',
@@ -276,17 +327,43 @@ export function SearchableSelect({
                   setActive(0);
                 }}
                 onKeyDown={onSearchKey}
+                onFocus={(event) => {
+                  const end = event.currentTarget.value.length;
+                  event.currentTarget.setSelectionRange(end, end);
+                }}
                 placeholder="Search…"
                 aria-label="Search the options"
                 autoComplete="off"
                 className="h-10 w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
             </div>
+            {onCreate ? (
+              <div className="border-b border-border p-1">
+                <button
+                  type="button"
+                  onMouseEnter={() => setActive(CREATE_ROW)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={create}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-md px-2 py-2.5 text-left text-sm font-medium text-primary',
+                    active === CREATE_ROW && 'bg-muted',
+                  )}
+                >
+                  <Plus className="size-4 shrink-0" />
+                  <span className="min-w-0 truncate">
+                    {createLabel}
+                    {query.trim() ? ` “${query.trim()}”` : ''}
+                  </span>
+                </button>
+              </div>
+            ) : null}
             <ul ref={listRef} role="listbox" className="max-h-64 overflow-y-auto p-1">
               {shown.length === 0 ? (
-                <li className="px-2 py-3 text-center text-sm text-muted-foreground">
-                  Nothing matches
-                </li>
+                onCreate ? null : (
+                  <li className="px-2 py-3 text-center text-sm text-muted-foreground">
+                    Nothing matches
+                  </li>
+                )
               ) : (
                 shown.map((choice, index) => {
                   const heading =

@@ -29,6 +29,7 @@ import {
 } from '@/lib/workshop/repair';
 import { recordQualityCheck } from '@/lib/workshop/quality-check';
 import { getStockOnHand } from '@/lib/inventory/stock';
+import { getPartCatalog } from '@/lib/inventory/part-options';
 import {
   adjustStock,
   createPart,
@@ -291,6 +292,21 @@ describe('inventory management', () => {
   let purchaseId: string;
   let filterLine: string;
   let padsLine: string;
+
+  test('part picker: each part with its stock and prices, for this workshop only', async () => {
+    const catalog = await getPartCatalog(a.owner);
+    assert.equal(catalog.canCreate, true);
+    assert.ok(Number(catalog.defaultVat) > 0, 'a new part defaults to the standard VAT rate');
+    const filter = catalog.parts.find((part) => part.id === filterId);
+    assert.ok(filter, 'the oil filter is offered');
+    assert.equal(filter.sku, 'FLT-OIL-01');
+    assert.equal(Number(filter.stock), 8, 'stock on hand from the ledger');
+    assert.equal(Number(filter.price), 28);
+    assert.equal(Number(filter.cost), 14);
+    assert.ok(catalog.suppliers.some((supplier) => supplier.id === supplierId));
+    const other = await getPartCatalog(b.owner);
+    assert.ok(!other.parts.some((part) => part.id === filterId), 'never another workshop’s parts');
+  });
 
   test('purchases: a draft calculates totals on the server and does not touch stock', async () => {
     const purchase = await createPurchase(a.owner, {
@@ -555,7 +571,11 @@ describe('inventory management', () => {
     });
     assert.equal(edited.sku, first.sku, 'saving with the code left empty keeps the automatic one');
 
-    const clipJob = await jobInRepair(a, '3', { description: 'Clips', quantity: '2', price: '7.50' });
+    const clipJob = await jobInRepair(a, '3', {
+      description: 'Clips',
+      quantity: '2',
+      price: '7.50',
+    });
     await expectDomainError(
       recordPartUsage(a.owner, clipJob.jobCardId, {
         partId: first.id,

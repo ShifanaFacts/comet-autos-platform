@@ -39,6 +39,7 @@ export default async function EditPurchasePage({ params }: { params: Promise<{ i
         <PurchaseForm
           action={updatePurchaseAction.bind(null, purchase.id)}
           parts={options.parts}
+          canCreateParts={options.canCreateParts}
           suppliers={options.suppliers}
           defaultVat={options.defaultVat}
           taxCodes={options.taxCodes}
