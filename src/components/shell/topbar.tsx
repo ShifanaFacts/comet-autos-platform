@@ -15,6 +15,7 @@ import { CONTAINER_X } from '@/components/layout/primitives';
 import { cn } from '@/lib/utils';
 import { logout } from '@/lib/auth/logout-action';
 import type { Brand } from '@/lib/brand/brand';
+import { AttendanceControl, type AttendanceStatus } from '@/components/team/attendance-control';
 
 function initials(fullName: string): string {
   return fullName
@@ -30,10 +31,13 @@ export function Topbar({
   user,
   branchName,
   brand,
+  attendance,
 }: {
   user: { fullName: string; email: string | null; roleNames: string[] };
   branchName: string | null;
   brand: Pick<Brand, 'shortName' | 'initial'>;
+  /** The signed-in employee's check-in state; null for a login with no employee record. */
+  attendance?: AttendanceStatus | null;
 }) {
   const role = user.roleNames.join(' / ') || 'Staff';
   return (
@@ -59,6 +63,8 @@ export function Topbar({
             </span>
           ) : null}
           {branchName ? <span className="hidden h-6 w-px bg-border xl:block" aria-hidden /> : null}
+
+          {attendance ? <AttendanceControl status={attendance} /> : null}
 
           <InstallAppButton appName={brand.shortName} />
 

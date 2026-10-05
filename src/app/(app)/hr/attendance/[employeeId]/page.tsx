@@ -95,12 +95,13 @@ export default async function EmployeeAttendancePage({
         ) : null}
       </div>
 
-      <Panel className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+      <Panel className="grid grid-cols-2 gap-6 sm:grid-cols-5">
         {[
           ['Days present', String(totals.present + totals.halfDay)],
           ['Absent', String(totals.absent)],
           ['On leave', String(totals.onLeave)],
           ['Hours', formatWorked(totals.minutes)],
+          ['Overtime', totals.overtime ? formatWorked(totals.overtime) : '—'],
         ].map(([label, value]) => (
           <div key={label} className="flex flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">{label}</span>
@@ -155,6 +156,9 @@ export default async function EmployeeAttendancePage({
                     </span>
                     <span className="font-medium tabular-nums text-foreground">
                       {day.workedLabel}
+                      {day.overtimeLabel ? (
+                        <span className="ml-1.5 text-warning">+{day.overtimeLabel} OT</span>
+                      ) : null}
                     </span>
                   </span>
                   {day.notes ? <span className="text-xs text-muted-foreground">{day.notes}</span> : null}
@@ -170,6 +174,7 @@ export default async function EmployeeAttendancePage({
                     <th className="px-2 py-4">In</th>
                     <th className="px-2 py-4">Out</th>
                     <th className="w-24 px-2 py-4 text-right">Worked</th>
+                    <th className="w-24 px-2 py-4 text-right">Overtime</th>
                     <th className="px-6 py-4">Note</th>
                   </tr>
                 </thead>
@@ -190,6 +195,9 @@ export default async function EmployeeAttendancePage({
                       </td>
                       <td className="px-2 py-4 text-right font-medium tabular-nums">
                         {day.workedLabel}
+                      </td>
+                      <td className="px-2 py-4 text-right tabular-nums text-warning">
+                        {day.overtimeLabel ?? '—'}
                       </td>
                       <td className="px-6 py-4 text-muted-foreground">{day.notes ?? '—'}</td>
                     </tr>

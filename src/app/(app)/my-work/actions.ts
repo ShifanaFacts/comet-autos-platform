@@ -8,6 +8,8 @@ import { formDataToObject } from '@/lib/form-data';
 import { reportLeftAt, selfClock } from '@/lib/hr/self-attendance';
 
 function refresh() {
+  // The check-in pill sits in the top bar, around every page.
+  revalidatePath('/', 'layout');
   revalidatePath('/my-work');
   revalidatePath('/hr/attendance', 'layout');
   revalidatePath('/team');
@@ -24,11 +26,14 @@ export async function selfClockAction(
   direction: 'IN' | 'OUT',
   position: { latitude: number; longitude: number; accuracy: number },
   dayKey: string,
+  /** Checking in after a day left open: when they left that day (HH:MM). */
+  previousLeftAt?: string,
 ): Promise<ActionResult<{ closed: string[] }>> {
   const user = await requireUser();
   const result = await runAction(async () => {
     const outcome = await selfClock(user, direction, {
       ...position,
+      previousLeftAt,
       requestKey: `self-${direction}-${user.id}-${dayKey}`.slice(0, 64),
     });
     return { closed: outcome.closed };

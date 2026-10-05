@@ -11,7 +11,7 @@ import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { formatTime, localDateString, parseCalendarDate } from '@/lib/format';
 import { getBranchLocation } from '@/lib/organization/branches';
 import { checkFence, dubaiTimeOn, formatDistance, MAX_ACCURACY_M } from '@/lib/team/geo';
-import { formatWorked, minutesWorked } from '@/lib/hr/attendance';
+import { formatWorked, minutesWorked, splitWorked } from '@/lib/hr/attendance';
 
 /*
  * Checking yourself in and out, on your own phone, at the workshop.
@@ -40,6 +40,13 @@ const positionSchema = z.object({
   latitude: z.coerce.number().min(-90).max(90),
   longitude: z.coerce.number().min(-180).max(180),
   accuracy: z.coerce.number().min(0).max(100_000),
+  /** Checking in: when they left on the last day they didn't check out of (HH:MM). */
+  previousLeftAt: z
+    .string()
+    .trim()
+    .regex(/^([01]d|2[0-3]):[0-5]d$/, 'Enter the time you left, e.g. 19:30.')
+    .optional()
+    .or(z.literal('')),
   requestKey: z.string().optional(),
 });
 
@@ -145,7 +152,12 @@ export async function getMyDay(user: AuthenticatedUser) {
     date: todayKey,
     record,
     next,
-    workedLabel: record ? formatWorked(minutesWorked(record)) : '—',
+    // Employees see their normal hours; overtime is for whoever manages attendance.
+    workedLabel: record
+      ? formatWorked(
+          location ? (splitWorked(record, location.shiftEndTime)?.normal ?? null) : minutesWorked(record),
+        )
+      : '—',
     fence: location?.fence ?? null,
     shiftEndTime: location?.shiftEndTime ?? null,
     /** Still checked in after the shift ended: remind them before they go. */
@@ -224,7 +236,14 @@ export async function selfClock(user: AuthenticatedUser, direction: 'IN' | 'OUT'
       if (existing?.clockInAt) {
         throw new DomainError(`You already checked in today at ${formatTime(existing.clockInAt)}.`);
       }
-      const closed = await closeForgottenDays(tx, user, employee, location!.shiftEndTime, today);
+      const closed = await closeForgottenDays(
+        tx,
+        user,
+        employee,
+        location!.shiftEndTime,
+        today,
+        input.previousLeftAt || undefined,
+      );
       const record = await tx.attendance.upsert({
         where: { employeeId_attendanceDate: { employeeId: employee.id, attendanceDate: today } },
         update: {
@@ -301,13 +320,19 @@ export async function selfClock(user: AuthenticatedUser, direction: 'IN' | 'OUT'
   });
 }
 
-/** Closes every earlier open day at its shift end, flagged for review. */
+/**
+ * Closes earlier days left open. The most recent one is closed at the time
+ * the employee says they left — checking in asks for it, and refuses without
+ * it. Any older ones (rare: several days missed) close at the shift end.
+ * All are flagged for review.
+ */
 async function closeForgottenDays(
   tx: Prisma.TransactionClient,
   user: AuthenticatedUser,
   employee: { id: string; branchId: string },
   shiftEndTime: string,
   before: Date,
+  previousLeftAt?: string,
 ) {
   const open = await tx.attendance.findMany({
     where: {
@@ -318,25 +343,48 @@ async function closeForgottenDays(
       clockOutAt: null,
     },
     select: { id: true, attendanceDate: true, clockInAt: true, notes: true },
+    orderBy: { attendanceDate: 'desc' },
   });
   const closed: string[] = [];
-  for (const day of open) {
+  for (const [index, day] of open.entries()) {
     const key = dayKey(day.attendanceDate);
-    const at = closingTime(key, shiftEndTime, day.clockInAt!);
+    const reported = index === 0;
+    let at: Date;
+    if (reported) {
+      if (!previousLeftAt) {
+        throw new DomainError(
+          `You didn't check out on ${key} (in at ${formatTime(day.clockInAt!)}). Enter the time you left, then check in.`,
+          'previousLeftAt',
+        );
+      }
+      at = dubaiTimeOn(key, previousLeftAt);
+      if (at.getTime() <= day.clockInAt!.getTime()) {
+        throw new DomainError(
+          `You checked in at ${formatTime(day.clockInAt!)} that day — the time you left must be after that.`,
+          'previousLeftAt',
+        );
+      }
+    } else {
+      at = closingTime(key, shiftEndTime, day.clockInAt!);
+    }
     await tx.attendance.update({
       where: { id: day.id },
       data: {
         clockOutAt: at,
-        clockOutMethod: 'AUTO',
+        clockOutMethod: reported ? 'REPORTED' : 'AUTO',
         needsReview: true,
-        notes: day.notes ?? `No check-out — closed at the shift end (${shiftEndTime}).`,
+        notes:
+          day.notes ??
+          (reported
+            ? `Forgot to check out — said they left at ${previousLeftAt}.`
+            : `No check-out — closed at the shift end (${shiftEndTime}).`),
       },
     });
     await writeAuditLog(tx, {
       organizationId: user.organizationId,
       branchId: employee.branchId,
       actorUserId: user.id,
-      action: 'attendance.auto_closed',
+      action: reported ? 'attendance.leaving_reported' : 'attendance.auto_closed',
       entityType: 'Attendance',
       entityId: day.id,
       beforeData: { clockOutAt: null },
@@ -364,7 +412,8 @@ export async function reportLeftAt(user: AuthenticatedUser, attendanceId: string
     });
     if (!day) throw new NotFoundError('day');
     if (!day.clockInAt) throw new DomainError('There is no check-in on that day.');
-    if (day.clockOutAt && day.clockOutMethod !== 'AUTO') {
+    // An automatic or self-reported time can still be put right; a real one can't.
+    if (day.clockOutAt && day.clockOutMethod !== 'AUTO' && day.clockOutMethod !== 'REPORTED') {
       throw new DomainError(`That day already has a check-out at ${formatTime(day.clockOutAt)}.`);
     }
     const key = dayKey(day.attendanceDate);
