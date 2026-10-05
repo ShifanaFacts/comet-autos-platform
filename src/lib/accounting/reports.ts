@@ -523,3 +523,79 @@ export async function getAccountChoices(user: AuthenticatedUser) {
 }
 
 export type AccountChoices = Awaited<ReturnType<typeof getAccountChoices>>;
+
+// ─── Monthly profit (the dashboard's trend) ─────────────────────────────────
+
+/**
+ * Revenue, cost of sales, expenses and net profit for each of the twelve
+ * calendar months ending with `endMonth` ("2026-10"), from the journal — the
+ * same accounts and rules as the profit and loss, so the trend never disagrees
+ * with the statement.
+ */
+export async function getMonthlyProfit(
+  user: AuthenticatedUser,
+  endMonth = localDateString().slice(0, 7),
+) {
+  requirePermission(user, 'reports.view');
+  const [endYear, endMonthNumber] = endMonth.split('-').map(Number);
+  const months = Array.from({ length: 12 }, (_, index) =>
+    new Date(Date.UTC(endYear, endMonthNumber - 12 + index, 1)).toISOString().slice(0, 7),
+  );
+  const from = day(`${months[0]}-01`);
+  const to = new Date(Date.UTC(endYear, endMonthNumber, 0));
+
+  const [accounts, lines] = await Promise.all([
+    prisma.chartOfAccount.findMany({
+      where: { organizationId: user.organizationId, accountType: { in: ['REVENUE', 'EXPENSE'] } },
+      select: { id: true, accountCode: true, accountType: true, role: true },
+    }),
+    prisma.journalEntryLine.findMany({
+      where: {
+        organizationId: user.organizationId,
+        chartOfAccount: { accountType: { in: ['REVENUE', 'EXPENSE'] } },
+        journalEntry: { entryDate: { gte: from, lte: to }, sourceType: { not: 'YEAR_END_CLOSE' } },
+      },
+      select: {
+        chartOfAccountId: true,
+        debitAmount: true,
+        creditAmount: true,
+        journalEntry: { select: { entryDate: true } },
+      },
+    }),
+  ]);
+  const byId = new Map(accounts.map((account) => [account.id, account]));
+  const buckets = new Map(months.map((month) => [month, { revenue: 0, cost: 0, expense: 0 }]));
+  for (const line of lines) {
+    const account = byId.get(line.chartOfAccountId);
+    const bucket = buckets.get(line.journalEntry.entryDate.toISOString().slice(0, 7));
+    if (!account || !bucket) continue;
+    const debit = toFils(line.debitAmount.toString());
+    const credit = toFils(line.creditAmount.toString());
+    if (account.accountType === 'REVENUE') bucket.revenue += credit - debit;
+    else if (
+      costOfSales({ type: account.accountType, code: account.accountCode, role: account.role })
+    )
+      bucket.cost += debit - credit;
+    else bucket.expense += debit - credit;
+  }
+  return months.map((month) => {
+    const bucket = buckets.get(month)!;
+    const net = bucket.revenue - bucket.cost - bucket.expense;
+    return {
+      month,
+      label: new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-AE', {
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC',
+      }),
+      revenueFils: bucket.revenue,
+      costsFils: bucket.cost + bucket.expense,
+      netFils: net,
+      revenue: filsToString(bucket.revenue),
+      costs: filsToString(bucket.cost + bucket.expense),
+      net: filsToString(net),
+    };
+  });
+}
+
+export type MonthlyProfit = Awaited<ReturnType<typeof getMonthlyProfit>>;

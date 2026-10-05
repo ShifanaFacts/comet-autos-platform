@@ -27,9 +27,15 @@ const compact = new Intl.NumberFormat('en-AE', { notation: 'compact', maximumFra
 export function MonthlyColumns({
   data,
   caption,
+  noun = 'invoice',
+  valueHeading = 'Sales',
 }: {
   data: { month: string; label: string; valueFils: number; value: string; count: number }[];
   caption: string;
+  /** What each month counts, singular: "invoice", "purchase". */
+  noun?: string;
+  /** The amount column's heading in the table. */
+  valueHeading?: string;
 }) {
   const max = niceMax(Math.max(...data.map((row) => row.valueFils)) / 100);
   const ticks = [max, max / 2, 0];
@@ -80,7 +86,8 @@ export function MonthlyColumns({
                     <span className="font-medium">{row.label}</span>
                     <span className="tabular-nums">{formatMoney(row.value)}</span>
                     <span className="text-muted-foreground">
-                      {row.count} invoice{row.count === 1 ? '' : 's'}
+                      {row.count} {noun}
+                      {row.count === 1 ? '' : 's'}
                     </span>
                   </span>
                 </li>
@@ -110,8 +117,8 @@ export function MonthlyColumns({
             <thead className="text-left text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">
               <tr>
                 <th className="py-2">Month</th>
-                <th className="py-2 text-right">Invoices</th>
-                <th className="py-2 text-right">Sales</th>
+                <th className="py-2 text-right capitalize">{noun}s</th>
+                <th className="py-2 text-right">{valueHeading}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">

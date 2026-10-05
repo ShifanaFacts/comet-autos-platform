@@ -66,7 +66,7 @@ export type WorkshopReport = Awaited<ReturnType<typeof getWorkshopReport>>;
 
 // ─── Sales ──────────────────────────────────────────────────────────────────
 
-async function salesReport(user: AuthenticatedUser, period: ResolvedPeriod) {
+export async function salesReport(user: AuthenticatedUser, period: ResolvedPeriod) {
   const organizationId = user.organizationId;
   const branch = user.primaryBranchId ? { branchId: user.primaryBranchId } : {};
 
@@ -160,7 +160,7 @@ async function salesReport(user: AuthenticatedUser, period: ResolvedPeriod) {
 
 // ─── Workshop & technicians ─────────────────────────────────────────────────
 
-async function workshopReport(user: AuthenticatedUser, period: ResolvedPeriod) {
+export async function workshopReport(user: AuthenticatedUser, period: ResolvedPeriod) {
   const organizationId = user.organizationId;
   const branch = user.primaryBranchId ? { branchId: user.primaryBranchId } : {};
   const window = { gte: period.start, lt: period.end };
@@ -248,7 +248,7 @@ async function workshopReport(user: AuthenticatedUser, period: ResolvedPeriod) {
 
 // ─── Parts ──────────────────────────────────────────────────────────────────
 
-async function partsReport(user: AuthenticatedUser, period: ResolvedPeriod) {
+export async function partsReport(user: AuthenticatedUser, period: ResolvedPeriod) {
   const organizationId = user.organizationId;
   const branch = user.primaryBranchId ? { branchId: user.primaryBranchId } : {};
 
