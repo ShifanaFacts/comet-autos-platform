@@ -16,6 +16,7 @@ import { CONTROL } from '@/components/forms/control';
 import { formatTime } from '@/lib/format';
 import { reportLeftAtAction, selfClockAction } from '@/app/(app)/my-work/actions';
 import { cn } from '@/lib/utils';
+import { announce } from '@/lib/notifications/sound';
 
 /*
  * Attendance, wherever the employee is in the app.
@@ -145,15 +146,21 @@ export function AttendanceControl({ status }: { status: AttendanceStatus }) {
 
     if (status.next === 'IN') {
       // Once per visit and day: "Later" means later, not every page.
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- opened after hydration, from browser state
-      if (read(LATER_KEY) !== status.date) setOpen('in');
+      if (read(LATER_KEY) !== status.date) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- opened after hydration, from browser state
+        setOpen('in');
+        announce('CHECK_IN_REMINDER');
+      }
     } else if (status.next === 'OUT' && status.shiftEndTime) {
       const shiftEnd = new Date(`${status.date}T${status.shiftEndTime}:00+04:00`).getTime();
       const remind = () => {
         const snoozedUntil = Number(read(SNOOZE_KEY) ?? 0);
         const at = Math.max(shiftEnd, snoozedUntil);
         const wait = at - Date.now();
-        if (wait <= 0) setOpen('out');
+        if (wait <= 0) {
+          setOpen('out');
+          announce('CHECK_OUT_REMINDER');
+        }
         else if (wait < 24 * 60 * 60 * 1000) timer = setTimeout(remind, wait);
       };
       remind();

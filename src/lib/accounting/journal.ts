@@ -51,10 +51,43 @@ interface EntryInput {
   allowClosedPeriod?: boolean;
 }
 
+/**
+ * The next free JV- number. Every booking in the app — an invoice, a
+ * receipt, an expense, a stock movement — needs one, so a counter that has
+ * fallen behind numbers already in the books (written by an import or a
+ * repair outside the normal path) would stop all of them with a duplicate
+ * error. If the number handed out is already used, the counter is moved past
+ * the highest number in the books and the next one is taken instead.
+ */
+async function nextEntryNumber(tx: Tx, organizationId: string): Promise<string> {
+  const entryNumber = await allocateDocumentNumber(tx, organizationId, null, 'JOURNAL_ENTRY');
+  const taken = await tx.journalEntry.findFirst({
+    where: { organizationId, entryNumber },
+    select: { id: true },
+  });
+  if (!taken) return entryNumber;
+
+  const prefix = entryNumber.replace(/\d+$/, '');
+  const [{ highest }] = await tx.$queryRaw<{ highest: number | null }[]>`
+    SELECT max(substring(entry_number FROM ${prefix.length + 1})::int) AS highest
+    FROM journal_entries
+    WHERE organization_id = ${organizationId}::uuid
+      AND entry_number LIKE ${`${prefix}%`}
+      AND substring(entry_number FROM ${prefix.length + 1}) ~ '^[0-9]+$'`;
+  await tx.$executeRaw`
+    UPDATE document_number_sequences
+    SET next_number = GREATEST(next_number, ${Number(highest ?? 0) + 1}), updated_at = now()
+    WHERE organization_id = ${organizationId}::uuid
+      AND document_type = 'JOURNAL_ENTRY'::"DocumentType"
+      AND branch_id IS NULL`;
+  console.warn(`Journal numbering was behind (${entryNumber} already used); moved past ${prefix}${highest}.`);
+  return allocateDocumentNumber(tx, organizationId, null, 'JOURNAL_ENTRY');
+}
+
 /** Books one entry, numbered JV-…, inside the caller's transaction. */
 export async function bookEntry(tx: Tx, input: EntryInput) {
   if (!input.allowClosedPeriod) await assertBooksOpen(tx, input.organizationId, input.date);
-  const entryNumber = await allocateDocumentNumber(tx, input.organizationId, null, 'JOURNAL_ENTRY');
+  const entryNumber = await nextEntryNumber(tx, input.organizationId);
   const now = new Date();
   const entry = await tx.journalEntry.create({
     data: {

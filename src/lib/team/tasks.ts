@@ -15,6 +15,7 @@ import { storageKey } from '@/lib/storage/keys';
 import { CLOSED_JOB_STATUSES } from '@/lib/workshop/stages';
 import { nextStatuses, taskAbilities, type TaskActor } from '@/lib/team/task-rules';
 import { TASK_STATUS_LABEL } from '@/lib/team/labels';
+import { notify } from '@/lib/notifications/service';
 
 /*
  * Tasks: the team's to-do lists.
@@ -251,16 +252,16 @@ export async function createTasks(
   const employees = assigneeIds.length
     ? await prisma.employee.findMany({
         where: { id: { in: assigneeIds }, organizationId: user.organizationId, ...branchScope(user) },
-        select: { id: true, branchId: true, isActive: true, firstName: true },
+        select: { id: true, branchId: true, isActive: true, firstName: true, userId: true },
       })
-    : [{ id: me!.id, branchId: me!.branchId, isActive: true, firstName: me!.firstName }];
+    : [{ id: me!.id, branchId: me!.branchId, isActive: true, firstName: me!.firstName, userId: user.id }];
   if (employees.length !== (assigneeIds.length || 1)) throw new NotFoundError('employee');
   const inactive = employees.find((employee) => !employee.isActive);
   if (inactive) throw new DomainError(`${inactive.firstName} is no longer active.`, 'assigneeIds');
 
   await storeFiles(checked);
 
-  return prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'task.create');
     const jobCardId = await resolveJobCard(tx, user, input.jobCardId || undefined);
     const created: { id: string; assigneeEmployeeId: string }[] = [];
@@ -306,6 +307,24 @@ export async function createTasks(
     await settleRequestKey(tx, user, rawInput, created[0].id);
     return created;
   });
+
+  // Tell each person a task was given to them (not someone adding their own).
+  const sender = user.fullName.split(' ')[0] || 'Your manager';
+  await Promise.all(
+    created.map((task) => {
+      const employee = employees.find((entry) => entry.id === task.assigneeEmployeeId);
+      if (!employee?.userId || employee.userId === user.id) return null;
+      return notify({
+        organizationId: user.organizationId,
+        userId: employee.userId,
+        kind: 'TASK_ASSIGNED',
+        title: `New task from ${sender}`,
+        body: input.title.replace(/s+/g, ' '),
+        href: `/team/tasks/${task.id}`,
+      }).catch((error) => console.error('Task notification failed', error));
+    }),
+  );
+  return created;
 }
 
 // ─── Loading one task ───────────────────────────────────────────────────────
@@ -535,7 +554,7 @@ export async function editTask(user: AuthenticatedUser, taskId: string, rawInput
   const assigneeId = input.assigneeId || task.assigneeEmployeeId;
   if (assigneeId !== task.assigneeEmployeeId && !can.reassign) throw new AuthError('task.edit');
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await claimRequestKey(tx, user, rawInput, 'task.edit');
     let branchId = task.branchId;
     if (assigneeId !== task.assigneeEmployeeId) {
@@ -606,6 +625,22 @@ export async function editTask(user: AuthenticatedUser, taskId: string, rawInput
     await settleRequestKey(tx, user, rawInput, task.id);
     return { id: task.id };
   });
+
+  // Moved to someone else: they hear about it like a new task.
+  if (assigneeId !== task.assigneeEmployeeId) {
+    const assignee = await prisma.employee.findUnique({ where: { id: assigneeId }, select: { userId: true } });
+    if (assignee?.userId && assignee.userId !== user.id) {
+      await notify({
+        organizationId: user.organizationId,
+        userId: assignee.userId,
+        kind: 'TASK_ASSIGNED',
+        title: `New task from ${user.fullName.split(' ')[0] || 'your manager'}`,
+        body: input.title.replace(/s+/g, ' '),
+        href: `/team/tasks/${task.id}`,
+      }).catch((error) => console.error('Task notification failed', error));
+    }
+  }
+  return result;
 }
 
 /**

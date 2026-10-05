@@ -97,6 +97,10 @@ const locationSchema = z.object({
     .int('Enter whole metres.')
     .min(30, 'Use at least 30 m — phone GPS is rarely closer than that indoors.')
     .max(2000, 'Use at most 2,000 m.'),
+  shiftStartTime: z
+    .string()
+    .trim()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Enter the time as HH:MM, e.g. 08:00.'),
   shiftEndTime: z
     .string()
     .trim()
@@ -113,6 +117,7 @@ export async function getBranchLocation(organizationId: string, branchId: string
       latitude: true,
       longitude: true,
       geofenceRadiusM: true,
+      shiftStartTime: true,
       shiftEndTime: true,
     },
   });
@@ -129,6 +134,7 @@ export async function getBranchLocation(organizationId: string, branchId: string
           }
         : null,
     radiusM: branch.geofenceRadiusM,
+    shiftStartTime: branch.shiftStartTime,
     shiftEndTime: branch.shiftEndTime,
   };
 }
@@ -149,17 +155,28 @@ export async function updateBranchLocation(
   if (input.latitude === 0 && input.longitude === 0) {
     throw new DomainError('Set the workshop’s position.', 'latitude');
   }
+  if (input.shiftStartTime >= input.shiftEndTime) {
+    throw new DomainError('The working day must start before it ends.', 'shiftStartTime');
+  }
   const data = {
     latitude: input.latitude.toFixed(6),
     longitude: input.longitude.toFixed(6),
     geofenceRadiusM: input.radius,
+    shiftStartTime: input.shiftStartTime,
     shiftEndTime: input.shiftEndTime,
   };
 
   return prisma.$transaction(async (tx) => {
     const before = await tx.branch.findFirst({
       where: { id: branchId, organizationId: user.organizationId },
-      select: { id: true, latitude: true, longitude: true, geofenceRadiusM: true, shiftEndTime: true },
+      select: {
+        id: true,
+        latitude: true,
+        longitude: true,
+        geofenceRadiusM: true,
+        shiftStartTime: true,
+        shiftEndTime: true,
+      },
     });
     if (!before) throw new NotFoundError('branch');
     await tx.branch.update({ where: { id: before.id }, data });
@@ -174,6 +191,7 @@ export async function updateBranchLocation(
         latitude: before.latitude?.toString() ?? null,
         longitude: before.longitude?.toString() ?? null,
         geofenceRadiusM: before.geofenceRadiusM,
+        shiftStartTime: before.shiftStartTime,
         shiftEndTime: before.shiftEndTime,
       },
       afterData: data,

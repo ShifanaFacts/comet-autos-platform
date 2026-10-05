@@ -55,7 +55,9 @@ export function proxy(request: NextRequest) {
 
   const isPublicRoute =
     request.nextUrl.pathname.startsWith('/login') ||
-    request.nextUrl.pathname.startsWith('/customer/');
+    request.nextUrl.pathname.startsWith('/customer/') ||
+    // Scheduled jobs: no sign-in cookie, they carry a shared secret instead.
+    request.nextUrl.pathname.startsWith('/api/cron/');
 
   if (!isPublicRoute && !request.cookies.has(SESSION_COOKIE_NAME)) {
     // Come back to the same page after signing in.

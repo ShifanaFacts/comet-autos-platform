@@ -29,6 +29,7 @@ export function BranchLocationForm({
     id: string;
     fence: { latitude: number; longitude: number; radiusM: number } | null;
     radiusM: number;
+    shiftStartTime: string;
     shiftEndTime: string;
   };
 }) {
@@ -148,13 +149,23 @@ export function BranchLocationForm({
           className={INPUT}
         />
         <TextField
+          id={id('shift-start')}
+          name="shiftStartTime"
+          label="Working day starts at"
+          type="time"
+          defaultValue={branch.shiftStartTime}
+          error={errors.shiftStartTime}
+          hint="Anyone not checked in by then gets a “check-in time” notification."
+          className={INPUT}
+        />
+        <TextField
           id={id('shift')}
           name="shiftEndTime"
           label="Working day ends at"
           type="time"
           defaultValue={branch.shiftEndTime}
           error={errors.shiftEndTime}
-          hint="A day nobody checked out of is closed at this time, and flagged for you to confirm."
+          hint="Anyone still checked in is asked to check out; time after this counts as overtime."
           className={INPUT}
         />
       </div>

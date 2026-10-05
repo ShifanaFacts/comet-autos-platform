@@ -126,6 +126,9 @@ const EXCEPTION_STATUSES: WorkflowStatus[] = ['ON_HOLD', 'CANCELLED'];
  * (lib/billing/invoice-changes.ts) with `reopen: true` — never by a button.
  */
 const REOPEN_TRANSITIONS: Partial<Record<WorkflowStatus, WorkflowStatus[]>> = {
+  // An approved quotation changed before work starts (reviseEstimate): the
+  // new version goes back through sending and approval.
+  APPROVED: ['ESTIMATE'],
   INVOICED: [
     'ARRIVED',
     'INSPECTION',
