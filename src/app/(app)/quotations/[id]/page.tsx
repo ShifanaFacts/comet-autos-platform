@@ -10,6 +10,8 @@ import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { formatCalendarDate, formatDateTime, formatMoney, localDateString } from '@/lib/format';
 import { getQuotation } from '@/lib/workshop/quotations';
+import { approvedChangeBlocker } from '@/lib/workshop/estimates';
+import { prisma } from '@/lib/prisma';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { EstimateStatusPill } from '@/components/workshop/status-pills';
@@ -75,12 +77,18 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
     previousVersionId: quotation.previousVersionId,
     nextVersions: isLatest ? 0 : 1,
   };
-  // Sent or rejected: editing makes the next version. Approved stays as agreed.
+  // Sent or rejected: editing makes the next version. Approved: changing it
+  // makes the next version too, for the customer to approve — while nothing
+  // has been built on the approval yet (not invoiced, work not started).
+  const changeBlocker =
+    approved && isLatest && canEdit
+      ? await approvedChangeBlocker(prisma, user.organizationId, quotation)
+      : null;
   const canRevise =
     canEdit &&
     isLatest &&
     quotation.kind !== 'ADDITIONAL' &&
-    (quotation.status === 'SENT' || quotation.status === 'REJECTED');
+    (quotation.status === 'SENT' || quotation.status === 'REJECTED' || (approved && !changeBlocker));
   const canDuplicate = hasPermission(user, 'quotation.edit', {
     branchId: user.primaryBranchId ?? quotation.branchId,
   });
@@ -133,6 +141,7 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
               estimateId={quotation.id}
               canRevise={canRevise}
               canDuplicate={canDuplicate}
+              approved={approved}
             />
             {canChangeParty ? (
               <ChangeQuotationPartyButton
@@ -164,6 +173,13 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
           </>
         }
       />
+
+      {changeBlocker ? (
+        <p className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">Need to change this approved quotation? </span>
+          {changeBlocker}
+        </p>
+      ) : null}
 
       {!isLatest ? (
         <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning">

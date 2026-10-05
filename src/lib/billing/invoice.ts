@@ -82,7 +82,11 @@ async function loadBillingSources(
 ) {
   const [lines, labours, usages] = await Promise.all([
     client.estimateItem.findMany({
-      where: { organizationId, estimate: { jobCardId, organizationId, status: 'APPROVED' } },
+      // A replaced version's approval stays on record but is never billed.
+      where: {
+        organizationId,
+        estimate: { jobCardId, organizationId, status: 'APPROVED', nextVersions: { none: {} } },
+      },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       include: {
         estimate: {

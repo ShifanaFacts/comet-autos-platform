@@ -132,9 +132,15 @@ async function linesFromEstimate(
 ) {
   const estimate = await tx.estimate.findFirst({
     where: { id: estimateId, organizationId },
-    include: { items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
+    include: {
+      items: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+      _count: { select: { nextVersions: true } },
+    },
   });
   if (!estimate) throw new DomainError('That quotation was not found.', 'estimateId');
+  if (estimate._count.nextVersions > 0) {
+    throw new DomainError('A newer version of this quotation exists. Invoice that one instead.', 'estimateId');
+  }
   if (estimate.customerId !== customerId) {
     throw new DomainError('That quotation belongs to a different customer.', 'estimateId');
   }

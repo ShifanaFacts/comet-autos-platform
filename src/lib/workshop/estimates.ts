@@ -594,10 +594,81 @@ function rootEstimateNumber(estimateNumber: string): string {
 }
 
 /**
+ * Why an approved quotation can't be changed right now, or null if it can.
+ *
+ * An approved quotation is changed by making its next version: same lines,
+ * then add, remove or change, and the customer approves the new version.
+ * That is only safe while nothing has been built on the approval yet:
+ *
+ *  - not invoiced — after that the invoice is the record; correct it, or
+ *    issue a credit note;
+ *  - the job (if any) still at "Approved" — once work has started, extra
+ *    work is quoted as additional work, and anything not done isn't billed;
+ *  - no labour or parts recorded against its lines.
+ */
+export async function approvedChangeBlocker(
+  client: Prisma.TransactionClient,
+  organizationId: string,
+  estimate: { id: string; kind: string; jobCardId: string | null },
+): Promise<string | null> {
+  if (estimate.kind === 'ADDITIONAL') {
+    return 'An additional work request isn’t changed after approval — make a new request instead.';
+  }
+  // A quotation invoiced on its own is linked to its invoice only in the
+  // invoice's audit entry; a job card's invoice is linked to the job.
+  const fromAudit = await client.auditLog.findMany({
+    where: {
+      organizationId,
+      action: 'invoice.issued',
+      entityType: 'Invoice',
+      metadata: { path: ['estimateId'], equals: estimate.id },
+    },
+    select: { entityId: true },
+  });
+  const invoice = await client.invoice.findFirst({
+    where: {
+      organizationId,
+      status: { notIn: ['VOID', 'CANCELLED'] },
+      OR: [
+        { id: { in: fromAudit.map((row) => row.entityId) } },
+        ...(estimate.jobCardId ? [{ jobCardId: estimate.jobCardId }] : []),
+      ],
+    },
+    select: { invoiceNumber: true },
+  });
+  if (invoice) {
+    return `Already invoiced (${invoice.invoiceNumber}). Correct the invoice, or issue a credit note, instead.`;
+  }
+  if (estimate.jobCardId) {
+    const job = await client.jobCard.findUniqueOrThrow({
+      where: { id: estimate.jobCardId },
+      select: { status: true },
+    });
+    const status = normalizeStatus(job.status);
+    if (status === 'ON_HOLD') return 'The job is on hold. Resume it first, then change the quotation.';
+    if (status !== 'APPROVED') {
+      return 'Work on this job has started. Quote extra work as additional work — anything not done is not billed.';
+    }
+  }
+  const booked =
+    (await client.labour.count({ where: { organizationId, estimateItem: { estimateId: estimate.id } } })) +
+    (await client.partUsage.count({ where: { organizationId, estimateItem: { estimateId: estimate.id } } }));
+  if (booked > 0) {
+    return 'Labour or parts are already recorded against this quotation. Quote extra work as additional work instead.';
+  }
+  return null;
+}
+
+/**
  * Creates the next version as a new draft, copying the lines. The previous
  * version and its approval history are never modified; its customer link is
  * revoked so an outdated quotation can't be approved. The job goes back to
  * Estimate until the revision is sent.
+ *
+ * An APPROVED quotation can be revised too, to add, remove or change work
+ * before it is invoiced (approvedChangeBlocker). Its approval stays on
+ * record; the new version needs the customer's approval of its own, and
+ * until then the job is back at the quotation step and can't be invoiced.
  */
 export async function reviseEstimate(user: AuthenticatedUser, estimateId: string) {
   return prisma.$transaction(async (tx) => {
@@ -617,13 +688,30 @@ export async function reviseEstimate(user: AuthenticatedUser, estimateId: string
         'Additional work requests are not revised — create a new request instead.',
       );
     }
-    if (source.status !== 'SENT' && source.status !== 'REJECTED') {
+    const wasApproved = source.status === 'APPROVED' || source.status === 'PARTIALLY_APPROVED';
+    if (source.status !== 'SENT' && source.status !== 'REJECTED' && !wasApproved) {
       throw new DomainError(
-        'Only a quotation that is waiting approval or was rejected can be revised.',
+        'Only a quotation that was sent (waiting, approved or rejected) can be revised.',
       );
     }
+    if (wasApproved) {
+      const blocker = await approvedChangeBlocker(tx, user.organizationId, source);
+      if (blocker) throw new DomainError(blocker);
+      if (source.jobCardId) {
+        // Back to the quotation step: the new version must be approved before billing.
+        await applyJobStatusChange(tx, {
+          organizationId: user.organizationId,
+          jobCardId: source.jobCardId,
+          toStatus: 'ESTIMATE',
+          actor: { userId: user.id },
+          source: 'workflow',
+          reopen: true,
+          metadata: { revisedEstimateId: source.id, revisedAfterApproval: true },
+        });
+      }
+    }
     // A standalone quotation has no job to walk back; only the document is versioned.
-    if (source.jobCardId) {
+    if (source.jobCardId && !wasApproved) {
       const job = await tx.jobCard.findUniqueOrThrow({
         where: { id: source.jobCardId },
         select: { status: true },

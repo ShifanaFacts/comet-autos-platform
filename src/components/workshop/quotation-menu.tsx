@@ -49,8 +49,9 @@ import {
  *                     workshop; change customer/vehicle likewise
  *   sent / rejected   Edit makes the next version as a draft (the sent one,
  *                     and the customer's answer, are kept as they were)
- *   approved          locked — the customer agreed to it; Duplicate starts a
- *                     new quotation from it
+ *   approved          Change makes the next version, to add, remove or
+ *                     change work before it is invoiced; the customer
+ *                     approves that version. Duplicate starts a new one.
  *
  * Every rule is checked again on the server.
  */
@@ -69,6 +70,13 @@ const CONFIRM = {
     description:
       'Editing makes the next version as a draft. This version and the customer’s answer to it are kept, and its customer link stops working until you send the new one.',
     confirm: 'Edit as new version',
+    tone: 'default' as const,
+  },
+  reviseApproved: {
+    title: 'Change the approved quotation?',
+    description:
+      'A new version is made with the same lines — add, remove or change anything on it. The customer then approves the new version: send it on WhatsApp, or record their OK if they agreed in person or by phone. Until then the job is back at the quotation step and can’t be invoiced. The approved version stays on record exactly as it was.',
+    confirm: 'Make the new version',
     tone: 'default' as const,
   },
   duplicate: {
@@ -107,7 +115,7 @@ function useQuotationConfirm(estimateId: string) {
     startTransition(async () => {
       // Each of these redirects when it succeeds, so only a failure returns.
       const result: ActionResult | undefined =
-        action === 'revise'
+        action === 'revise' || action === 'reviseApproved'
           ? await reviseQuotationAction(estimateId)
           : action === 'duplicate'
             ? await duplicateQuotationAction(estimateId, requestKey)
@@ -165,19 +173,22 @@ export function QuotationHeaderActions({
   estimateId,
   canRevise,
   canDuplicate,
+  approved = false,
 }: {
   estimateId: string;
   canRevise: boolean;
   canDuplicate: boolean;
+  /** Revising an approved quotation: said plainly, since the customer must approve again. */
+  approved?: boolean;
 }) {
   const { ask, dialog } = useQuotationConfirm(estimateId);
   if (!canRevise && !canDuplicate) return null;
   return (
     <>
       {canRevise ? (
-        <Button size="lg" onClick={() => ask('revise')}>
+        <Button size="lg" onClick={() => ask(approved ? 'reviseApproved' : 'revise')}>
           <Pencil />
-          Edit
+          {approved ? 'Change' : 'Edit'}
         </Button>
       ) : null}
       {canDuplicate ? (
