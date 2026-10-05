@@ -152,3 +152,23 @@ describe('once work has started', () => {
     await expectDomainError(reviseEstimate(a.owner, quote.id), /additional work/);
   });
 });
+
+describe('a ledger counter that has fallen behind', () => {
+  test('invoicing still works: the counter moves past the numbers already used', async () => {
+    const { customer, vehicle } = await party('64');
+    const quote = await approvedQuotation({ customerId: customer.id, vehicleId: vehicle.id });
+    // Put the test workshop's counter back to a number already in its books.
+    await prisma.documentNumberSequence.updateMany({
+      where: { organizationId: a.organizationId, documentType: 'JOURNAL_ENTRY', branchId: null },
+      data: { nextNumber: 1 },
+    });
+    const { invoiceId } = await createDirectInvoice(a.owner, { customerId: customer.id, estimateId: quote.id });
+    assert.ok(invoiceId, 'the invoice was saved');
+    const numbers = await prisma.journalEntry.findMany({
+      where: { organizationId: a.organizationId },
+      select: { entryNumber: true },
+    });
+    const list = numbers.map((row) => row.entryNumber);
+    assert.equal(new Set(list).size, list.length, 'no number used twice');
+  });
+});
