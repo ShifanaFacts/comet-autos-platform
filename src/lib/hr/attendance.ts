@@ -37,6 +37,25 @@ export function minutesWorked(record: {
   return Math.max(0, Math.round((record.clockOutAt.getTime() - record.clockInAt.getTime()) / 60_000));
 }
 
+/**
+ * A finished day split at the end of the working day (the branch's shift
+ * end, Dubai time): hours up to it are normal, hours after it are overtime.
+ * Someone who arrived after the shift end worked overtime only. Employees
+ * are shown the normal part; overtime is for whoever manages attendance.
+ */
+export function splitWorked(
+  record: { attendanceDate: Date; clockInAt: Date | null; clockOutAt: Date | null },
+  shiftEndTime: string,
+): { normal: number; overtime: number } | null {
+  const total = minutesWorked(record);
+  if (total === null || !record.clockInAt || !record.clockOutAt) return null;
+  const dateKey = record.attendanceDate.toISOString().slice(0, 10);
+  const shiftEnd = new Date(`${dateKey}T${shiftEndTime}:00+04:00`).getTime();
+  const overtimeFrom = Math.max(record.clockInAt.getTime(), shiftEnd);
+  const overtime = Math.max(0, Math.round((record.clockOutAt.getTime() - overtimeFrom) / 60_000));
+  return { normal: Math.max(0, total - overtime), overtime: Math.min(overtime, total) };
+}
+
 /** "7h 45m", or "—" for a day that is not finished. */
 export function formatWorked(minutes: number | null): string {
   if (minutes === null) return '—';
@@ -152,7 +171,7 @@ export async function getAttendanceDay(user: AuthenticatedUser, dateInput?: stri
         firstName: true,
         lastName: true,
         jobTitle: true,
-        branch: { select: { name: true } },
+        branch: { select: { name: true, shiftEndTime: true } },
       },
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
       take: 500,
@@ -167,6 +186,14 @@ export async function getAttendanceDay(user: AuthenticatedUser, dateInput?: stri
   const rows = employees.map((employee) => {
     const record = byEmployee.get(employee.id) ?? null;
     const worked = record ? minutesWorked(record) : null;
+    const split = record ? splitWorked(record, employee.branch.shiftEndTime) : null;
+    // Still in after the day ended: overtime so far, for the manager to see.
+    const shiftEnd = new Date(`${key}T${employee.branch.shiftEndTime}:00+04:00`).getTime();
+    const overtimeSoFar =
+      record?.clockInAt && !record.clockOutAt && Date.now() > shiftEnd
+        ? Math.round((Date.now() - Math.max(shiftEnd, record.clockInAt.getTime())) / 60_000)
+        : 0;
+    const overtime = split?.overtime ?? overtimeSoFar;
     return {
       employee: {
         id: employee.id,
@@ -178,6 +205,10 @@ export async function getAttendanceDay(user: AuthenticatedUser, dateInput?: stri
       record,
       worked,
       workedLabel: formatWorked(worked),
+      /** Minutes after the end of the working day — managers only. */
+      overtime,
+      overtimeLabel: overtime > 0 ? formatWorked(overtime) : null,
+      shiftEndTime: employee.branch.shiftEndTime,
       /** What the one big button on a phone should do next. */
       next: !record?.clockInAt ? 'IN' : !record.clockOutAt ? 'OUT' : 'DONE',
     } as const;
@@ -198,6 +229,7 @@ export async function getAttendanceDay(user: AuthenticatedUser, dateInput?: stri
       onLeave: counted('ON_LEAVE'),
       stillIn: rows.filter((row) => row.next === 'OUT').length,
       minutes: rows.reduce((sum, row) => sum + (row.worked ?? 0), 0),
+      overtime: rows.reduce((sum, row) => sum + row.overtime, 0),
     },
   };
 }
@@ -222,7 +254,14 @@ export async function getEmployeeAttendance(
 
   const employee = await prisma.employee.findFirst({
     where: { id: employeeId, organizationId: user.organizationId, ...branchScope(user) },
-    select: { id: true, firstName: true, lastName: true, employeeCode: true, jobTitle: true },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      employeeCode: true,
+      jobTitle: true,
+      branch: { select: { shiftEndTime: true } },
+    },
   });
   if (!employee) throw new NotFoundError('employee');
 
@@ -238,12 +277,27 @@ export async function getEmployeeAttendance(
 
   const days = records.map((record) => {
     const worked = minutesWorked(record);
-    return { ...record, worked, workedLabel: formatWorked(worked) };
+    const overtime = splitWorked(record, employee.branch.shiftEndTime)?.overtime ?? 0;
+    return {
+      ...record,
+      worked,
+      workedLabel: formatWorked(worked),
+      overtime,
+      overtimeLabel: overtime > 0 ? formatWorked(overtime) : null,
+    };
   });
   const count = (status: AttendanceStatus) => days.filter((day) => day.status === status).length;
 
   return {
-    employee: { ...employee, name: `${employee.firstName} ${employee.lastName}` },
+    employee: {
+      id: employee.id,
+      firstName: employee.firstName,
+      lastName: employee.lastName,
+      employeeCode: employee.employeeCode,
+      jobTitle: employee.jobTitle,
+      name: `${employee.firstName} ${employee.lastName}`,
+    },
+    shiftEndTime: employee.branch.shiftEndTime,
     month: key,
     days,
     totals: {
@@ -254,6 +308,7 @@ export async function getEmployeeAttendance(
       onLeave: count('ON_LEAVE'),
       holiday: count('HOLIDAY'),
       minutes: days.reduce((sum, day) => sum + (day.worked ?? 0), 0),
+      overtime: days.reduce((sum, day) => sum + day.overtime, 0),
     },
   };
 }

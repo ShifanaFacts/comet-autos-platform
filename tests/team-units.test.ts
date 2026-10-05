@@ -15,6 +15,7 @@ import { addDays, splitTaskText } from '@/lib/team/client';
 import { sniffAudio } from '@/lib/storage';
 import { laneOf } from '@/lib/workshop/live-board';
 import { isRtl, languageLabel } from '@/lib/team/labels';
+import { splitWorked } from '@/lib/hr/attendance';
 
 const WORKSHOP = { latitude: 25.2862, longitude: 55.389, radiusM: 150 };
 /** A point `metres` north of the workshop (1° latitude ≈ 111,195 m). */
@@ -164,6 +165,30 @@ describe('voice notes and text', () => {
     assert.equal(isRtl('ar-AE'), true);
     assert.equal(isRtl('ur-PK'), true);
     assert.equal(isRtl('hi-IN'), false);
+  });
+});
+
+describe('normal hours and overtime', () => {
+  const day = (inAt: string, outAt: string | null) => ({
+    attendanceDate: new Date('2026-10-05T00:00:00Z'),
+    clockInAt: new Date(`2026-10-05T${inAt}:00+04:00`),
+    clockOutAt: outAt ? new Date(`2026-10-05T${outAt}:00+04:00`) : null,
+  });
+
+  test('a day that ends before 9 pm is all normal time', () => {
+    assert.deepEqual(splitWorked(day('08:00', '19:30'), '21:00'), { normal: 690, overtime: 0 });
+  });
+
+  test('time after 9 pm is overtime; the rest stays normal', () => {
+    assert.deepEqual(splitWorked(day('08:00', '22:15'), '21:00'), { normal: 780, overtime: 75 });
+  });
+
+  test('someone who came in after 9 pm worked only overtime', () => {
+    assert.deepEqual(splitWorked(day('21:30', '23:00'), '21:00'), { normal: 0, overtime: 90 });
+  });
+
+  test('a day still open has no split yet', () => {
+    assert.equal(splitWorked(day('08:00', null), '21:00'), null);
   });
 });
 

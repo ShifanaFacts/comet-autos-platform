@@ -119,7 +119,7 @@ describe('checking yourself in', () => {
     assert.equal((await getMyDay(tech))?.next, 'DONE');
   });
 
-  test('a forgotten check-out is closed at the shift end on the next check-in, and flagged', async () => {
+  test('a forgotten check-out: the next check-in asks when they left, and flags that day', async () => {
     const yesterday = addDays(today(), -1);
     const day = await prisma.attendance.create({
       data: {
@@ -135,20 +135,25 @@ describe('checking yourself in', () => {
     const myDay = await getMyDay(mate);
     assert.equal(myDay?.openEarlier?.id, day.id, 'the open day is shown to them');
 
-    const { closed } = await selfClock(mate, 'IN', north(10));
+    await expectDomainError(selfClock(mate, 'IN', north(10)), /Enter the time you left/);
+    await expectDomainError(
+      selfClock(mate, 'IN', { ...north(10), previousLeftAt: '07:00' }),
+      /must be after/,
+    );
+    const { closed } = await selfClock(mate, 'IN', { ...north(10), previousLeftAt: '18:10' });
     assert.deepEqual(closed, [yesterday]);
     const after = await prisma.attendance.findUniqueOrThrow({ where: { id: day.id } });
-    assert.equal(after.clockOutMethod, 'AUTO');
+    assert.equal(after.clockOutMethod, 'REPORTED');
     assert.equal(after.needsReview, true);
-    assert.equal(after.clockOutAt?.toISOString(), new Date(`${yesterday}T20:00:00+04:00`).toISOString());
+    assert.equal(after.clockOutAt?.toISOString(), new Date(`${yesterday}T18:10:00+04:00`).toISOString());
 
     const toReview = await listAttendanceToReview(a.owner);
     assert.ok(toReview.some((row) => row.id === day.id));
   });
 
-  test('the employee can say when they really left; the manager confirms or corrects it', async () => {
+  test('the employee can correct the time they gave; the manager confirms or corrects it', async () => {
     const day = await prisma.attendance.findFirstOrThrow({
-      where: { employeeId: mateEmployee, clockOutMethod: 'AUTO' },
+      where: { employeeId: mateEmployee, clockOutMethod: 'REPORTED' },
     });
     const date = day.attendanceDate.toISOString().slice(0, 10);
     await expectDomainError(reportLeftAt(mate, day.id, { leftAt: '07:00' }), /must be after/);

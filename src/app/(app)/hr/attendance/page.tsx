@@ -86,7 +86,11 @@ export default async function AttendancePage({
               hint={day.totals.stillIn === 1 ? 'not clocked out' : 'not clocked out'}
             />
             <Figure label="Away" value={String(day.totals.absent + day.totals.onLeave)} hint="absent or on leave" />
-            <Figure label="Hours" value={formatWorked(day.totals.minutes)} hint="completed days" />
+            <Figure
+              label="Hours"
+              value={formatWorked(day.totals.minutes)}
+              hint={day.totals.overtime ? `incl. ${formatWorked(day.totals.overtime)} overtime` : 'completed days'}
+            />
           </Panel>
 
           <section className="flex flex-col gap-3">

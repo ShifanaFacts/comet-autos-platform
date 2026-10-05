@@ -49,6 +49,8 @@ export interface RowData {
     notes: string | null;
   } | null;
   workedLabel: string;
+  /** After the end of the working day — shown to managers only (this screen). */
+  overtimeLabel?: string | null;
   next: 'IN' | 'OUT' | 'DONE';
 }
 
@@ -124,6 +126,11 @@ export function AttendanceRow({
               {times}
               {row.workedLabel !== '—' ? (
                 <span className="font-medium text-foreground">· {row.workedLabel}</span>
+              ) : null}
+              {row.overtimeLabel ? (
+                <span className="font-medium text-warning">
+                  · {row.overtimeLabel} overtime{row.record?.clockOutAt ? '' : ' so far'}
+                </span>
               ) : null}
             </span>
           ) : null}

@@ -85,6 +85,7 @@ export default async function MyWorkPage({
 
       {tasks.view === 'list' ? (
         <CheckInCard
+          firstName={day.employee.firstName}
           day={{
             date: day.date,
             next: day.next,

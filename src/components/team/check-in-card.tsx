@@ -18,6 +18,7 @@ import { formatTime } from '@/lib/format';
 import { formatDistance } from '@/lib/team/geo';
 import { newRequestKey } from '@/lib/team/client';
 import { reportLeftAtAction, selfClockAction } from '@/app/(app)/my-work/actions';
+import { CheckInDialog } from '@/components/team/attendance-control';
 import { cn } from '@/lib/utils';
 
 /*
@@ -66,14 +67,20 @@ const LOCATION_ERRORS: Record<number, string> = {
 const dayName = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString('en-AE', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'short' });
 
-export function CheckInCard({ day }: { day: CheckInDay }) {
+export function CheckInCard({ day, firstName }: { day: CheckInDay; firstName: string }) {
   const router = useRouter();
   const [state, setState] = useState<Locating>('idle');
   const [problem, setProblem] = useState<string | null>(null);
   const [offerReport, setOfferReport] = useState(false);
   const [reporting, setReporting] = useState<{ id: string; date: string; clockInAt: Date } | null>(null);
+  /** Checking in after a day left open: the window that asks when they left. */
+  const [askingLeftAt, setAskingLeftAt] = useState(false);
 
   async function clock(direction: 'IN' | 'OUT') {
+    if (direction === 'IN' && day.openEarlier) {
+      setAskingLeftAt(true);
+      return;
+    }
     setProblem(null);
     setOfferReport(false);
     setState('locating');
@@ -184,8 +191,8 @@ export function CheckInCard({ day }: { day: CheckInDay }) {
       {day.pastShiftEnd ? (
         <p className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm text-warning">
           <AlarmClock className="mt-0.5 size-4 shrink-0" />
-          The day ended at {day.shiftEndTime}. Check out before you leave — if you forget, the day is closed
-          at {day.shiftEndTime} and your manager is asked to check it.
+          The working day ended at {day.shiftEndTime}. Check out before you leave — if you forget, you’ll
+          be asked tomorrow what time you left.
         </p>
       ) : null}
 
@@ -212,8 +219,7 @@ export function CheckInCard({ day }: { day: CheckInDay }) {
         <div className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-3 text-sm">
           <p className="text-warning">
             You didn’t check out on {dayName(day.openEarlier.date)} (in at {formatTime(day.openEarlier.clockInAt)}).
-            If you don’t say when you left, it closes at {formatTime(day.openEarlier.willCloseAt)} when you next
-            check in.
+            Say what time you left — checking in asks for it too.
           </p>
           <Button
             type="button"
@@ -234,6 +240,22 @@ export function CheckInCard({ day }: { day: CheckInDay }) {
       ) : null}
 
       {reporting ? <ReportDialog day={reporting} onClose={() => setReporting(null)} /> : null}
+      {askingLeftAt ? (
+        <CheckInDialog
+          status={{
+            date: day.date,
+            firstName,
+            next: day.next,
+            recordId: day.record?.id ?? null,
+            clockInAt: day.record?.clockInAt ?? null,
+            away: false,
+            fenceSet: day.fenceSet,
+            shiftEndTime: day.shiftEndTime,
+            openEarlier: day.openEarlier,
+          }}
+          onClose={() => setAskingLeftAt(false)}
+        />
+      ) : null}
     </section>
   );
 }
