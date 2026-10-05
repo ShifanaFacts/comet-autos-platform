@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { AuthError, hasPermission } from '@/lib/auth/authorize';
 import { filsToString, toFils } from '@/lib/money';
+import { invoiceBalance } from '@/lib/billing/invoice';
 import { localDateString } from '@/lib/format';
 import { getVatSettings } from '@/lib/tax';
 import { getCustomerOutstanding, getSupplierOutstanding } from '@/lib/finance/outstanding';
@@ -255,6 +256,7 @@ export async function getFinanceDashboard(
     ]);
 
   const collectedFils = toFils(collected?._sum.amount?.toString() ?? '0');
+  const settlement = access.sales ? await settlementOf(organizationId, branch, dateWindow) : null;
 
   const revenueNet = toFils(revenue?._sum.subtotal?.toString() ?? '0');
   const revenueVat = toFils(revenue?._sum.taxAmount?.toString() ?? '0');
@@ -300,6 +302,7 @@ export async function getFinanceDashboard(
           gross: filsToString(revenueGross),
           count: revenue?._count._all ?? 0,
           collected: filsToString(collectedFils),
+          settlement,
         }
       : null,
     expenses: access.expenses
@@ -438,4 +441,63 @@ async function recentActivity(
       : [],
   ]);
   return { invoices, payments, expenses };
+}
+
+/**
+ * Where the money stands on the invoices issued in the period — one set of
+ * invoices, so it always balances:
+ *
+ *   invoiced (incl. VAT) = received + advances applied + credited
+ *                          + discounts given after the invoice + still due
+ *
+ * "Received" here is every payment on those invoices, whenever it came in;
+ * the Collected figure is the period's cash instead, on any invoice.
+ */
+async function settlementOf(
+  organizationId: string,
+  branch: Prisma.InvoiceWhereInput,
+  issueDate: { gte: Date; lte: Date },
+) {
+  const invoices = await prisma.invoice.findMany({
+    where: { organizationId, ...branch, status: { in: REVENUE_STATUSES }, issueDate },
+    select: {
+      status: true,
+      totalAmount: true,
+      creditedAmount: true,
+      advanceAppliedAmount: true,
+      settlementDiscount: true,
+      payments: {
+        select: {
+          id: true,
+          amount: true,
+          status: true,
+          reversalOfPaymentId: true,
+          receivedAt: true,
+        },
+      },
+    },
+  });
+  const sum = { invoiced: 0, received: 0, advances: 0, credited: 0, discounts: 0, due: 0 };
+  for (const invoice of invoices) {
+    const balance = invoiceBalance(invoice);
+    sum.invoiced += toFils(balance.total);
+    sum.received += toFils(balance.paid);
+    sum.advances += toFils(balance.advanceApplied);
+    sum.credited += toFils(balance.credited);
+    sum.discounts += toFils(balance.discount);
+    sum.due += toFils(balance.balance);
+  }
+  // Paid beyond what was due (returned to an advance under a credit note) would
+  // make the parts exceed the whole; shown so the page can say so, never hidden.
+  const accounted = sum.received + sum.advances + sum.credited + sum.discounts + sum.due;
+  return {
+    invoiced: filsToString(sum.invoiced),
+    received: filsToString(sum.received),
+    advancesApplied: filsToString(sum.advances),
+    credited: filsToString(sum.credited),
+    discounts: filsToString(sum.discounts),
+    due: filsToString(sum.due),
+    accounted: filsToString(accounted),
+    balanced: accounted === sum.invoiced,
+  };
 }

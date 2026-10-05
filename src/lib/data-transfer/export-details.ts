@@ -52,6 +52,10 @@ export interface CustomerDetails {
   invoices: number;
   invoiced: string;
   paid: string;
+  /** Advances applied to the invoices. */
+  advances: string;
+  /** Credit notes and discounts given after invoicing. */
+  credits: string;
   owed: string;
 }
 
@@ -64,6 +68,8 @@ export const NO_CUSTOMER_DETAILS: CustomerDetails = {
   invoices: 0,
   invoiced: '0.00',
   paid: '0.00',
+  advances: '0.00',
+  credits: '0.00',
   owed: '0.00',
 };
 
@@ -85,11 +91,15 @@ export async function customerDetails(organizationId: string, ids: string[]) {
       let invoiced = 0;
       let paid = 0;
       let owed = 0;
+      let advances = 0;
+      let credits = 0;
       for (const invoice of customer.invoices) {
         const balance = invoiceBalance(invoice);
         invoiced += toFils(balance.total);
         paid += toFils(balance.paid);
         owed += toFils(balance.balance);
+        advances += toFils(balance.advanceApplied);
+        credits += toFils(balance.credited) + toFils(balance.discount);
       }
       return [
         customer.id,
@@ -102,6 +112,8 @@ export async function customerDetails(organizationId: string, ids: string[]) {
           invoices: customer.invoices.length,
           invoiced: filsToString(invoiced),
           paid: filsToString(paid),
+          advances: filsToString(advances),
+          credits: filsToString(credits),
           owed: filsToString(owed),
         },
       ];

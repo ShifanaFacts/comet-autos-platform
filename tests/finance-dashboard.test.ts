@@ -166,6 +166,15 @@ describe('finance dashboard', () => {
     assert.equal(data.revenue?.collected, '445.00');
     // Invoiced is unchanged: collecting is not invoicing.
     assert.equal(data.revenue?.net, '900.00');
+    // The period's invoices are accounted for to the fil: received + still due = invoiced.
+    const settlement = data.revenue?.settlement;
+    assert.ok(settlement?.balanced, 'the invoices this period balance');
+    assert.equal(settlement.invoiced, data.revenue?.gross);
+    assert.equal(settlement.received, '445.00');
+    assert.equal(
+      (Number(settlement.received) + Number(settlement.due)).toFixed(2),
+      settlement.invoiced,
+    );
 
     const old = await getFinanceDashboard(a.owner, {
       period: 'custom',

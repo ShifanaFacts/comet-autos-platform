@@ -159,9 +159,19 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
         hint: 'Payments received against those invoices.',
       },
       {
+        header: 'Paid from advances',
+        value: (row) => money(row.details.advances),
+        hint: 'Money the customer paid in advance, applied to the invoices.',
+      },
+      {
+        header: 'Credit notes & later discounts',
+        value: (row) => money(row.details.credits),
+        hint: 'Taken off the invoices after they were issued.',
+      },
+      {
         header: 'Balance owed',
         value: (row) => money(row.details.owed),
-        hint: 'Still due after payments, credit notes, discounts and advances applied.',
+        hint: 'Still due. Total invoiced = Paid + Paid from advances + Credit notes & later discounts + Balance owed.',
       },
       {
         header: 'Added',
