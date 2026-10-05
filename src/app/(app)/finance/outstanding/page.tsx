@@ -92,6 +92,8 @@ export default async function OutstandingPage({
     view === 'customers' ? await getCustomerOutstanding(user, { query, olderThanDays }) : null;
   const suppliers =
     view === 'suppliers' ? await getSupplierOutstanding(user, { query, olderThanDays }) : null;
+  // The Advance / credit column only when some invoice was settled that way.
+  const customerOtherCredits = customers?.rows.some((row) => row.otherCreditsFils > 0) ?? false;
 
   const href = (next: { view?: string; q?: string; age?: string }) =>
     `/finance/outstanding?${new URLSearchParams({
@@ -211,6 +213,9 @@ export default async function OutstandingPage({
                         { label: 'Invoiced', value: formatDate(row.date) },
                         { label: 'Total', value: formatMoney(row.total) },
                         { label: 'Paid', value: formatMoney(row.paid) },
+                        ...(row.otherCreditsFils > 0
+                          ? [{ label: 'Advance / credit', value: formatMoney(row.otherCredits) }]
+                          : []),
                         { label: 'Age', value: `${row.ageDays} days` },
                       ]}
                     >
@@ -235,6 +240,14 @@ export default async function OutstandingPage({
                         <th className="w-20 px-2 py-4 text-right">Age</th>
                         <th className="w-28 px-2 py-4 text-right">Total</th>
                         <th className="w-28 px-2 py-4 text-right">Paid</th>
+                        {customerOtherCredits ? (
+                          <th
+                            className="w-32 px-2 py-4 text-right"
+                            title="Paid from an advance, a credit note, or a discount given after the invoice"
+                          >
+                            Advance / credit
+                          </th>
+                        ) : null}
                         <th className="w-28 px-4 py-4 pr-6 text-right">Balance</th>
                       </tr>
                     </thead>
@@ -281,6 +294,11 @@ export default async function OutstandingPage({
                           <td className="px-2 py-4 text-right text-muted-foreground tabular-nums whitespace-nowrap">
                             {formatMoney(row.paid)}
                           </td>
+                          {customerOtherCredits ? (
+                            <td className="px-2 py-4 text-right text-muted-foreground tabular-nums whitespace-nowrap">
+                              {row.otherCreditsFils > 0 ? formatMoney(row.otherCredits) : '—'}
+                            </td>
+                          ) : null}
                           <td className="px-4 py-4 pr-6 text-right font-semibold tabular-nums whitespace-nowrap">
                             {formatMoney(row.balance)}
                           </td>

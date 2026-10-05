@@ -120,6 +120,10 @@ export async function getCustomerOutstanding(
         jobCard: invoice.jobCard,
         total: money.total,
         paid: money.paid,
+        // Settled without a payment — an advance applied, a credit note, a
+        // discount given after the invoice — so Total = Paid + this + Balance.
+        otherCredits: filsToString(otherCreditsFils(money)),
+        otherCreditsFils: otherCreditsFils(money),
         balance: money.balance,
         balanceFils: toFils(money.balance),
         state: money.state,
@@ -230,4 +234,9 @@ function summarise(rows: { balanceFils: number; ageDays: number; party: { id: st
       ninety: filsToString(bucket(91)),
     },
   };
+}
+
+/** What settled an invoice besides payments: advances applied, credit notes and later discounts. */
+function otherCreditsFils(money: { advanceApplied: string; credited: string; discount: string }) {
+  return toFils(money.advanceApplied) + toFils(money.credited) + toFils(money.discount);
 }
