@@ -22,7 +22,7 @@ import { AuthError } from '@/lib/auth/authorize';
 import { checkInVehicle } from '@/lib/workshop/check-in';
 import { createQuotation, saveEstimateDraft } from '@/lib/workshop/estimates';
 import { createDirectInvoice } from '@/lib/billing/direct-invoice';
-import { buildExport, EXPORTS } from '@/lib/data-transfer/exports';
+import { buildExport, EXPORTS, exportGuide } from '@/lib/data-transfer/exports';
 import { importCsv, importTemplate, isImportable, IMPORTS } from '@/lib/data-transfer/imports';
 import { parseCsv, parseCsvRows, toCsv } from '@/lib/data-transfer/csv';
 import { localDateString } from '@/lib/format';
@@ -52,7 +52,9 @@ after(async () => {
 
 describe('CSV itself', () => {
   test('quotes what needs quoting and survives a round trip', () => {
-    const rows = [{ name: 'Al "Fast" Motors, Dubai', note: 'line one\nline two', amount: '1250.00' }];
+    const rows = [
+      { name: 'Al "Fast" Motors, Dubai', note: 'line one\nline two', amount: '1250.00' },
+    ];
     const csv = toCsv(rows, [
       { header: 'Name', value: (row) => row.name },
       { header: 'Note', value: (row) => row.note },
@@ -101,7 +103,11 @@ describe('export', () => {
 
   test('customers export carries the rows and their vehicles', async () => {
     const customer = await prisma.customer.create({
-      data: { organizationId: a.organizationId, name: `Export Customer ${RUN}`, phone: '050 900 1122' },
+      data: {
+        organizationId: a.organizationId,
+        name: `Export Customer ${RUN}`,
+        phone: '050 900 1122',
+      },
     });
     await prisma.vehicle.create({
       data: {
@@ -119,12 +125,29 @@ describe('export', () => {
     assert.ok(row, 'the new customer is in the file');
     assert.equal(row.mobile, '050 900 1122');
     assert.equal(row.vehicles, `X1 ${RUN.slice(-4)}`);
+    assert.equal(row.numberofvehicles, '1');
+    assert.equal(row.balanceowed, '0.00', 'nothing invoiced yet');
+    for (const header of ['TRN', 'Address', 'Total invoiced', 'Paid', 'Last visit']) {
+      assert.ok(headers.includes(header), `the file has ${header}`);
+    }
+  });
+
+  test('every export explains itself: what the file holds, and the columns', () => {
+    for (const entity of Object.keys(EXPORTS)) {
+      const guide = exportGuide(entity);
+      assert.ok(guide && guide.description.length > 20, `${entity} says what it holds`);
+      assert.equal(guide.columns.length, EXPORTS[entity].columns.length);
+    }
   });
 
   test('the search that filtered the screen filters the file', async () => {
     // Someone the search must leave out.
     await prisma.customer.create({
-      data: { organizationId: a.organizationId, name: `Other Person ${RUN}`, phone: '050 900 7788' },
+      data: {
+        organizationId: a.organizationId,
+        name: `Other Person ${RUN}`,
+        phone: '050 900 7788',
+      },
     });
     const all = await buildExport(a.owner, 'customers', {});
     const filtered = await buildExport(a.owner, 'customers', { q: 'Export Customer' });
@@ -139,7 +162,10 @@ describe('export', () => {
     const mine = rowsOf((await buildExport(a.owner, 'customers', {})).csv).records;
     const theirs = rowsOf((await buildExport(b.owner, 'customers', {})).csv).records;
     assert.ok(mine.some((record) => record.name === `Export Customer ${RUN}`));
-    assert.equal(theirs.some((record) => record.name === `Export Customer ${RUN}`), false);
+    assert.equal(
+      theirs.some((record) => record.name === `Export Customer ${RUN}`),
+      false,
+    );
   });
 
   test('a user who may not see a list may not export it', async () => {
@@ -171,7 +197,10 @@ describe('export', () => {
       vehicleId: vehicle.id,
       visit: { complaint: 'Service' },
     });
-    const quote = await createQuotation(a.owner, { customerId: customer.id, vehicleId: vehicle.id });
+    const quote = await createQuotation(a.owner, {
+      customerId: customer.id,
+      vehicleId: vehicle.id,
+    });
     await saveEstimateDraft(a.owner, quote.id, {
       validUntil: validUntil(),
       items: [{ itemType: 'PART', description: 'Filter', quantity: '2', unitPrice: '55.50' }],
@@ -273,7 +302,10 @@ describe('import', () => {
     assert.equal(outcome.created, 0, 'nothing written');
     assert.equal(outcome.errors.length, 1);
     assert.equal(outcome.errors[0].row, 3, 'the spreadsheet row number');
-    assert.equal(await prisma.customer.count({ where: { organizationId: a.organizationId } }), before);
+    assert.equal(
+      await prisma.customer.count({ where: { organizationId: a.organizationId } }),
+      before,
+    );
   });
 
   test('vehicles: matched to their owner by mobile number', async () => {
@@ -328,8 +360,14 @@ describe('import', () => {
 
   test('a file with no rows, or too many, is refused before anything is read', async () => {
     await expectDomainError(importCsv(a.owner, 'customers', 'Name,Mobile\r\n'), /no rows/);
-    const many = ['Name,Mobile', ...Array.from({ length: 2100 }, (_, i) => `Bulk ${i},05000000${i}`)];
-    await expectDomainError(importCsv(a.owner, 'customers', many.join('\r\n')), /up to 2000 at a time/);
+    const many = [
+      'Name,Mobile',
+      ...Array.from({ length: 2100 }, (_, i) => `Bulk ${i},05000000${i}`),
+    ];
+    await expectDomainError(
+      importCsv(a.owner, 'customers', many.join('\r\n')),
+      /up to 2000 at a time/,
+    );
   });
 
   test('permissions and organizations are enforced', async () => {
@@ -338,7 +376,11 @@ describe('import', () => {
     await expectDomainError(importCsv(a.owner, 'payments', csv), /could not be found/);
 
     // Org B importing the same file makes B's own customer, not A's.
-    await importCsv(b.owner, 'customers', ['Name,Mobile', `Shared Name ${RUN},050 999 1234`].join('\r\n'));
+    await importCsv(
+      b.owner,
+      'customers',
+      ['Name,Mobile', `Shared Name ${RUN},050 999 1234`].join('\r\n'),
+    );
     assert.equal(
       await prisma.customer.count({
         where: { organizationId: a.organizationId, name: `Shared Name ${RUN}` },

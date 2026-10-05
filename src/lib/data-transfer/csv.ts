@@ -16,6 +16,8 @@ export interface CsvColumn<Row> {
   /** The heading written to the file, and the name accepted when reading. */
   header: string;
   value: (row: Row) => CsvValue;
+  /** What the column means, for the guide shown before an export downloads. */
+  hint?: string;
 }
 
 const NEEDS_QUOTES = /[",\r\n]/;
