@@ -61,7 +61,10 @@ describe('the sidebar sections', () => {
   test('every page the menu has always offered is still there', () => {
     for (const href of [
       '/',
-      '/check-in',
+      '/workshop',
+      '/sales',
+      '/inventory',
+      '/hr',
       '/job-cards',
       '/appointments',
       '/inspections',

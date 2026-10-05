@@ -2,8 +2,8 @@ import {
   ArrowRightLeft,
   PiggyBank,
   LayoutDashboard,
+  LayoutGrid,
   CalendarDays,
-  LogIn,
   ClipboardList,
   ClipboardCheck,
   FileText,
@@ -92,7 +92,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Workshop',
     items: [
-      { label: 'New job card', href: '/check-in', icon: LogIn, permission: 'job_card.create' },
+      { label: 'Overview', href: '/workshop', icon: LayoutGrid, permission: 'job_card.view' },
       { label: 'Job Cards', href: '/job-cards', icon: ClipboardList, permission: 'job_card.view' },
       { label: 'Workshop today', href: '/live', icon: Gauge, permission: 'job_card.view' },
       {
@@ -121,6 +121,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Sales',
     items: [
+      { label: 'Overview', href: '/sales', icon: LayoutGrid, permission: 'invoice.view' },
       { label: 'Quotations', href: '/quotations', icon: FileText, permission: 'quotation.view' },
       {
         label: 'Sales invoices',
@@ -147,6 +148,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Inventory',
     items: [
+      { label: 'Overview', href: '/inventory', icon: LayoutGrid, permission: 'inventory.view' },
       { label: 'Parts', href: '/inventory/parts', icon: Cog, permission: 'inventory.view' },
       {
         label: 'Purchases',
@@ -329,6 +331,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'HR',
     items: [
+      { label: 'Overview', href: '/hr', icon: LayoutGrid, permission: 'employee.view' },
       { label: 'Employees', href: '/hr/employees', icon: IdCard, permission: 'employee.view' },
       {
         label: 'Designations',

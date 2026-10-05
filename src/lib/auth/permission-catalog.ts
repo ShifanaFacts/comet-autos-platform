@@ -223,10 +223,11 @@ export const PERMISSION_MODULES: PermissionModule[] = [
   {
     key: 'customer_advance',
     label: 'Customer advances',
-    description: 'Money customers pay before their invoice, applied to invoices later.',
+    description:
+      'Deposits customers pay before their invoice — taken on the quotation or job card, applied to the invoice.',
     actions: {
-      view: 'See customer advances, what is left of each and where it was applied.',
-      create: 'Receive an advance from a customer.',
+      view: 'See the advances on quotations and job cards, what is left of each and where it was applied.',
+      create: 'Receive an advance on a quotation or job card.',
       edit: 'Apply an advance to an invoice, or undo an application.',
       delete: 'Refund an advance to the customer, reverse a refund, or cancel an advance.',
     },
