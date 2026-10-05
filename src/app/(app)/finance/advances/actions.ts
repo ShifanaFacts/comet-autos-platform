@@ -27,6 +27,7 @@ function refresh() {
   revalidatePath('/finance/money', 'layout');
   revalidatePath('/finance');
   revalidatePath('/job-cards', 'layout');
+  revalidatePath('/quotations', 'layout');
   revalidatePath('/customers', 'layout');
   revalidatePath('/');
 }

@@ -11,11 +11,14 @@ import { ReceiveAdvanceForm } from '@/components/finance/advance-forms';
 
 export const metadata = { title: 'Receive advance' };
 
-/** Taking money from a customer before their invoice — from a job card, a customer, or here. */
+/**
+ * Taking a deposit before the invoice — opened from a quotation or a job
+ * card, which fill in the customer, vehicle and job.
+ */
 export default async function ReceiveAdvancePage({
   searchParams,
 }: {
-  searchParams: Promise<{ customerId?: string; jobCardId?: string }>;
+  searchParams: Promise<{ customerId?: string; jobCardId?: string; vehicleId?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
@@ -39,9 +42,17 @@ export default async function ReceiveAdvancePage({
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
         eyebrow={
-          <Link href="/finance/advances" className="text-primary hover:underline">
-            Customer advances
-          </Link>
+          prefill.jobCardId ? (
+            <Link href={`/job-cards/${prefill.jobCardId}`} className="text-primary hover:underline">
+              Job card
+            </Link>
+          ) : initialCustomer ? (
+            <Link href={`/customers/${initialCustomer.id}`} className="text-primary hover:underline">
+              {initialCustomer.name}
+            </Link>
+          ) : (
+            'Advance'
+          )
         }
         title="Receive advance"
         description="Money a customer pays before their invoice. It is held for them, and applied to their invoice when the job is billed — or paid back."
