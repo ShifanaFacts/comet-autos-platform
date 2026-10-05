@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Download, FileSpreadsheet, Loader2, MoreHorizontal, Upload } from 'lucide-react';
 import { toast } from 'sonner';
@@ -22,13 +22,16 @@ import { useFormAction } from '@/components/forms/use-form-action';
 import type { ActionResult } from '@/lib/errors';
 import type { ImportColumn, ImportOutcome } from '@/lib/data-transfer/imports';
 import { importCsvAction } from '@/app/(app)/import/actions';
+import { exportGuideAction } from '@/app/(app)/export/actions';
+import type { ExportGuide } from '@/lib/data-transfer/exports';
 import { cn } from '@/lib/utils';
 
 /*
  * Spreadsheet in, spreadsheet out, on the list itself.
  *
  * Export downloads exactly what the screen is showing — the same search and
- * filters, just without the page limit. Import brings master data in, and
+ * filters, just without the page limit — after a short guide to what the
+ * file holds and what each column means. Import brings master data in, and
  * the job cards, quotations and invoices a workshop carries over from its
  * old system — priced and numbered by the app's own rules, never trusted
  * from the file.
@@ -60,6 +63,7 @@ export function ListDataActions({
   note?: string;
 }) {
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   // Closing the dialog bumps this, which remounts it — so the next import
   // starts on a fresh form rather than the last one's report.
   const [session, setSession] = useState(0);
@@ -93,7 +97,7 @@ export function ListDataActions({
           <DropdownMenuContent align="end" className="min-w-48">
             {/* A real link: the browser downloads the file rather than routing to it. */}
             {canExport ? (
-              <DropdownMenuItem className="gap-2.5 py-2.5" render={<a href={exportHref} />}>
+              <DropdownMenuItem className="gap-2.5 py-2.5" onClick={() => setExporting(true)}>
                 <Download className="size-4" />
                 Export {label}
               </DropdownMenuItem>
@@ -117,17 +121,21 @@ export function ListDataActions({
           </Button>
         ) : null}
         {canExport ? (
-          <Button
-            variant="outline"
-            className="h-10"
-            nativeButton={false}
-            render={<a href={exportHref} />}
-          >
+          <Button variant="outline" className="h-10" onClick={() => setExporting(true)}>
             <Download />
             Export
           </Button>
         ) : null}
       </div>
+
+      {canExport && exporting ? (
+        <ExportDialog
+          entity={entity}
+          href={exportHref}
+          filtered={query !== ''}
+          onClose={() => setExporting(false)}
+        />
+      ) : null}
 
       {canImport ? (
         <ImportDialog
@@ -335,5 +343,95 @@ function ImportReport({
         Done
       </Button>
     </div>
+  );
+}
+
+/**
+ * Before the file downloads: what it holds — one row per what, with the
+ * screen's search and filters — and every column with what it means.
+ */
+function ExportDialog({
+  entity,
+  href,
+  filtered,
+  onClose,
+}: {
+  entity: string;
+  href: string;
+  /** A search or filter is on, so only those rows are in the file. */
+  filtered: boolean;
+  onClose: () => void;
+}) {
+  const [guide, setGuide] = useState<ExportGuide | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    exportGuideAction(entity).then((result) => {
+      if (live) setGuide(result);
+    });
+    return () => {
+      live = false;
+    };
+  }, [entity]);
+
+  return (
+    <Dialog open onOpenChange={(open) => (open ? null : onClose())}>
+      <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Export {guide?.label.toLowerCase() ?? ''}</DialogTitle>
+          <DialogDescription>
+            A CSV file that opens in Excel or Google Sheets.{' '}
+            {filtered
+              ? 'Only the rows matching your current search and filters are included.'
+              : 'Every row on the list is included — search or filter the list first to export only some.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        {guide === undefined ? (
+          <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Loading what the file holds…
+          </p>
+        ) : guide === null ? (
+          <p className="py-6 text-sm text-muted-foreground">This list can’t be exported.</p>
+        ) : (
+          <div className="flex min-h-0 flex-col gap-4">
+            <p className="text-sm">{guide.description}</p>
+            <div className="min-h-0 overflow-y-auto rounded-lg border border-border">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-muted text-left text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+                  <tr>
+                    <th className="w-2/5 px-3 py-2">Column</th>
+                    <th className="px-3 py-2">What it means</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {guide.columns.map((column) => (
+                    <tr key={column.header} className="align-top">
+                      <td className="px-3 py-2 font-medium">{column.header}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{column.hint ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+          <Button type="button" variant="outline" size="lg" onClick={onClose}>
+            Cancel
+          </Button>
+          {/* A real link: the browser downloads the file rather than routing to it. */}
+          <Button
+            size="lg"
+            nativeButton={false}
+            render={<a href={href} onClick={() => setTimeout(onClose, 300)} />}
+          >
+            <FileSpreadsheet />
+            Download CSV
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
