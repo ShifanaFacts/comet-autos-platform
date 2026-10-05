@@ -41,3 +41,53 @@ self.addEventListener('fetch', (event) => {
     ),
   );
 });
+
+/*
+ * Push notifications (lib/notifications/push.ts sends them).
+ *
+ * When the app is open on screen, the page itself plays the chime and the
+ * spoken announcement and updates the bell — so the phone's own banner is
+ * skipped. Otherwise the notification is shown with the phone's sound and
+ * vibration. Tapping it opens the app at the right place and marks it read.
+ */
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: event.data ? event.data.text() : 'New notification' };
+  }
+  const title = data.title || 'New notification';
+  const url = data.id ? `/notifications/${data.id}/open` : data.href || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      const visible = windows.filter((client) => client.visibilityState === 'visible');
+      for (const client of windows) client.postMessage({ type: 'notification', payload: data });
+      if (visible.length > 0) return undefined;
+      return self.registration.showNotification(title, {
+        body: data.body || '',
+        icon: '/app-icons/icon-192.png',
+        badge: '/app-icons/icon-192.png',
+        tag: data.kind || 'general',
+        renotify: true,
+        requireInteraction: data.kind === 'CHECK_OUT_REMINDER' || data.kind === 'CHECK_IN_REMINDER',
+        vibrate: [200, 100, 200, 100, 300],
+        data: { url },
+      });
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      const open = windows.find((client) => 'focus' in client);
+      if (open) {
+        return open.focus().then((client) => (client && 'navigate' in client ? client.navigate(url) : undefined));
+      }
+      return self.clients.openWindow(url);
+    }),
+  );
+});

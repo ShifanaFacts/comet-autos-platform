@@ -3,6 +3,8 @@ import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
 import { NAV_GROUPS, isMenuShown } from '@/lib/nav';
 import { getMyDay } from '@/lib/hr/self-attendance';
+import { countUnread } from '@/lib/notifications/service';
+import { vapidPublicKey } from '@/lib/notifications/push';
 import { getWorkshopPreferences } from '@/lib/organization/settings';
 import { getBrand } from '@/lib/brand/brand';
 import { SidebarNav } from '@/components/shell/sidebar-nav';
@@ -14,7 +16,7 @@ import { PageContainer } from '@/components/layout/primitives';
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const user = await requireUser();
-  const [branch, preferences, brand, myDay] = await Promise.all([
+  const [branch, preferences, brand, myDay, unread] = await Promise.all([
     user.primaryBranchId
       ? prisma.branch.findUnique({
           where: { id: user.primaryBranchId },
@@ -25,6 +27,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     getBrand(user.organizationId),
     // The employee's day: drives the check-in pill and its reminders in the top bar.
     getMyDay(user),
+    countUnread(user),
   ]);
   const employee = myDay?.employee ?? null;
   const attendance = myDay
@@ -66,6 +69,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           branchName={branch?.name ?? null}
           brand={brand}
           attendance={attendance}
+          notifications={{ unread, vapidKey: vapidPublicKey() }}
         />
         <main className="flex-1 pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
           <PageContainer>{children}</PageContainer>

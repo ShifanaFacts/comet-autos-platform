@@ -595,6 +595,9 @@ model Organization {
   tasks       Task[]
   taskUpdates TaskUpdate[]
 
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
+
   designations Designation[]
 
   @@map("organizations")
@@ -613,6 +616,9 @@ model Branch {
   latitude        Decimal? @db.Decimal(9, 6)
   longitude       Decimal? @db.Decimal(9, 6)
   geofenceRadiusM Int      @default(150) @map("geofence_radius_m")
+  /// When the working day starts, "HH:MM" in Dubai time: the morning reminder
+  /// to check in goes out then to anyone not checked in.
+  shiftStartTime  String   @default("08:00") @map("shift_start_time")
   /// When the working day ends, "HH:MM" in Dubai time. A day left open past
   /// it is closed at this time and flagged for review.
   shiftEndTime    String   @default("20:00") @map("shift_end_time")
@@ -724,10 +730,12 @@ model User {
   reimbursementsReceived OwnerReimbursement[] @relation("OwnerReimbursementPerson")
   reimbursementsRecorded OwnerReimbursement[] @relation("OwnerReimbursementRecordedBy")
 
-  createdTasks        Task[]       @relation("TaskCreatedBy")
-  completedTasks      Task[]       @relation("TaskCompletedBy")
+  notifications       Notification[]
+  pushSubscriptions   PushSubscription[]
+  createdTasks        Task[]             @relation("TaskCreatedBy")
+  completedTasks      Task[]             @relation("TaskCompletedBy")
   taskUpdates         TaskUpdate[]
-  reviewedAttendances Attendance[] @relation("AttendanceReviewedBy")
+  reviewedAttendances Attendance[]       @relation("AttendanceReviewedBy")
 
   @@unique([organizationId, id])
   @@unique([organizationId, email])
@@ -3279,4 +3287,64 @@ model TaskUpdate {
   @@unique([organizationId, id])
   @@index([organizationId, taskId, createdAt])
   @@map("task_updates")
+}
+
+// =============================================================================
+// NOTIFICATIONS
+// =============================================================================
+
+enum NotificationKind {
+  /// A manager gave the person a task (or moved one to them).
+  TASK_ASSIGNED
+  /// The working day has started and they haven't checked in.
+  CHECK_IN_REMINDER
+  /// The working day has ended and they are still checked in.
+  CHECK_OUT_REMINDER
+}
+
+/// Something for one person to see: in the bell in the top bar, and pushed
+/// to their phone. Kept until they remove it; reading it only marks it read.
+model Notification {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  kind           NotificationKind
+  title          String
+  body           String?
+  /// Where tapping it leads, inside the app.
+  href           String?
+  /// Makes a reminder once-only ("checkin:2026-10-05"): the same key is
+  /// never sent to the same person twice.
+  dedupeKey      String?          @map("dedupe_key")
+  readAt         DateTime?        @map("read_at") @db.Timestamptz
+  /// Removed from the list by the person. The row is kept.
+  dismissedAt    DateTime?        @map("dismissed_at") @db.Timestamptz
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User         @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([userId, dedupeKey])
+  @@index([organizationId, userId, dismissedAt, createdAt])
+  @@map("notifications")
+}
+
+/// A phone or browser that agreed to receive push notifications for a
+/// login (the Web Push subscription it handed over).
+model PushSubscription {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  endpoint       String    @unique
+  p256dh         String
+  auth           String
+  userAgent      String?   @map("user_agent")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  lastSuccessAt  DateTime? @map("last_success_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User         @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Cascade)
+
+  @@index([organizationId, userId])
+  @@map("push_subscriptions")
 }

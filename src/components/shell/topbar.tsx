@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { logout } from '@/lib/auth/logout-action';
 import type { Brand } from '@/lib/brand/brand';
 import { AttendanceControl, type AttendanceStatus } from '@/components/team/attendance-control';
+import { NotificationBell } from '@/components/shell/notification-bell';
 
 function initials(fullName: string): string {
   return fullName
@@ -32,12 +33,15 @@ export function Topbar({
   branchName,
   brand,
   attendance,
+  notifications,
 }: {
   user: { fullName: string; email: string | null; roleNames: string[] };
   branchName: string | null;
   brand: Pick<Brand, 'shortName' | 'initial'>;
   /** The signed-in employee's check-in state; null for a login with no employee record. */
   attendance?: AttendanceStatus | null;
+  /** Unread count for the bell, and the key a device needs to subscribe to pushes. */
+  notifications?: { unread: number; vapidKey: string | null };
 }) {
   const role = user.roleNames.join(' / ') || 'Staff';
   return (
@@ -65,6 +69,9 @@ export function Topbar({
           {branchName ? <span className="hidden h-6 w-px bg-border xl:block" aria-hidden /> : null}
 
           {attendance ? <AttendanceControl status={attendance} /> : null}
+          {notifications ? (
+            <NotificationBell unread={notifications.unread} vapidKey={notifications.vapidKey} />
+          ) : null}
 
           <InstallAppButton appName={brand.shortName} />
 

@@ -33,6 +33,14 @@ import {
   setTaskStatus,
 } from '@/lib/team/tasks';
 import { getLiveBoard } from '@/lib/workshop/live-board';
+import {
+  countUnread,
+  dismissAll,
+  dismissNotification,
+  listMyNotifications,
+  openNotification,
+} from '@/lib/notifications/service';
+import { runAttendanceReminders } from '@/lib/notifications/reminders';
 import { addDays } from '@/lib/team/client';
 import { createTestOrg, expectDomainError, type TestOrg } from './support';
 
@@ -86,10 +94,10 @@ describe('checking yourself in', () => {
 
   test('only settings.edit sets the location', async () => {
     await assert.rejects(
-      updateBranchLocation(tech, a.branchId, { ...WORKSHOP, radius: 150, shiftEndTime: '20:00' }),
+      updateBranchLocation(tech, a.branchId, { ...WORKSHOP, radius: 150, shiftStartTime: '08:00', shiftEndTime: '20:00' }),
       AuthError,
     );
-    await updateBranchLocation(a.owner, a.branchId, { ...WORKSHOP, radius: 150, shiftEndTime: '20:00' });
+    await updateBranchLocation(a.owner, a.branchId, { ...WORKSHOP, radius: 150, shiftStartTime: '08:00', shiftEndTime: '20:00' });
   });
 
   test('a kilometre away: refused, with the distance', async () => {
@@ -301,5 +309,49 @@ describe('the live board', () => {
     assert.ok(board.team.some((member) => member.id === techEmployee && member.left));
     const viewerOnly = { ...tech, orgWidePermissions: new Set<string>() };
     await assert.rejects(getLiveBoard(viewerOnly), AuthError);
+  });
+});
+
+describe('notifications', () => {
+  test('a task a manager gives reaches the assignee’s bell; their own to-dos don’t', async () => {
+    const assigned = await prisma.notification.findMany({
+      where: { organizationId: a.organizationId, userId: tech.id, kind: 'TASK_ASSIGNED' },
+    });
+    assert.ok(assigned.length >= 1, 'the technician was told about the task given to them');
+    assert.ok(assigned.every((row) => row.href?.startsWith('/team/tasks/')));
+    const own = await prisma.notification.count({
+      where: { organizationId: a.organizationId, userId: tech.id, body: { contains: 'brake pads' } },
+    });
+    assert.equal(own, 0, 'adding your own to-do notifies nobody');
+  });
+
+  test('the bell: read one, remove one, remove all — only ever your own', async () => {
+    const list = await listMyNotifications(tech);
+    assert.ok(list.length >= 1);
+    assert.ok((await countUnread(tech)) >= 1);
+    const first = list[0];
+    assert.equal(await openNotification(mate, first.id), null, 'someone else’s can’t be opened');
+    const opened = await openNotification(tech, first.id);
+    assert.equal(opened?.id, first.id);
+    await dismissNotification(tech, first.id);
+    assert.ok(!(await listMyNotifications(tech)).some((row) => row.id === first.id));
+    await dismissAll(tech);
+    assert.equal((await listMyNotifications(tech)).length, 0);
+    assert.equal(await countUnread(tech), 0);
+  });
+
+  test('the evening reminder goes once to whoever is still checked in', async () => {
+    const evening = new Date(`${today()}T21:00:00+04:00`);
+    await runAttendanceReminders(evening, { organizationId: a.organizationId });
+    const reminders = await prisma.notification.count({
+      where: { organizationId: a.organizationId, userId: mate.id, kind: 'CHECK_OUT_REMINDER' },
+    });
+    assert.equal(reminders, 1, 'still checked in after the working day: reminded');
+    const again = await runAttendanceReminders(evening, { organizationId: a.organizationId });
+    assert.equal(again.sent, 0, 'never twice the same evening');
+    const techReminders = await prisma.notification.count({
+      where: { organizationId: a.organizationId, userId: tech.id, kind: 'CHECK_OUT_REMINDER' },
+    });
+    assert.equal(techReminders, 0, 'already checked out: left alone');
   });
 });
