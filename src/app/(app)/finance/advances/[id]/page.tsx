@@ -57,9 +57,16 @@ export default async function CustomerAdvancePage({ params }: { params: Promise<
     <Stack gap="2xl" className="animate-in fade-in duration-300">
       <PageHeader
         eyebrow={
-          <Link href="/finance/advances" className="text-primary hover:underline">
-            Customer advances
-          </Link>
+          // An advance belongs to its job (or its customer): back to where it was taken.
+          advance.jobCard ? (
+            <Link href={`/job-cards/${advance.jobCard.id}`} className="text-primary hover:underline">
+              {`Advance · job ${advance.jobCard.jobNumber}`}
+            </Link>
+          ) : (
+            <Link href={`/customers/${advance.customer.id}`} className="text-primary hover:underline">
+              {`Advance · ${advance.customer.name}`}
+            </Link>
+          )
         }
         title={
           <span className="flex flex-wrap items-center gap-3">

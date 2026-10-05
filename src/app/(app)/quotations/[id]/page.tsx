@@ -27,6 +27,8 @@ import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { LinkButton } from '@/components/shared/link-button';
 import { StaffDocumentActions } from '@/components/documents/document-actions';
 import { cn } from '@/lib/utils';
+import { JobAdvances } from '@/components/finance/job-advances';
+import { CLOSED_JOB_STATUSES } from '@/lib/workshop/stages';
 
 /*
  * The quotation screen — one page for every quotation, whether it was raised
@@ -83,6 +85,12 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
     branchId: user.primaryBranchId ?? quotation.branchId,
   });
   const canChangeParty = canEdit && !partyChangeBlocker(history);
+  // A deposit is taken while the work is still ahead: not on a rejected or
+  // superseded quotation, nor once the job has gone home.
+  const advanceOpen =
+    isLatest &&
+    quotation.status !== 'REJECTED' &&
+    !(jobCard && CLOSED_JOB_STATUSES.includes(jobCard.status));
   const partyOption = canChangeParty
     ? ((await getCustomerOptions(user, [customer.id]))[0] ?? null)
     : null;
@@ -268,6 +276,17 @@ export default async function QuotationPage({ params }: { params: Promise<{ id: 
               </ul>
             </Panel>
           </Section>
+
+          <JobAdvances
+            user={user}
+            open={advanceOpen}
+            jobCard={jobCard ? { id: jobCard.id, branchId: quotation.branchId } : undefined}
+            quotation={
+              jobCard
+                ? undefined
+                : { customerId: customer.id, vehicleId: vehicle?.id ?? null, branchId: quotation.branchId }
+            }
+          />
 
           {decision ? (
             <Section title="Customer decision">

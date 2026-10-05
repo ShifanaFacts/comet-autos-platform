@@ -1211,12 +1211,13 @@ export async function getInvoiceAdvances(
 export type InvoiceAdvances = NonNullable<Awaited<ReturnType<typeof getInvoiceAdvances>>>;
 
 /**
- * Who a new advance is from, when the form is opened from a customer or a
- * job card: the customer, and the job card and vehicle it is towards.
+ * Who a new advance is from, when the form is opened from a quotation or a
+ * job card: the customer, and the job card and vehicle it is towards. A
+ * quotation without a job card passes its customer and vehicle.
  */
 export async function advancePrefill(
   user: AuthenticatedUser,
-  prefill: { customerId?: string; jobCardId?: string },
+  prefill: { customerId?: string; jobCardId?: string; vehicleId?: string },
 ) {
   requirePermission(user, 'customer_advance.create');
   if (prefill.jobCardId) {
@@ -1226,17 +1227,37 @@ export async function advancePrefill(
     });
     if (job) return { customerId: job.customerId, jobCardId: job.id, vehicleId: job.vehicleId };
   }
+  if (prefill.customerId && prefill.vehicleId) {
+    // Only the customer's own vehicle is offered.
+    const vehicle = await prisma.vehicle.findFirst({
+      where: { id: prefill.vehicleId, organizationId: user.organizationId, customerId: prefill.customerId },
+      select: { id: true },
+    });
+    return { customerId: prefill.customerId, jobCardId: '', vehicleId: vehicle?.id ?? '' };
+  }
   return { customerId: prefill.customerId ?? null, jobCardId: '', vehicleId: '' };
 }
 
-/** For a job card's screen: the advances taken towards it, and whether another can be taken. */
-export async function getJobAdvances(
-  user: AuthenticatedUser,
-  jobCard: { id: string; branchId: string },
-) {
-  if (!hasPermission(user, 'customer_advance.view', { branchId: jobCard.branchId })) return null;
+/** What advances are listed for: a job card, or — for a quotation without one — its customer and vehicle. */
+export type AdvanceTarget =
+  | { jobCardId: string; branchId: string }
+  | { customerId: string; vehicleId: string | null; branchId: string };
+
+/**
+ * For a job card's or quotation's screen: the advances taken towards it, and
+ * whether another can be taken. Without a job card, those are the customer's
+ * advances for that vehicle not tied to any job — the ones its invoice will
+ * be able to use.
+ */
+export async function getAdvancesFor(user: AuthenticatedUser, target: AdvanceTarget) {
+  if (!hasPermission(user, 'customer_advance.view', { branchId: target.branchId })) return null;
   const rows = await prisma.customerAdvance.findMany({
-    where: { organizationId: user.organizationId, jobCardId: jobCard.id },
+    where: {
+      organizationId: user.organizationId,
+      ...('jobCardId' in target
+        ? { jobCardId: target.jobCardId }
+        : { customerId: target.customerId, jobCardId: null, vehicleId: target.vehicleId }),
+    },
     orderBy: [{ receivedOn: 'asc' }, { createdAt: 'asc' }],
     include: STANDING_ROWS,
   });
@@ -1250,6 +1271,14 @@ export async function getJobAdvances(
   }));
   return {
     advances,
-    canReceive: hasPermission(user, 'customer_advance.create', { branchId: jobCard.branchId }),
+    canReceive: hasPermission(user, 'customer_advance.create', { branchId: target.branchId }),
   };
+}
+
+/** For a job card's screen: the advances taken towards it, and whether another can be taken. */
+export async function getJobAdvances(
+  user: AuthenticatedUser,
+  jobCard: { id: string; branchId: string },
+) {
+  return getAdvancesFor(user, { jobCardId: jobCard.id, branchId: jobCard.branchId });
 }

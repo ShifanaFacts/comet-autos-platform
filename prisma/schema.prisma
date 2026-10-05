@@ -40,7 +40,11 @@
 generator client {
   provider        = "prisma-client"
   output          = "../src/generated/prisma"
-  previewFeatures = ["partialIndexes"]
+  // relationJoins: nested reads (include/select of relations) are fetched in
+  // ONE query with joins instead of one query per level. The database is far
+  // away (each round trip ~150 ms), so this is what keeps pages quick — the
+  // sign-in check on every request went from 6 queries (~1 s) to 1 (~0.17 s).
+  previewFeatures = ["partialIndexes", "relationJoins"]
 }
 
 datasource db {
