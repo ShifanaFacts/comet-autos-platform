@@ -726,6 +726,27 @@ describe('inventory management', () => {
     assert.equal(reversal.quantity.toString(), '-5');
     assert.equal(reversal.reversalOfTransactionId, found.id);
     assert.equal(await stock(a, filterId), onHand - 5000);
+    // The books follow: the reversal is booked the other way round, so the
+    // adjustment and its reversal leave Inventory where it was.
+    const entries = await prisma.journalEntry.findMany({
+      where: { sourceType: 'STOCK_MOVEMENT', sourceId: { in: [found.id, reversal.id] } },
+      select: {
+        sourceId: true,
+        lines: {
+          select: {
+            debitAmount: true,
+            creditAmount: true,
+            chartOfAccount: { select: { role: true } },
+          },
+        },
+      },
+    });
+    assert.equal(entries.length, 2, 'both the adjustment and its reversal are booked');
+    const inventoryNet = entries
+      .flatMap((entry) => entry.lines)
+      .filter((line) => line.chartOfAccount.role === 'INVENTORY')
+      .reduce((sum, line) => sum + Number(line.debitAmount) - Number(line.creditAmount), 0);
+    assert.equal(inventoryNet, 0, 'they cancel in Inventory');
     await expectDomainError(
       reverseMovement(a.owner, found.id, { reason: 'Twice' }),
       /already been reversed/,

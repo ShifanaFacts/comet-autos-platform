@@ -458,6 +458,7 @@ const postStockMovement: Poster = async (tx, organizationId, movementId, account
       createdAt: true,
       branchId: true,
       part: { select: { sku: true, name: true } },
+      reversalOf: { select: { transactionType: true, note: true } },
       purchaseItem: {
         select: {
           id: true,
@@ -479,9 +480,15 @@ const postStockMovement: Poster = async (tx, organizationId, movementId, account
   const value = sign * multiplyQuantity(quantity, movement.unitCost.toString());
   const what = `${movement.part.name} (${movement.part.sku})`;
   const base = { date: accountingDay(movement.createdAt), branchId: movement.branchId };
+  // A reversal (of an adjustment or opening stock) is booked like the movement
+  // it cancels: its quantity has the opposite sign, so the entry runs the other
+  // way and the two net to nothing.
+  const reversed = movement.transactionType === 'REVERSAL' ? movement.reversalOf : null;
+  const type = reversed?.transactionType ?? movement.transactionType;
+  const note = reversed?.note ?? movement.note;
+  const prefix = reversed ? 'Reversed — ' : '';
   const openingStock =
-    movement.transactionType === 'OPENING_STOCK' ||
-    (movement.transactionType === 'ADJUSTMENT' && /^opening stock/i.test(movement.note ?? ''));
+    type === 'OPENING_STOCK' || (type === 'ADJUSTMENT' && /^opening stock/i.test(note ?? ''));
 
   if (
     movement.transactionType === 'PURCHASE_RECEIPT' ||
@@ -518,17 +525,17 @@ const postStockMovement: Poster = async (tx, organizationId, movementId, account
   if (openingStock) {
     return {
       ...base,
-      description: `Opening stock: ${what}`,
+      description: `${prefix}Opening stock: ${what}`,
       lines: new Lines()
         .debit(accounts.INVENTORY, value)
         .credit(accounts.OPENING_BALANCE, value)
         .build(),
     };
   }
-  if (movement.transactionType === 'ADJUSTMENT') {
+  if (type === 'ADJUSTMENT') {
     return {
       ...base,
-      description: `Stock adjustment: ${what}${movement.note ? ` — ${movement.note}` : ''}`,
+      description: `${prefix}Stock adjustment: ${what}${note ? ` — ${note}` : ''}`,
       lines: new Lines()
         .debit(accounts.INVENTORY, value)
         .credit(accounts.STOCK_ADJUSTMENTS, value)
