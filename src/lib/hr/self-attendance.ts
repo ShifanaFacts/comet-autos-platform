@@ -44,7 +44,7 @@ const positionSchema = z.object({
   previousLeftAt: z
     .string()
     .trim()
-    .regex(/^([01]d|2[0-3]):[0-5]d$/, 'Enter the time you left, e.g. 19:30.')
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Enter the time you left, e.g. 19:30.')
     .optional()
     .or(z.literal('')),
   requestKey: z.string().optional(),

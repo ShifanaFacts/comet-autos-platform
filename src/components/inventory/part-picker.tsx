@@ -99,7 +99,7 @@ function matching(parts: PartOption[], query: string, exclude?: Set<string>, pre
   return parts
     .filter((part) => {
       if (exclude?.has(part.id)) return false;
-      const haystack = `${part.name} ${part.sku}`.toLowerCase();
+      const haystack = `${part.name} ${part.sku} ${part.supplierName ?? ''}`.toLowerCase();
       return words.every((word) => haystack.includes(word));
     })
     .sort((a, b) => Number(b.supplierId === prefer) - Number(a.supplierId === prefer))
@@ -320,8 +320,9 @@ export function PartPicker({
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{row.name}</span>
-                      <span className="block truncate font-mono text-xs text-muted-foreground">
-                        {row.sku}
+                      <span className="block truncate text-xs text-muted-foreground">
+                        <span className="font-mono">{row.sku}</span>
+                        {row.supplierName ? ` · ${row.supplierName}` : ''}
                       </span>
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-1">

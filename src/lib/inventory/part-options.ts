@@ -27,6 +27,8 @@ export interface PartOption {
   price: string;
   taxRate: string;
   supplierId: string | null;
+  /** The supplier it is usually bought from, shown beside it in the list. */
+  supplierName: string | null;
   /** Stock on hand at the user's branch, as a decimal ("3.000"; negative when oversold). */
   stock: string;
 }
@@ -49,6 +51,7 @@ const partSelect = {
   defaultSellingPrice: true,
   defaultTaxRate: true,
   preferredSupplierId: true,
+  preferredSupplier: { select: { name: true } },
 } as const;
 
 type PartRow = {
@@ -60,6 +63,7 @@ type PartRow = {
   defaultSellingPrice: { toString(): string } | null;
   defaultTaxRate: { toString(): string } | null;
   preferredSupplierId: string | null;
+  preferredSupplier: { name: string } | null;
 };
 
 const toOption = (part: PartRow, stockMilli: number): PartOption => ({
@@ -71,6 +75,7 @@ const toOption = (part: PartRow, stockMilli: number): PartOption => ({
   price: part.defaultSellingPrice?.toString() ?? '',
   taxRate: part.defaultTaxRate?.toString() ?? '',
   supplierId: part.preferredSupplierId,
+  supplierName: part.preferredSupplier?.name ?? null,
   stock: signedMilliToString(stockMilli),
 });
 

@@ -232,6 +232,8 @@ const VALUED_MOVEMENTS = [
   'RETURN_TO_SUPPLIER',
   'OPENING_STOCK',
   'ADJUSTMENT',
+  // Cancels an adjustment or opening stock: booked the other way round.
+  'REVERSAL',
 ] as const;
 
 /** Records whose postings are found by source rather than a link on the record. */
