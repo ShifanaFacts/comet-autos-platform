@@ -14,6 +14,8 @@ export type LineType = 'PART' | 'LABOUR';
 
 export interface EditableLine {
   key: string;
+  /** Editing a saved document: the line it was, so its links carry over. */
+  sourceId?: string;
   itemType: LineType;
   description: string;
   quantity: string;
@@ -47,6 +49,7 @@ function typed(value: Stored): string {
 /** A saved line, ready to edit again. */
 export function editableLine(
   item: {
+    id?: string;
     itemType: string | null;
     description: string;
     quantity: Stored;
@@ -63,6 +66,7 @@ export function editableLine(
 ): EditableLine {
   return {
     key,
+    ...(item.id ? { sourceId: item.id } : {}),
     itemType: item.itemType === 'LABOUR' ? 'LABOUR' : 'PART',
     description: item.description,
     quantity: typed(item.quantity),

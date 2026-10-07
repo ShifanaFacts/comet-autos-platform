@@ -73,6 +73,7 @@ export function linesPayload(lines: EditableLine[]) {
     .filter((line) => !isBlankLine(line))
     .map(
       ({
+        sourceId,
         itemType,
         description,
         quantity,
@@ -83,6 +84,7 @@ export function linesPayload(lines: EditableLine[]) {
         discount,
         accountId,
       }) => ({
+        ...(sourceId ? { sourceId } : {}),
         itemType,
         description,
         quantity,

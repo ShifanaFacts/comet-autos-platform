@@ -167,26 +167,45 @@ export function invoiceEditBlocker(invoice: {
   if (invoice.invoiceType === 'OPENING_BALANCE') {
     return 'An opening balance is changed on the Opening balances screen.';
   }
+  // A credit note was worked out from the invoice as issued; changing it now
+  // would leave the credit note pointing at figures that no longer exist.
   if (isCredited(invoice)) return CREDITED;
-  if (hasAdvanceApplied(invoice)) return ADVANCE_APPLIED('change the invoice');
-  if (hasSettlementDiscount(invoice)) return SETTLEMENT_DISCOUNT('change the invoice');
-  if (
-    invoice.status !== 'ISSUED' ||
-    (invoice.paidAmount !== undefined && toFils(invoice.paidAmount) > 0)
-  ) {
-    return 'A payment has been recorded. Reverse the payment first to change the invoice.';
-  }
-  if (invoice.items.some((item) => item.labourId || item.partUsageId)) {
-    return 'This invoice was billed from the repair records. Void it and invoice the job again instead.';
-  }
+  // Paid, part-paid, settled from an advance or discounted after issue: still
+  // editable — updateInvoice keeps the total at or above what was received,
+  // and lines billed from the repair records keep their links.
+  if (!EDITABLE_STATUSES.includes(invoice.status)) return 'This invoice can’t be changed.';
   return null;
+}
+
+const EDITABLE_STATUSES = ['ISSUED', 'PARTIALLY_PAID', 'PAID'];
+
+/**
+ * What has already settled the invoice and must stay covered by its total:
+ * payments that count, advances applied and a discount given after issue.
+ */
+export function settledFils(invoice: {
+  paidFils: number;
+  advanceAppliedAmount: { toString(): string };
+  settlementDiscount: { toString(): string };
+}) {
+  return (
+    invoice.paidFils +
+    toFils(invoice.advanceAppliedAmount.toString()) +
+    toFils(invoice.settlementDiscount.toString())
+  );
 }
 
 /**
  * Replaces the lines, discounts, due date, order number and notes of an
- * unpaid invoice. Priced by the same rules as a new one; the number, issue
- * date, customer and vehicle don't change, but the seller and customer
- * details are refreshed to the current ones.
+ * invoice. Priced by the same rules as a new one; the number, issue date,
+ * customer and vehicle don't change, but the seller and customer details are
+ * refreshed to the current ones.
+ *
+ * On an invoice already paid (in part or in full, or from an advance) the
+ * payments stay exactly as they are: the new total may not fall below what
+ * was received, and the invoice's paid/unpaid state — and its job card —
+ * follow the new total. A line billed from the repair records keeps its link
+ * to the labour or part it bills, so the job never looks unbilled.
  */
 export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, rawInput: unknown) {
   const input = parseInput(updateSchema, rawInput);
@@ -215,15 +234,35 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
     );
     await assertIncomeAccounts(tx, user.organizationId, lines);
     const dueDate = readDueDate(input.dueDate, invoice.issueDate);
+    const rounded = withRounding(totals, input.roundingAdjustment);
+    const paid = paidFils(invoice.payments);
+    const settled = settledFils({ ...invoice, paidFils: paid });
+    if (toFils(rounded.totalAmount) < settled) {
+      throw new DomainError(
+        `The new total (AED ${rounded.totalAmount}) is less than the AED ${filsToString(settled)} already received for this invoice. Keep the total at AED ${filsToString(settled)} or more — or refund the difference first.`,
+      );
+    }
+    // Lines that came from the repair records keep their link to the labour
+    // or part they bill.
+    const links = new Map(
+      invoice.items.map((item) => [
+        item.id,
+        { labourId: item.labourId, partUsageId: item.partUsageId },
+      ]),
+    );
 
     await tx.invoiceItem.deleteMany({
       where: { organizationId: user.organizationId, invoiceId: invoice.id },
     });
-    for (const line of lines) {
+    for (const [index, line] of lines.entries()) {
+      const sourceId = input.items[index].sourceId;
+      const link = sourceId ? links.get(sourceId) : undefined;
       await tx.invoiceItem.create({
         data: {
           organizationId: user.organizationId,
           invoiceId: invoice.id,
+          labourId: link?.labourId ?? null,
+          partUsageId: link?.partUsageId ?? null,
           itemType: line.itemType,
           description: line.description,
           accountId: line.accountId ?? null,
@@ -246,7 +285,6 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
         select: { name: true, taxNumber: true, address: true },
       }),
     ]);
-    const rounded = withRounding(totals, input.roundingAdjustment);
     const parties = {
       sellerLegalName: organization.legalName ?? organization.name,
       sellerTaxNumber: organization.taxNumber,
@@ -270,6 +308,21 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
     // The corrected figures replace the old ones in the books: the old entry
     // is reversed and the new one booked, on the invoice's own date.
     await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
+    const status = settlementStatus(
+      {
+        totalAmount: rounded.totalAmount,
+        creditedAmount: invoice.creditedAmount,
+        advanceAppliedAmount: invoice.advanceAppliedAmount,
+        settlementDiscount: invoice.settlementDiscount,
+      },
+      paid,
+    );
+    if (status !== invoice.status) {
+      await tx.invoice.update({ where: { id: invoice.id }, data: { status } });
+      await syncJobWithInvoice(tx, user.organizationId, invoice.id, user.id, {
+        reason: 'invoice.updated',
+      });
+    }
 
     await writeAuditLog(tx, {
       organizationId: user.organizationId,

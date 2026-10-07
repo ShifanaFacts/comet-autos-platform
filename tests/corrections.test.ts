@@ -143,6 +143,87 @@ describe('invoices', () => {
     assert.equal((audit?.beforeData as { totalAmount: string }).totalAmount, '105');
   });
 
+  test('a paid invoice can be edited: payments stay, the total covers them, paid/unpaid follows', async () => {
+    const { jobCardId } = await openJob('Paid edit');
+    const party = await jobParty(jobCardId);
+    const { invoiceId } = await createDirectInvoice(a.owner, {
+      ...party,
+      jobCardId,
+      items: [
+        {
+          itemType: 'LABOUR',
+          description: 'Service',
+          quantity: '1',
+          unitPrice: '200',
+          taxRate: '5',
+        },
+      ],
+    });
+    await recordInvoicePayment(a.owner, invoiceId, {
+      amount: '210',
+      method: 'CASH',
+      receivedAt: now(),
+    });
+    assert.equal((await getInvoiceDetail(a.owner, invoiceId)).status, 'PAID');
+
+    // A part forgotten: the total goes up, the difference becomes due.
+    await updateInvoice(a.owner, invoiceId, {
+      items: [
+        {
+          itemType: 'LABOUR',
+          description: 'Service',
+          quantity: '1',
+          unitPrice: '200',
+          taxRate: '5',
+        },
+        {
+          itemType: 'PART',
+          description: 'Oil filter',
+          quantity: '1',
+          unitPrice: '40',
+          taxRate: '5',
+        },
+      ],
+    });
+    let invoice = await getInvoiceDetail(a.owner, invoiceId);
+    assert.equal(invoice.totalAmount.toString(), '252');
+    assert.equal(invoice.paidAmount, '210.00', 'the payment stays as it was');
+    assert.equal(invoice.balanceDue, '42.00');
+    assert.equal(invoice.status, 'PARTIALLY_PAID');
+
+    // Below what was received: refused, nothing changes.
+    await expectDomainError(
+      updateInvoice(a.owner, invoiceId, {
+        items: [
+          {
+            itemType: 'LABOUR',
+            description: 'Service',
+            quantity: '1',
+            unitPrice: '100',
+            taxRate: '5',
+          },
+        ],
+      }),
+      /already received/,
+    );
+
+    // Back to exactly what was paid: settled again.
+    await updateInvoice(a.owner, invoiceId, {
+      items: [
+        {
+          itemType: 'LABOUR',
+          description: 'Service',
+          quantity: '1',
+          unitPrice: '200',
+          taxRate: '5',
+        },
+      ],
+    });
+    invoice = await getInvoiceDetail(a.owner, invoiceId);
+    assert.equal(invoice.status, 'PAID');
+    assert.equal(invoice.balanceDue, '0.00');
+  });
+
   test('a payment blocks edit and void until it is reversed; void then reopens the job card', async () => {
     const { jobCardId } = await openJob('Void');
     const party = await jobParty(jobCardId);
@@ -165,11 +246,12 @@ describe('invoices', () => {
       receivedAt: now(),
     });
 
+    // An edit may not take the total below the 100 received.
     await expectDomainError(
       updateInvoice(a.owner, invoiceId, {
         items: [{ itemType: 'LABOUR', description: 'x', quantity: '1', unitPrice: '1' }],
       }),
-      /Reverse the payment first/,
+      /already received/,
     );
     await expectDomainError(
       voidInvoice(a.owner, invoiceId, { reason: 'Wrong job' }),
