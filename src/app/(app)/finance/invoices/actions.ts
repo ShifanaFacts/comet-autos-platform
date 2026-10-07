@@ -9,7 +9,12 @@ import { formDataToObject } from '@/lib/form-data';
 import { prisma } from '@/lib/prisma';
 import { createDirectInvoice } from '@/lib/billing/direct-invoice';
 import { recordInvoicePayment } from '@/lib/billing/invoice';
-import { reverseInvoicePayment, updateInvoice, voidInvoice } from '@/lib/billing/invoice-changes';
+import {
+  reverseInvoicePayment,
+  settleShortPayment,
+  updateInvoice,
+  voidInvoice,
+} from '@/lib/billing/invoice-changes';
 import { getHeldAdvances, type HeldAdvances } from '@/lib/billing/advances';
 
 /*
@@ -119,6 +124,23 @@ export async function reverseInvoicePaymentAction(
 ): Promise<ActionResult> {
   const user = await requireUser();
   const result = await runAction(() => reverseInvoicePayment(user, paymentId, input));
+  if (result.ok || result.duplicate) {
+    await refreshInvoice(invoiceId);
+    revalidatePath('/customers', 'layout');
+  }
+  return toClientResult(result);
+}
+
+/** The customer actually paid a little less than was recorded: corrected in one step. */
+export async function settleShortPaymentAction(
+  invoiceId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() =>
+    settleShortPayment(user, invoiceId, formDataToObject(formData)),
+  );
   if (result.ok || result.duplicate) {
     await refreshInvoice(invoiceId);
     revalidatePath('/customers', 'layout');

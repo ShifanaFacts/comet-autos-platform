@@ -23,7 +23,12 @@ import {
 } from '@/lib/workshop/estimates';
 import { createDirectInvoice } from '@/lib/billing/direct-invoice';
 import { getInvoiceDetail, recordInvoicePayment } from '@/lib/billing/invoice';
-import { reverseInvoicePayment, updateInvoice, voidInvoice } from '@/lib/billing/invoice-changes';
+import {
+  reverseInvoicePayment,
+  settleShortPayment,
+  updateInvoice,
+  voidInvoice,
+} from '@/lib/billing/invoice-changes';
 import {
   archiveCustomer,
   archiveVehicle,
@@ -141,6 +146,57 @@ describe('invoices', () => {
       select: { beforeData: true },
     });
     assert.equal((audit?.beforeData as { totalAmount: string }).totalAmount, '105');
+  });
+
+  test('paid less than recorded: one step reverses, rounds off and records what came in', async () => {
+    const { jobCardId } = await openJob('Paid less');
+    const party = await jobParty(jobCardId);
+    const { invoiceId } = await createDirectInvoice(a.owner, {
+      ...party,
+      jobCardId,
+      items: [
+        { itemType: 'PART', description: 'Parts', quantity: '1', unitPrice: '2477', taxRate: '5' },
+      ],
+    });
+    // Not paid yet: nothing to correct.
+    await expectDomainError(
+      settleShortPayment(a.owner, invoiceId, { received: '2600', reason: 'Round amount' }),
+      /Only a paid invoice/,
+    );
+    const original = await recordInvoicePayment(a.owner, invoiceId, {
+      amount: '2600.85',
+      method: 'CASH',
+      receivedAt: now(),
+    });
+    // More than a round-off is a discount or a credit note.
+    await expectDomainError(
+      settleShortPayment(a.owner, invoiceId, { received: '2590', reason: 'Too much' }),
+      /more than a round-off/,
+    );
+
+    await settleShortPayment(a.owner, invoiceId, { received: '2600', reason: 'Round amount' });
+    const invoice = await getInvoiceDetail(a.owner, invoiceId);
+    assert.equal(invoice.status, 'PAID');
+    assert.equal(invoice.totalAmount.toString(), '2600');
+    assert.equal(invoice.roundingAdjustment.toString(), '-0.85');
+    assert.equal(invoice.taxAmount.toString(), '123.85', 'the VAT stays as issued');
+    assert.equal(invoice.paidAmount, '2600.00');
+    assert.equal(invoice.balanceDue, '0.00');
+
+    const payments = await prisma.payment.findMany({
+      where: { invoiceId },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, amount: true, status: true, reversalOfPaymentId: true, receivedAt: true },
+    });
+    assert.equal(payments.length, 3, 'the original, its reversal, and the corrected payment');
+    assert.equal(payments[1].reversalOfPaymentId, original.id);
+    const corrected = payments[2];
+    assert.equal(corrected.amount.toString(), '2600');
+    assert.equal(
+      corrected.receivedAt.getTime(),
+      payments[0].receivedAt.getTime(),
+      'recorded on the original date',
+    );
   });
 
   test('a paid invoice can be edited: payments stay, the total covers them, paid/unpaid follows', async () => {
