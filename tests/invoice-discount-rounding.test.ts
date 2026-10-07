@@ -447,15 +447,12 @@ describe('154.00 off the total: a discount, not a credit note', () => {
     );
   });
 
-  test('the edit and void screens wait for the discount to come off', async () => {
+  test('a discounted invoice can still be edited — its total must keep covering the discount', async () => {
     const invoice = await prisma.invoice.findUniqueOrThrow({
       where: { id: invoiceId },
       include: { items: true },
     });
-    assert.match(
-      invoiceEditBlocker({ ...invoice, paidAmount: '0' }) ?? '',
-      /Take the discount off first to change the invoice/,
-    );
+    assert.equal(invoiceEditBlocker({ ...invoice, paidAmount: '0' }), null);
   });
 
   test('taken off again: owed 154.00, job back to Invoiced, its entry reversed', async () => {
