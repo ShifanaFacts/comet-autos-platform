@@ -5,7 +5,7 @@ import { ArrowRight, Ban, Car, ClipboardList, FileMinus, Info, Pencil, User } fr
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { getInvoiceDetail } from '@/lib/billing/invoice';
-import { invoiceEditBlocker, invoiceVoidBlocker } from '@/lib/billing/invoice-changes';
+import { invoiceEditBlocker, invoiceVoidBlocker, isCredited } from '@/lib/billing/invoice-changes';
 import { creditBlocker, listInvoiceCreditNotes } from '@/lib/billing/credit-notes';
 import { getInvoiceAdvances } from '@/lib/billing/advances';
 import { billDiscountBreakdown, filsToString, toFils } from '@/lib/money';
@@ -25,6 +25,7 @@ import { getAccountChoices } from '@/lib/accounting/reports';
 import { StaffDocumentActions } from '@/components/documents/document-actions';
 import { InvoicePaymentForm } from '@/components/finance/invoice-payment-form';
 import { ReversePaymentButton, VoidInvoiceButton } from '@/components/finance/invoice-corrections';
+import { ShortPaymentButton } from '@/components/finance/short-payment';
 import { ApplyAdvanceForm, UndoApplicationButton } from '@/components/finance/advance-forms';
 
 /*
@@ -65,6 +66,13 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const canEditInvoice = hasPermission(user, 'invoice.edit', branch) && !editBlocker;
   const canVoid = hasPermission(user, 'invoice.delete', branch) && !invoiceVoidBlocker(invoice);
   const canReverse = !isVoid && hasPermission(user, 'payment.delete', branch);
+  // Paid, but the customer really handed over a little less than recorded.
+  const canSettleShort =
+    invoice.status === 'PAID' &&
+    !isCredited(invoice) &&
+    hasPermission(user, 'invoice.edit', branch) &&
+    hasPermission(user, 'payment.delete', branch) &&
+    hasPermission(user, 'payment.create', branch);
   const canCredit = hasPermission(user, 'credit_note.create', branch) && !creditBlocker(invoice);
   // Only the notes that stand: a voided one counts for nothing and is kept
   // on record under Credit notes → Void, not on the invoice.
@@ -171,6 +179,14 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
                   <FileMinus className="size-4" />
                   Credit note
                 </Link>
+              ) : null}
+              {canSettleShort ? (
+                <ShortPaymentButton
+                  invoiceId={invoice.id}
+                  invoiceNumber={invoice.invoiceNumber}
+                  paid={invoice.paidAmount}
+                  total={invoice.totalAmount.toString()}
+                />
               ) : null}
               {canVoid ? (
                 <VoidInvoiceButton

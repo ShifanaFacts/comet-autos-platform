@@ -16,7 +16,7 @@ import {
   normalizeStatus,
   type WorkflowStatus,
 } from '@/lib/workshop/job-status';
-import { dueFils, paidFils, settlementStatus } from '@/lib/billing/invoice';
+import { dueFils, paidFils, settlementStatus, takePayment } from '@/lib/billing/invoice';
 import { readDueDate } from '@/lib/billing/direct-invoice';
 import { syncPosting } from '@/lib/accounting/journal';
 import {
@@ -29,6 +29,7 @@ import {
   storedLineAmounts,
   totalsData,
   withRounding,
+  MAX_ROUNDING_FILS,
 } from '@/lib/billing/document-lines';
 import { resolveTaxCodes } from '@/lib/accounting/tax-codes';
 import { syncJobWithInvoice } from '@/lib/billing/credit-notes';
@@ -136,7 +137,7 @@ const updateSchema = z.object({
 const CREDITED =
   'A credit note has been issued against this invoice, so it stands as issued. Correct it with a credit note instead.';
 
-const isCredited = (invoice: { creditedAmount?: { toString(): string } }) =>
+export const isCredited = (invoice: { creditedAmount?: { toString(): string } }) =>
   invoice.creditedAmount !== undefined && toFils(invoice.creditedAmount.toString()) > 0;
 
 /** Settled in part from a customer advance (lib/billing/advances.ts). */
@@ -1004,3 +1005,173 @@ export async function reverseInvoicePayment(
     return { invoiceId: invoice.id, jobCardId: invoice.jobCard?.id ?? null };
   });
 }
+
+// ─── The customer paid a little less than was recorded ──────────────────────
+
+const shortPaymentSchema = z.object({
+  /** What the customer actually handed over for this invoice, in all. */
+  received: z
+    .string({ error: 'Enter what was actually received.' })
+    .trim()
+    .regex(/^\d+(\.\d{1,2})?$/, 'Enter an amount like 2600 or 2600.00.'),
+  reason: REASON,
+  requestKey: z.string().optional(),
+});
+
+/**
+ * A paid invoice whose customer actually paid a little less — 2,600.00 handed
+ * over on a bill of 2,600.85, recorded as 2,600.85. Done the way an
+ * accountant would, in one step, so the books never sit half-corrected:
+ *
+ *   1. the last payment is reversed (it stays on record, marked reversed);
+ *   2. the invoice is rounded off by the difference — a round-off after VAT,
+ *      so the VAT charged stays exactly as issued;
+ *   3. the payment is recorded again for what really came in, on its
+ *      original date, into the same account, with a new receipt number.
+ *
+ * The invoice stays paid, its job card where it was. Only a difference up to
+ * the round-off limit (AED 5.00) is settled this way; anything larger is a
+ * discount or a credit note.
+ */
+export async function settleShortPayment(
+  user: AuthenticatedUser,
+  invoiceId: string,
+  rawInput: unknown,
+) {
+  const input = parseInput(shortPaymentSchema, rawInput);
+
+  return prisma.$transaction(async (tx) => {
+    await claimRequestKey(tx, user, rawInput, 'invoice.short_payment');
+    const invoice = await lockInvoice(tx, user.organizationId, invoiceId);
+    requirePermission(user, 'invoice.edit', { branchId: invoice.branchId });
+    requirePermission(user, 'payment.delete', { branchId: invoice.branchId });
+    requirePermission(user, 'payment.create', { branchId: invoice.branchId });
+    if (invoice.status !== 'PAID') {
+      throw new DomainError('Only a paid invoice can be corrected this way.');
+    }
+    if (isCredited(invoice)) throw new DomainError(CREDITED);
+
+    const paid = paidFils(invoice.payments);
+    const received = toFils(input.received);
+    const difference = paid - received;
+    if (difference <= 0) {
+      throw new DomainError(
+        `Enter less than the AED ${filsToString(paid)} recorded — what the customer actually paid.`,
+        'received',
+      );
+    }
+    const newRounding = signedFils(invoice.roundingAdjustment) - difference;
+    if (Math.abs(newRounding) > MAX_ROUNDING_FILS) {
+      throw new DomainError(
+        `A difference of AED ${filsToString(difference)} is more than a round-off (at most AED ${filsToString(MAX_ROUNDING_FILS)}). Give a discount or a credit note instead.`,
+        'received',
+      );
+    }
+
+    // The payment that took the difference: the latest one still counting.
+    const counting = await tx.payment.findMany({
+      where: {
+        organizationId: user.organizationId,
+        invoiceId: invoice.id,
+        status: 'COMPLETED',
+        reversalOfPaymentId: null,
+        reversals: { none: {} },
+      },
+      orderBy: [{ receivedAt: 'desc' }, { createdAt: 'desc' }],
+    });
+    const last = counting[0];
+    if (!last || toFils(last.amount.toString()) <= difference) {
+      throw new DomainError(
+        'The last payment is smaller than the difference, so it can’t simply be corrected. Reverse the payments and record them again instead.',
+      );
+    }
+
+    // 1. Reverse the payment as recorded.
+    const reversal = await tx.payment.create({
+      data: {
+        organizationId: user.organizationId,
+        invoiceId: invoice.id,
+        amount: last.amount.toString(),
+        method: last.method,
+        accountId: last.accountId,
+        status: 'REVERSED',
+        referenceNumber: `Reversal of ${last.paymentNumber ?? last.id}`,
+        notes: input.reason,
+        reversalOfPaymentId: last.id,
+        receivedAt: new Date(),
+        receivedByUserId: user.id,
+      },
+      select: { id: true },
+    });
+    await syncPosting(tx, user.organizationId, 'PAYMENT', reversal.id, user.id);
+
+    // 2. Round the invoice off by the difference; VAT as issued.
+    const newTotal = toFils(invoice.totalAmount.toString()) - difference;
+    const afterReversal = paid - toFils(last.amount.toString());
+    await tx.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        roundingAdjustment: signedText(newRounding),
+        totalAmount: filsToString(newTotal),
+        status: settlementStatus(
+          {
+            totalAmount: filsToString(newTotal),
+            creditedAmount: invoice.creditedAmount,
+            advanceAppliedAmount: invoice.advanceAppliedAmount,
+            settlementDiscount: invoice.settlementDiscount,
+          },
+          afterReversal,
+        ),
+      },
+    });
+    await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
+
+    // 3. Record what really came in, as the original: same date, method, account.
+    const corrected = await takePayment(
+      tx,
+      user,
+      invoice.id,
+      invoice.jobCard,
+      {
+        amount: filsToString(toFils(last.amount.toString()) - difference),
+        method: last.method,
+        accountId: last.accountId ?? '',
+        referenceNumber: last.referenceNumber ?? '',
+        notes: `Corrected from ${last.paymentNumber ?? 'the earlier receipt'}: ${input.reason}`,
+      },
+      last.receivedAt,
+    );
+
+    await writeAuditLog(tx, {
+      organizationId: user.organizationId,
+      branchId: invoice.branchId,
+      actorUserId: user.id,
+      action: 'invoice.short_payment_settled',
+      entityType: 'Invoice',
+      entityId: invoice.id,
+      beforeData: {
+        totalAmount: invoice.totalAmount.toString(),
+        roundingAdjustment: invoice.roundingAdjustment.toString(),
+        paid: filsToString(paid),
+        paymentNumber: last.paymentNumber,
+      },
+      afterData: {
+        totalAmount: filsToString(newTotal),
+        received: filsToString(received),
+        difference: filsToString(difference),
+        reversalId: reversal.id,
+        correctedPaymentId: corrected.id,
+      },
+      metadata: { reason: input.reason, invoiceNumber: invoice.invoiceNumber },
+    });
+    await settleRequestKey(tx, user, rawInput, invoice.id);
+    return { invoiceNumber: invoice.invoiceNumber, paymentNumber: corrected.paymentNumber };
+  });
+}
+
+/** A signed decimal ("-0.85") in fils. */
+const signedFils = (value: { toString(): string }) => {
+  const text = value.toString();
+  return text.startsWith('-') ? -toFils(text.slice(1)) : toFils(text);
+};
+const signedText = (fils: number) => (fils < 0 ? `-${filsToString(-fils)}` : filsToString(fils));
