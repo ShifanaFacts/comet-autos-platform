@@ -11,6 +11,17 @@ import { RecordCard, RecordList, TableWrap } from '@/components/shared/record-ca
 import { SearchField } from '@/components/shared/search-field';
 import { StatusPill } from '@/components/shared/status-pill';
 
+const JOURNAL_HREF = '/finance/accounting?view=journal';
+
+/**
+ * A row's pill: paid / part paid / unpaid for a document, "Journal" for the
+ * net of a party's manual journal entries (settled by another entry, not paid).
+ */
+function RowPill({ row }: { row: { kind: string; state: keyof typeof STATE } }) {
+  if (row.kind === 'journal') return <StatusPill tone="info">Journal</StatusPill>;
+  return <StatusPill tone={STATE[row.state].tone}>{STATE[row.state].label}</StatusPill>;
+}
+
 const STATE = {
   UNPAID: { tone: 'danger', label: 'Unpaid' },
   PARTIALLY_PAID: { tone: 'warning', label: 'Part paid' },
@@ -204,11 +215,7 @@ export default async function OutstandingPage({
                         </span>
                       }
                       amount={formatMoney(row.balance)}
-                      status={
-                        <StatusPill tone={STATE[row.state].tone}>
-                          {STATE[row.state].label}
-                        </StatusPill>
-                      }
+                      status={<RowPill row={row} />}
                       details={[
                         { label: 'Invoiced', value: formatDate(row.date) },
                         { label: 'Total', value: formatMoney(row.total) },
@@ -219,13 +226,23 @@ export default async function OutstandingPage({
                         { label: 'Age', value: `${row.ageDays} days` },
                       ]}
                     >
-                      <Link
-                        href={`/job-cards/${row.jobCard?.id ?? ''}`}
-                        className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-primary md:min-h-0"
-                      >
-                        Open job
-                        <ArrowRight className="size-4" />
-                      </Link>
+                      {row.kind === 'journal' ? (
+                        <Link
+                          href={JOURNAL_HREF}
+                          className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-primary md:min-h-0"
+                        >
+                          Open journal
+                          <ArrowRight className="size-4" />
+                        </Link>
+                      ) : row.jobCard ? (
+                        <Link
+                          href={`/job-cards/${row.jobCard.id}`}
+                          className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-primary md:min-h-0"
+                        >
+                          Open job
+                          <ArrowRight className="size-4" />
+                        </Link>
+                      ) : null}
                     </RecordCard>
                   ))}
                 </RecordList>
@@ -273,13 +290,18 @@ export default async function OutstandingPage({
                               >
                                 {row.number}
                               </Link>
+                            ) : row.kind === 'journal' ? (
+                              <Link
+                                href={JOURNAL_HREF}
+                                className="font-mono text-sm hover:underline"
+                              >
+                                {row.number}
+                              </Link>
                             ) : (
                               <span className="font-mono text-sm">{row.number}</span>
                             )}
                             <span className="mt-0.5 block">
-                              <StatusPill tone={STATE[row.state].tone}>
-                                {STATE[row.state].label}
-                              </StatusPill>
+                              <RowPill row={row} />
                             </span>
                           </td>
                           <td className="px-2 py-4 tabular-nums whitespace-nowrap">
@@ -336,11 +358,7 @@ export default async function OutstandingPage({
                         </span>
                       }
                       amount={formatMoney(row.balance)}
-                      status={
-                        <StatusPill tone={STATE[row.state].tone}>
-                          {STATE[row.state].label}
-                        </StatusPill>
-                      }
+                      status={<RowPill row={row} />}
                       details={[
                         { label: 'Received', value: formatDate(row.date) },
                         { label: 'Total', value: formatMoney(row.total) },
@@ -352,10 +370,12 @@ export default async function OutstandingPage({
                       ]}
                     >
                       <Link
-                        href={`/inventory/purchases/${row.id}`}
+                        href={
+                          row.kind === 'journal' ? JOURNAL_HREF : `/inventory/purchases/${row.id}`
+                        }
                         className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-primary md:min-h-0"
                       >
-                        Open purchase
+                        {row.kind === 'journal' ? 'Open journal' : 'Open purchase'}
                         <ArrowRight className="size-4" />
                       </Link>
                     </RecordCard>
@@ -393,15 +413,17 @@ export default async function OutstandingPage({
                           </td>
                           <td className="px-2 py-4">
                             <Link
-                              href={`/inventory/purchases/${row.id}`}
+                              href={
+                                row.kind === 'journal'
+                                  ? JOURNAL_HREF
+                                  : `/inventory/purchases/${row.id}`
+                              }
                               className="font-mono text-sm hover:underline"
                             >
                               {row.number}
                             </Link>
                             <span className="mt-0.5 block">
-                              <StatusPill tone={STATE[row.state].tone}>
-                                {STATE[row.state].label}
-                              </StatusPill>
+                              <RowPill row={row} />
                             </span>
                           </td>
                           <td className="px-2 py-4 tabular-nums whitespace-nowrap">

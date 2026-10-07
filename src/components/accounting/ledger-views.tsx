@@ -468,6 +468,13 @@ export function JournalView({ data, canEdit }: { data: JournalList; canEdit: boo
                           </span>{' '}
                           {line.chartOfAccount.accountName}
                         </span>
+                        {line.customer || line.supplier ? (
+                          <span className="block text-xs font-medium">
+                            {line.customer
+                              ? `Customer: ${line.customer.name}`
+                              : `Supplier: ${line.supplier?.name ?? ''}`}
+                          </span>
+                        ) : null}
                         {line.description ? (
                           <span className="block text-xs text-muted-foreground">
                             {line.description}

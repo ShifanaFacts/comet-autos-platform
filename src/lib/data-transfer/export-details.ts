@@ -5,6 +5,9 @@ import { invoiceBalance } from '@/lib/billing/invoice';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { PURCHASE_BALANCE_SELECT, purchaseBalance } from '@/lib/finance/supplier-balance';
 import { employeeName } from '@/lib/workshop/assignment';
+import { customerJournalTotals } from '@/lib/accounting/sub-ledger';
+
+const signedString = (fils: number) => (fils < 0 ? `-${filsToString(-fils)}` : filsToString(fils));
 
 /*
  * The details an export carries beyond what its list screen shows — a
@@ -56,6 +59,8 @@ export interface CustomerDetails {
   advances: string;
   /** Credit notes and discounts given after invoicing. */
   credits: string;
+  /** Manual journal entries naming the customer, net: positive adds to what they owe. */
+  journal: string;
   owed: string;
 }
 
@@ -70,10 +75,12 @@ export const NO_CUSTOMER_DETAILS: CustomerDetails = {
   paid: '0.00',
   advances: '0.00',
   credits: '0.00',
+  journal: '0.00',
   owed: '0.00',
 };
 
 export async function customerDetails(organizationId: string, ids: string[]) {
+  const journal = await customerJournalTotals(prisma, organizationId, ids);
   const customers = await prisma.customer.findMany({
     where: { organizationId, id: { in: ids } },
     select: {
@@ -114,7 +121,9 @@ export async function customerDetails(organizationId: string, ids: string[]) {
           paid: filsToString(paid),
           advances: filsToString(advances),
           credits: filsToString(credits),
-          owed: filsToString(owed),
+          journal: signedString(journal.get(customer.id) ?? 0),
+          // What they owe on invoices, plus what manual journal entries put on their account.
+          owed: signedString(owed + (journal.get(customer.id) ?? 0)),
         },
       ];
     }),

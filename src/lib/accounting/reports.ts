@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
+import { subLedgerOf } from '@/lib/accounting/sub-ledger';
 import { filsToString, toFils } from '@/lib/money';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { resolvePeriod, type ResolvedPeriod } from '@/lib/finance/dashboard';
@@ -460,6 +461,8 @@ export async function listJournal(
           debitAmount: true,
           creditAmount: true,
           description: true,
+          customer: { select: { name: true } },
+          supplier: { select: { name: true } },
           chartOfAccount: { select: { id: true, accountCode: true, accountName: true } },
         },
       },
@@ -506,6 +509,7 @@ export async function getAccountChoices(user: AuthenticatedUser) {
       accountType: true,
       role: true,
       isPaymentAccount: true,
+      subLedger: true,
     },
   });
   const choice = (a: (typeof accounts)[number]): AccountChoice => ({
@@ -518,7 +522,7 @@ export async function getAccountChoices(user: AuthenticatedUser) {
       .filter((a) => a.accountType === 'REVENUE' && a.role !== 'SALES_DISCOUNTS')
       .map(choice),
     money: accounts.filter((a) => a.isPaymentAccount).map(choice),
-    all: accounts.map((a) => ({ ...choice(a), type: a.accountType })),
+    all: accounts.map((a) => ({ ...choice(a), type: a.accountType, party: subLedgerOf(a) })),
   };
 }
 

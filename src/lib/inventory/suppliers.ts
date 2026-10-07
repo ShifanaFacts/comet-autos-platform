@@ -11,6 +11,7 @@ import { emptyToNull, normalizePhone } from '@/lib/normalize';
 import { filsToString } from '@/lib/money';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { getStockByPart, resolveInventoryBranch, stockState } from '@/lib/inventory/stock';
+import { supplierJournalTotals } from '@/lib/accounting/sub-ledger';
 import {
   PURCHASE_BALANCE_SELECT,
   RECEIVED_PURCHASE_STATUSES,
@@ -168,24 +169,48 @@ async function balances(organizationId: string, supplierIds: string[]) {
     where: { organizationId, supplierId: { in: supplierIds }, status: { in: RECEIVED } },
     select: { supplierId: true, ...PURCHASE_BALANCE_SELECT },
   });
-  const result = new Map<string, { receivedFils: number; paidFils: number }>();
+  const result = new Map<string, { receivedFils: number; paidFils: number; journalFils: number }>();
   for (const purchase of purchases) {
-    const entry = result.get(purchase.supplierId) ?? { receivedFils: 0, paidFils: 0 };
+    const entry = result.get(purchase.supplierId) ?? {
+      receivedFils: 0,
+      paidFils: 0,
+      journalFils: 0,
+    };
     const money = purchaseBalance(purchase, defaultVat);
     entry.receivedFils += money.receivedFils;
     entry.paidFils += money.paidFils;
     result.set(purchase.supplierId, entry);
   }
+  // What manual journal entries naming the supplier add to what is owed.
+  for (const [supplierId, fils] of await supplierJournalTotals(
+    prisma,
+    organizationId,
+    supplierIds,
+  )) {
+    const entry = result.get(supplierId) ?? { receivedFils: 0, paidFils: 0, journalFils: 0 };
+    entry.journalFils += fils;
+    result.set(supplierId, entry);
+  }
   return result;
 }
 
-const money = (entry: { receivedFils: number; paidFils: number } | undefined) => ({
-  received: filsToString(entry?.receivedFils ?? 0),
-  paid: filsToString(entry?.paidFils ?? 0),
-  // Floored, like every other outstanding figure: overpayment is refused
-  // when it is recorded, so a negative here would only ever be bad data.
-  outstanding: filsToString(Math.max((entry?.receivedFils ?? 0) - (entry?.paidFils ?? 0), 0)),
-});
+const money = (
+  entry: { receivedFils: number; paidFils: number; journalFils: number } | undefined,
+) => {
+  // Purchases floored, like every other outstanding figure: overpayment is
+  // refused when it is recorded. Journal entries are added as booked — an
+  // amount the supplier owes back shows below zero.
+  const owed =
+    Math.max((entry?.receivedFils ?? 0) - (entry?.paidFils ?? 0), 0) + (entry?.journalFils ?? 0);
+  return {
+    received: filsToString(entry?.receivedFils ?? 0),
+    paid: filsToString(entry?.paidFils ?? 0),
+    journal: signedFils(entry?.journalFils ?? 0),
+    outstanding: signedFils(owed),
+  };
+};
+
+const signedFils = (fils: number) => (fils < 0 ? `-${filsToString(-fils)}` : filsToString(fils));
 
 export async function listSuppliers(user: AuthenticatedUser, query: string) {
   requirePermission(user, 'inventory.view');

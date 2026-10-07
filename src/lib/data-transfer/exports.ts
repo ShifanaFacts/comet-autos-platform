@@ -169,9 +169,14 @@ export const EXPORTS: Record<string, ExportDefinition<unknown>> = {
         hint: 'Taken off the invoices after they were issued.',
       },
       {
+        header: 'Journal entries',
+        value: (row) => money(row.details.journal),
+        hint: 'Manual journal entries naming the customer, net — positive adds to what they owe, negative takes off.',
+      },
+      {
         header: 'Balance owed',
         value: (row) => money(row.details.owed),
-        hint: 'Still due. Total invoiced = Paid + Paid from advances + Credit notes & later discounts + Balance owed.',
+        hint: 'Still due. Total invoiced + Journal entries = Paid + Paid from advances + Credit notes & later discounts + Balance owed.',
       },
       {
         header: 'Added',

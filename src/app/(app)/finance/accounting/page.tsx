@@ -49,6 +49,7 @@ import { SearchField } from '@/components/shared/search-field';
 import { EmptyState } from '@/components/shared/empty-state';
 import { FinancePeriodPicker } from '@/components/finance/period-picker';
 import { EditAccountButton, NewAccountForm } from '@/components/finance/account-form';
+import { fixedSubLedger, subLedgerOf } from '@/lib/accounting/sub-ledger';
 import { cn } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
@@ -190,6 +191,11 @@ function AccountsView({
                     {account.isPaymentAccount ? (
                       <StatusPill tone="success">Money account</StatusPill>
                     ) : null}
+                    {subLedgerOf(account) ? (
+                      <StatusPill tone="neutral">
+                        {subLedgerOf(account) === 'CUSTOMER' ? 'Per customer' : 'Per supplier'}
+                      </StatusPill>
+                    ) : null}
                     {account.isActive ? null : <StatusPill tone="neutral">Retired</StatusPill>}
                     {account._count.journalEntryLines ? (
                       <Link
@@ -214,6 +220,9 @@ function AccountsView({
                           isActive: account.isActive,
                           isPaymentAccount: account.isPaymentAccount,
                           system: account.role !== null,
+                          subLedger: subLedgerOf(account),
+                          subLedgerFixed:
+                            fixedSubLedger(account.role) || account._count.journalEntryLines > 0,
                         }}
                       />
                     ) : null}

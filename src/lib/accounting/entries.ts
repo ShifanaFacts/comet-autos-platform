@@ -10,6 +10,7 @@ import { filsToString, toFils } from '@/lib/money';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { addStandardAccounts, ensureChart } from '@/lib/accounting/chart';
 import { bookEntry, reverseEntry, syncPosting, type PostedSource } from '@/lib/accounting/journal';
+import { subLedgerOf } from '@/lib/accounting/sub-ledger';
 
 /*
  * Entries made by hand, and bringing existing records into the books.
@@ -40,6 +41,8 @@ const lineSchema = z.object({
   debit: amountText.optional(),
   credit: amountText.optional(),
   memo: z.string().trim().max(200).optional(),
+  /** On an account kept per customer or supplier: who the line is for. */
+  partyId: z.union([z.literal(''), z.uuid()]).optional(),
 });
 
 const manualSchema = z.object({
@@ -73,7 +76,13 @@ export async function createManualEntry(user: AuthenticatedUser, rawInput: unkno
     if ((debit === 0) === (credit === 0)) {
       errors[`lines.${index}`] = `Line ${index + 1}: enter a debit or a credit — one, not both.`;
     }
-    return { accountId: line.accountId, debit, credit, memo: line.memo || null };
+    return {
+      accountId: line.accountId,
+      debit,
+      credit,
+      memo: line.memo || null,
+      partyId: line.partyId || null,
+    };
   });
   if (Object.keys(errors).length) throw new ValidationError(errors);
   const debits = lines.reduce((sum, line) => sum + line.debit, 0);
@@ -93,10 +102,24 @@ export async function createManualEntry(user: AuthenticatedUser, rawInput: unkno
         organizationId: user.organizationId,
         id: { in: lines.map((line) => line.accountId) },
       },
-      select: { id: true, isActive: true, accountName: true },
+      select: { id: true, isActive: true, accountName: true, role: true, subLedger: true },
     });
     const known = new Map(accounts.map((account) => [account.id, account]));
-    lines.forEach((line, index) => {
+    // The parties named, checked to be this workshop's and still in use.
+    const partyIds = [...new Set(lines.map((line) => line.partyId).filter(Boolean))] as string[];
+    const [customers, suppliers] = await Promise.all([
+      tx.customer.findMany({
+        where: { organizationId: user.organizationId, id: { in: partyIds }, isActive: true },
+        select: { id: true },
+      }),
+      tx.supplier.findMany({
+        where: { organizationId: user.organizationId, id: { in: partyIds }, isActive: true },
+        select: { id: true },
+      }),
+    ]);
+    const isCustomer = new Set(customers.map((c) => c.id));
+    const isSupplier = new Set(suppliers.map((s) => s.id));
+    const booked = lines.map((line, index) => {
       const account = known.get(line.accountId);
       if (!account)
         throw new DomainError(`Line ${index + 1}: that account was not found.`, `lines.${index}`);
@@ -106,6 +129,34 @@ export async function createManualEntry(user: AuthenticatedUser, rawInput: unkno
           `lines.${index}`,
         );
       }
+      // An account kept per party names the party; any other names none.
+      const kept = subLedgerOf(account);
+      const { partyId, ...rest } = line;
+      if (kept === 'CUSTOMER') {
+        if (!partyId || !isCustomer.has(partyId)) {
+          throw new DomainError(
+            `Line ${index + 1}: “${account.accountName}” is kept per customer — choose the customer.`,
+            `lines.${index}`,
+          );
+        }
+        return { ...rest, customerId: partyId };
+      }
+      if (kept === 'SUPPLIER') {
+        if (!partyId || !isSupplier.has(partyId)) {
+          throw new DomainError(
+            `Line ${index + 1}: “${account.accountName}” is kept per supplier — choose the supplier.`,
+            `lines.${index}`,
+          );
+        }
+        return { ...rest, supplierId: partyId };
+      }
+      if (partyId) {
+        throw new DomainError(
+          `Line ${index + 1}: “${account.accountName}” isn't kept per customer or supplier, so no one can be named on it.`,
+          `lines.${index}`,
+        );
+      }
+      return rest;
     });
 
     const entry = await bookEntry(tx, {
@@ -113,7 +164,7 @@ export async function createManualEntry(user: AuthenticatedUser, rawInput: unkno
       branchId: null,
       date,
       description: input.description,
-      lines,
+      lines: booked,
       sourceType: 'MANUAL',
       sourceId: null,
       actorUserId: user.id,
@@ -129,10 +180,12 @@ export async function createManualEntry(user: AuthenticatedUser, rawInput: unkno
         date: input.date,
         description: input.description,
         total: filsToString(debits),
-        lines: lines.map((line) => ({
+        lines: booked.map((line) => ({
           accountId: line.accountId,
           debit: filsToString(line.debit),
           credit: filsToString(line.credit),
+          customerId: 'customerId' in line ? line.customerId : undefined,
+          supplierId: 'supplierId' in line ? line.supplierId : undefined,
         })),
       },
     });
@@ -165,7 +218,15 @@ export async function reverseManualEntry(
     const entry = await tx.journalEntry.findFirst({
       where: { id: entryId, organizationId: user.organizationId },
       include: {
-        lines: { select: { chartOfAccountId: true, debitAmount: true, creditAmount: true } },
+        lines: {
+          select: {
+            chartOfAccountId: true,
+            debitAmount: true,
+            creditAmount: true,
+            customerId: true,
+            supplierId: true,
+          },
+        },
         reversals: { select: { entryNumber: true } },
       },
     });

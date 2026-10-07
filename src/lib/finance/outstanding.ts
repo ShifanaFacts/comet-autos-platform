@@ -11,6 +11,7 @@ import {
   purchaseBalance,
 } from '@/lib/finance/supplier-balance';
 import { resolveDefaultVatRate } from '@/lib/tax';
+import { partyJournalLines, type PartyJournalLine } from '@/lib/accounting/sub-ledger';
 
 /*
  * What is still owed, in both directions.
@@ -112,6 +113,7 @@ export async function getCustomerOutstanding(
     .map((invoice) => {
       const money = invoiceBalance(invoice);
       return {
+        kind: 'invoice' as RowKind,
         id: invoice.id,
         number: invoice.invoiceNumber,
         date: invoice.issueDate,
@@ -131,11 +133,26 @@ export async function getCustomerOutstanding(
       };
     })
     // A fully-settled invoice whose status lags behind is not a debt.
-    .filter((row) => row.balanceFils > 0)
+    .filter((row) => row.balanceFils > 0);
+
+  // What manual journal entries put on each customer's account, one row each.
+  const journal = journalRows(
+    await partyJournalLines(prisma, user.organizationId, { kind: 'customer' }),
+    'customer',
+    q,
+  ).map((row) => ({
+    ...row,
+    dueDate: null as Date | null,
+    jobCard: null as (typeof rows)[number]['jobCard'],
+    otherCredits: '0.00',
+    otherCreditsFils: 0,
+    state: (row.balanceFils > 0 ? 'UNPAID' : 'PAID') as (typeof rows)[number]['state'],
+  }));
+  const all = [...rows, ...journal]
     .filter((row) => !filters.olderThanDays || row.ageDays >= filters.olderThanDays)
     .sort(byOldest);
 
-  return { rows, totals: summarise(rows) };
+  return { rows: all, totals: summarise(all) };
 }
 
 export type CustomerOutstandingRow = Awaited<
@@ -192,6 +209,7 @@ export async function getSupplierOutstanding(
       const money = purchaseBalance(purchase, defaultVat);
       const date = purchase.supplierInvoiceDate ?? purchase.createdAt;
       return {
+        kind: 'purchase' as RowKind,
         id: purchase.id,
         number: purchase.purchaseNumber,
         supplierInvoiceNumber: purchase.supplierInvoiceNumber,
@@ -206,11 +224,23 @@ export async function getSupplierOutstanding(
         ...payableAge(date, purchase.dueDate),
       };
     })
-    .filter((row) => row.balanceFils > 0)
+    .filter((row) => row.balanceFils > 0);
+
+  const journal = journalRows(
+    await partyJournalLines(prisma, user.organizationId, { kind: 'supplier' }),
+    'supplier',
+    q,
+  ).map((row) => ({
+    ...row,
+    supplierInvoiceNumber: null as string | null,
+    state: (row.balanceFils > 0 ? 'UNPAID' : 'PAID') as (typeof rows)[number]['state'],
+    ...payableAge(row.date, null),
+  }));
+  const all = [...rows, ...journal]
     .filter((row) => !filters.olderThanDays || row.ageDays >= filters.olderThanDays)
     .sort(byOldest);
 
-  return { rows, totals: summarise(rows) };
+  return { rows: all, totals: summarise(all) };
 }
 
 export type SupplierOutstandingRow = Awaited<
@@ -240,3 +270,68 @@ function summarise(rows: { balanceFils: number; ageDays: number; party: { id: st
 function otherCreditsFils(money: { advanceApplied: string; credited: string; discount: string }) {
   return toFils(money.advanceApplied) + toFils(money.credited) + toFils(money.discount);
 }
+
+/** An owing-list row is an invoice, a purchase, or a party's manual journal entries. */
+export type RowKind = 'invoice' | 'purchase' | 'journal';
+
+/**
+ * Each party's manual journal entries as one row: the net of what they add to
+ * the debt, shown when it isn't zero. A journal amount isn't paid against an
+ * invoice — it is settled by another entry — so it stands until it nets out.
+ */
+function journalRows(
+  lines: PartyJournalLine[],
+  kind: 'customer' | 'supplier',
+  query: string | undefined,
+) {
+  const q = query?.toLowerCase();
+  const byParty = new Map<
+    string,
+    {
+      party: { id: string; name: string; phone: string | null };
+      fils: number;
+      entries: string[];
+      date: Date;
+    }
+  >();
+  for (const line of lines) {
+    const party = kind === 'customer' ? line.customer : line.supplier;
+    if (!party) continue;
+    const entry = byParty.get(party.id) ?? {
+      party,
+      fils: 0,
+      entries: [],
+      date: line.journalEntry.entryDate,
+    };
+    entry.fils += kind === 'customer' ? line.customerFils : line.supplierFils;
+    if (line.journalEntry.entryNumber && !entry.entries.includes(line.journalEntry.entryNumber)) {
+      entry.entries.push(line.journalEntry.entryNumber);
+    }
+    // Aged from the oldest entry still standing.
+    if (line.journalEntry.entryDate < entry.date) entry.date = line.journalEntry.entryDate;
+    byParty.set(party.id, entry);
+  }
+  return [...byParty.values()]
+    .filter((entry) => entry.fils !== 0)
+    .filter(
+      (entry) =>
+        !q ||
+        entry.party.name.toLowerCase().includes(q) ||
+        (entry.party.phone ?? '').includes(q) ||
+        entry.entries.some((number) => number.toLowerCase().includes(q)),
+    )
+    .map((entry) => ({
+      kind: 'journal' as RowKind,
+      id: `journal-${entry.party.id}`,
+      number: entry.entries.join(', ') || 'Journal',
+      date: entry.date,
+      party: entry.party,
+      total: signedFils(entry.fils),
+      paid: '0.00',
+      balance: signedFils(entry.fils),
+      balanceFils: entry.fils,
+      ageDays: ageInDays(entry.date),
+    }));
+}
+
+const signedFils = (fils: number) => (fils < 0 ? `-${filsToString(-fils)}` : filsToString(fils));
