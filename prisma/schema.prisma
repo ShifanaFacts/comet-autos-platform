@@ -164,6 +164,12 @@ enum FixedAssetStatus {
 /// What a system account is for. Automatic postings find their accounts by
 /// role, so a workshop can rename or renumber them freely. One account per
 /// role per workshop (see lib/accounting/chart.ts).
+/// Who an account's sub-ledger is kept by.
+enum PartyType {
+  CUSTOMER
+  SUPPLIER
+}
+
 enum AccountRole {
   CASH
   BANK
@@ -916,8 +922,9 @@ model Customer {
   jobStatusDecisions JobStatusHistory[]
   signatures         Signature[]
 
-  creditNotes CreditNote[]
-  advances    CustomerAdvance[]
+  creditNotes  CreditNote[]
+  advances     CustomerAdvance[]
+  journalLines JournalEntryLine[]
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -1521,8 +1528,9 @@ model Supplier {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
-  parts     Part[]
-  purchases Purchase[]
+  parts        Part[]
+  purchases    Purchase[]
+  journalLines JournalEntryLine[]
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -2004,6 +2012,10 @@ model ChartOfAccount {
   role             AccountRole? @map("role")
   /// Money can be received into or paid from it: cash, bank and card accounts.
   isPaymentAccount Boolean      @default(false) @map("is_payment_account")
+  /// Kept per customer or per supplier: every journal line on it names one,
+  /// and it counts in that party's balance and statement. Trade receivables
+  /// and trade payables are always kept this way (see lib/accounting/sub-ledger.ts).
+  subLedger        PartyType?   @map("sub_ledger")
   createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -2106,18 +2118,25 @@ model JournalEntryLine {
   debitAmount      Decimal  @default(0) @map("debit_amount") @db.Decimal(14, 2)
   creditAmount     Decimal  @default(0) @map("credit_amount") @db.Decimal(14, 2)
   description      String?
+  /// The customer or supplier the line is for, on an account kept per party.
+  customerId       String?  @map("customer_id") @db.Uuid
+  supplierId       String?  @map("supplier_id") @db.Uuid
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   journalEntry   JournalEntry   @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Cascade)
   chartOfAccount ChartOfAccount @relation(fields: [organizationId, chartOfAccountId], references: [organizationId, id], onDelete: Restrict)
+  customer       Customer?      @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict, map: "journal_entry_lines_customer_fkey")
+  supplier       Supplier?      @relation(fields: [organizationId, supplierId], references: [organizationId, id], onDelete: Restrict, map: "journal_entry_lines_supplier_fkey")
 
   reconciled ReconciledLine?
 
   @@index([organizationId])
   @@index([organizationId, journalEntryId])
   @@index([organizationId, chartOfAccountId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, supplierId])
   @@map("journal_entry_lines")
 }
 

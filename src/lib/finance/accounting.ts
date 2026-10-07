@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { writeAuditLog } from '@/lib/audit';
 import { DomainError, NotFoundError } from '@/lib/errors';
+import { fixedSubLedger } from '@/lib/accounting/sub-ledger';
 import { parseInput } from '@/lib/form-data';
 import { filsToString, toFils } from '@/lib/money';
 import { parseCalendarDate } from '@/lib/format';
@@ -341,8 +342,26 @@ const accountSchema = z.object({
   isPaymentAccount: z
     .union([z.enum(['true', 'false']), z.array(z.enum(['true', 'false']))])
     .optional(),
+  /** Kept per customer or per supplier (an asset or liability only); blank for neither. */
+  subLedger: z.enum(['', 'CUSTOMER', 'SUPPLIER']).optional(),
   requestKey: z.string().optional(),
 });
+
+/** Who an account may be kept by: only balance-sheet accounts that are owed or owing. */
+function readSubLedger(
+  value: '' | 'CUSTOMER' | 'SUPPLIER' | undefined,
+  accountType: string,
+): 'CUSTOMER' | 'SUPPLIER' | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === '') return null;
+  if (accountType !== 'ASSET' && accountType !== 'LIABILITY') {
+    throw new DomainError(
+      'Only an asset or a liability can be kept per customer or supplier.',
+      'subLedger',
+    );
+  }
+  return value;
+}
 
 /** The last value of a checkbox sent with its hidden "false" companion. */
 const checked = (value: 'true' | 'false' | ('true' | 'false')[] | undefined) =>
@@ -377,6 +396,7 @@ export async function listAccounts(user: AuthenticatedUser, filters: { q?: strin
       isActive: true,
       role: true,
       isPaymentAccount: true,
+      subLedger: true,
       _count: { select: { expenses: true, journalEntryLines: true } },
     },
   });
@@ -418,6 +438,7 @@ export async function createAccount(user: AuthenticatedUser, rawInput: unknown) 
         accountName: input.accountName.replace(/\s+/g, ' '),
         accountType: input.accountType!,
         isPaymentAccount: input.accountType === 'ASSET' && checked(input.isPaymentAccount) === true,
+        subLedger: readSubLedger(input.subLedger, input.accountType!) ?? null,
       },
     });
     await writeAuditLog(tx, {
@@ -430,6 +451,7 @@ export async function createAccount(user: AuthenticatedUser, rawInput: unknown) 
         accountCode: code,
         accountName: account.accountName,
         accountType: account.accountType,
+        subLedger: account.subLedger,
       },
     });
     return account;
@@ -458,6 +480,25 @@ export async function updateAccount(user: AuthenticatedUser, accountId: string, 
     );
   }
   const paymentAccount = checked(input.isPaymentAccount);
+  const subLedger = readSubLedger(input.subLedger, before.accountType);
+  const subLedgerChanges = subLedger !== undefined && subLedger !== before.subLedger;
+  if (subLedgerChanges && fixedSubLedger(before.role)) {
+    throw new DomainError(
+      'Trade receivables and trade payables are always kept per customer and per supplier.',
+      'subLedger',
+    );
+  }
+  if (subLedgerChanges) {
+    const used = await prisma.journalEntryLine.count({
+      where: { organizationId: user.organizationId, chartOfAccountId: before.id },
+    });
+    if (used > 0) {
+      throw new DomainError(
+        'Entries are already booked to this account, so whether it is kept per customer or supplier can no longer change — its history would stop adding up. Open a new account for that instead.',
+        'subLedger',
+      );
+    }
+  }
 
   return prisma.$transaction(async (tx) => {
     const account = await tx.chartOfAccount.update({
@@ -469,6 +510,7 @@ export async function updateAccount(user: AuthenticatedUser, accountId: string, 
         ...(before.accountType === 'ASSET' && paymentAccount !== undefined
           ? { isPaymentAccount: paymentAccount }
           : {}),
+        ...(subLedgerChanges ? { subLedger } : {}),
       },
     });
     await writeAuditLog(tx, {
@@ -481,11 +523,13 @@ export async function updateAccount(user: AuthenticatedUser, accountId: string, 
         accountCode: before.accountCode,
         accountName: before.accountName,
         isActive: before.isActive,
+        subLedger: before.subLedger,
       },
       afterData: {
         accountCode: account.accountCode,
         accountName: account.accountName,
         isActive: account.isActive,
+        subLedger: account.subLedger,
       },
     });
     return account;

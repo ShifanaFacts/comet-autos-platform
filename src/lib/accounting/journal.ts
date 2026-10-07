@@ -80,7 +80,9 @@ async function nextEntryNumber(tx: Tx, organizationId: string): Promise<string> 
     WHERE organization_id = ${organizationId}::uuid
       AND document_type = 'JOURNAL_ENTRY'::"DocumentType"
       AND branch_id IS NULL`;
-  console.warn(`Journal numbering was behind (${entryNumber} already used); moved past ${prefix}${highest}.`);
+  console.warn(
+    `Journal numbering was behind (${entryNumber} already used); moved past ${prefix}${highest}.`,
+  );
   return allocateDocumentNumber(tx, organizationId, null, 'JOURNAL_ENTRY');
 }
 
@@ -113,6 +115,8 @@ export async function bookEntry(tx: Tx, input: EntryInput) {
       debitAmount: filsToString(line.debit),
       creditAmount: filsToString(line.credit),
       description: line.memo ?? null,
+      customerId: line.customerId ?? null,
+      supplierId: line.supplierId ?? null,
     })),
   });
   return entry;
@@ -158,6 +162,8 @@ export async function reverseEntry(
       chartOfAccountId: string;
       debitAmount: { toString(): string };
       creditAmount: { toString(): string };
+      customerId?: string | null;
+      supplierId?: string | null;
     }[];
   },
   date: Date,
@@ -175,6 +181,9 @@ export async function reverseEntry(
       accountId: line.chartOfAccountId,
       debit: toFils(line.creditAmount.toString()),
       credit: toFils(line.debitAmount.toString()),
+      // The same customer or supplier, so their balance is put back too.
+      customerId: line.customerId ?? null,
+      supplierId: line.supplierId ?? null,
     })),
     sourceType: entry.sourceType,
     sourceId: entry.sourceId,

@@ -10,6 +10,7 @@ import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
 import { dueFils, paidFils } from '@/lib/billing/invoice';
 import { customerAdvanceHeld } from '@/lib/billing/advances';
 import { purchaseRoundingFils } from '@/lib/finance/supplier-balance';
+import { partyJournalLines, type PartyJournalLine } from '@/lib/accounting/sub-ledger';
 
 /*
  * Statements of account — what a customer owes the workshop, and what the
@@ -133,6 +134,25 @@ function statementFrom(movements: Movement[], period: { from: string; to: string
 }
 
 const signed = (fils: number) => (fils < 0 ? `-${filsToString(-fils)}` : filsToString(fils));
+
+/**
+ * A manual journal line naming the party, as a statement line: what the
+ * accountant booked for them by hand (an opening balance, a write-off, an
+ * amount received on their behalf…). Signed in the statement's direction.
+ */
+function journalMovement(line: PartyJournalLine, fils: number): Movement {
+  const note = line.description?.trim() || line.journalEntry.description?.trim() || '';
+  return {
+    key: `journal-${line.id}`,
+    date: line.journalEntry.entryDate.toISOString().slice(0, 10),
+    order: 1,
+    kind: 'Journal entry',
+    reference: line.journalEntry.entryNumber ?? 'Journal',
+    description: `${note}${note ? ' · ' : ''}${line.chartOfAccount.accountCode} ${line.chartOfAccount.accountName}`,
+    href: '/finance/accounting?view=journal',
+    fils,
+  };
+}
 
 const day = (date: Date) => localDateString(date);
 const calendarDay = (date: Date) => date.toISOString().slice(0, 10);
@@ -326,6 +346,13 @@ export async function getCustomerStatement(
         fils: toFils(note.refundAmount.toString()),
       });
     }
+  }
+
+  for (const line of await partyJournalLines(prisma, organizationId, {
+    kind: 'customer',
+    ids: customerId,
+  })) {
+    movements.push(journalMovement(line, line.customerFils));
   }
 
   // Ageing of what is unpaid today, by how long past its due date.
@@ -536,6 +563,12 @@ export async function getSupplierStatement(
         fils: -amount,
       });
     }
+  }
+  for (const line of await partyJournalLines(prisma, organizationId, {
+    kind: 'supplier',
+    ids: supplierId,
+  })) {
+    movements.push(journalMovement(line, line.supplierFils));
   }
   // Read from the workshop's side: what it owes is a credit balance.
   const flipped = movements.map((movement) => ({ ...movement, fils: -movement.fils }));

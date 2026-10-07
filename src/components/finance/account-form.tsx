@@ -29,6 +29,51 @@ export interface AccountDraft {
   isPaymentAccount: boolean;
   /** A system account: automatic bookings use it, so it can't be retired. */
   system: boolean;
+  /** Kept per customer or per supplier. */
+  subLedger: 'CUSTOMER' | 'SUPPLIER' | null;
+  /** Trade receivables/payables, or already used: the sub-ledger can't change. */
+  subLedgerFixed: boolean;
+}
+
+/**
+ * Who the account is kept by. Kept per customer (or supplier), each journal
+ * line on it names one, and the amount counts in their balance and statement.
+ */
+function SubLedgerField({
+  id,
+  defaultValue,
+  fixed,
+  error,
+}: {
+  id: string;
+  defaultValue: string;
+  fixed: boolean;
+  error?: string;
+}) {
+  return (
+    <Field
+      label="Kept per customer or supplier"
+      htmlFor={id}
+      error={error}
+      hint={
+        fixed
+          ? 'Fixed: trade receivables and payables are always kept this way, and an account with entries keeps what it was booked under.'
+          : 'For receivables or payables of your own — each journal line on it then names the customer or supplier, and it counts in their balance.'
+      }
+    >
+      <NativeSelect
+        id={id}
+        name="subLedger"
+        defaultValue={defaultValue}
+        disabled={fixed}
+        className="h-11 text-base md:text-sm"
+      >
+        <option value="">No — one balance for the account</option>
+        <option value="CUSTOMER">Per customer</option>
+        <option value="SUPPLIER">Per supplier</option>
+      </NativeSelect>
+    </Field>
+  );
 }
 
 /** Money can be received into or paid from it — offered on payment forms. */
@@ -143,7 +188,18 @@ function AccountForm({ account, onDone }: { account?: AccountDraft; onDone?: () 
         </Field>
       )}
       {type === 'ASSET' ? (
-        <MoneyAccountBox id={id('isPaymentAccount')} defaultChecked={account?.isPaymentAccount ?? false} />
+        <MoneyAccountBox
+          id={id('isPaymentAccount')}
+          defaultChecked={account?.isPaymentAccount ?? false}
+        />
+      ) : null}
+      {type === 'ASSET' || type === 'LIABILITY' ? (
+        <SubLedgerField
+          id={id('subLedger')}
+          defaultValue={account?.subLedger ?? ''}
+          fixed={account?.subLedgerFixed ?? false}
+          error={errors.subLedger}
+        />
       ) : null}
       <FormError message={Object.keys(errors).length ? undefined : state.error} />
       <div className="border-t border-border pt-4">

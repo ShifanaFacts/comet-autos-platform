@@ -247,7 +247,13 @@ export default async function FinanceOverviewPage({
                     {receivables.recent.map((row) => (
                       <OwedRow
                         key={row.id}
-                        href={row.jobCard ? `/job-cards/${row.jobCard.id}` : '/finance/outstanding'}
+                        href={
+                          row.kind === 'journal'
+                            ? '/finance/accounting?view=journal'
+                            : row.jobCard
+                              ? `/job-cards/${row.jobCard.id}`
+                              : '/finance/outstanding'
+                        }
                         party={row.party.name}
                         reference={row.number}
                         amount={formatMoney(row.balance)}
@@ -298,7 +304,11 @@ export default async function FinanceOverviewPage({
                     {payables.recent.map((row) => (
                       <OwedRow
                         key={row.id}
-                        href={`/inventory/purchases/${row.id}`}
+                        href={
+                          row.kind === 'journal'
+                            ? '/finance/accounting?view=journal'
+                            : `/inventory/purchases/${row.id}`
+                        }
                         party={row.party.name}
                         reference={row.number}
                         amount={formatMoney(row.balance)}

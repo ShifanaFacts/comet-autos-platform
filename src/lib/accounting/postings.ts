@@ -135,6 +135,9 @@ export interface PostingLine {
   credit: number;
   /** A note on the line: a manual entry's own, or who paid an expense personally. */
   memo?: string | null;
+  /** On an account kept per party: the customer or supplier the line is for. */
+  customerId?: string | null;
+  supplierId?: string | null;
 }
 
 export interface Posting {
