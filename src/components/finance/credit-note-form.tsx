@@ -31,6 +31,10 @@ export interface CreditableLine {
   net: string;
   remaining: string;
   remainingTax: string;
+  /** A part sold from stock: what is credited can go back on the shelf. */
+  stocked?: boolean;
+  /** How many of it can still come back into stock. */
+  returnable?: string;
 }
 
 const AMOUNT = /^\d+(\.\d{1,2})?$/;
@@ -72,6 +76,8 @@ export function CreditNoteForm({
   const [reason, setReason] = useState('');
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [quantities, setQuantities] = useState<Record<string, string>>({});
+  /** Lines whose units came back onto the shelf. */
+  const [restock, setRestock] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
@@ -100,6 +106,11 @@ export function CreditNoteForm({
     setQuantities((current) => ({ ...current, [line.id]: value }));
     const qty = milli(value);
     if (!Number.isFinite(qty) || qty <= 0) return;
+    // Units coming back from a part sold from stock go back on the shelf,
+    // unless unticked (a part the customer kept, or one thrown away).
+    if (line.stocked && restock[line.id] === undefined) {
+      setRestock((current) => ({ ...current, [line.id]: true }));
+    }
     // That share of the line, never more than what is left on it.
     const amount = Math.min(
       prorateFils(toFils(line.net), qty, milli(line.quantity)),
@@ -119,6 +130,7 @@ export function CreditNoteForm({
           invoiceItemId: line.id,
           amount: amounts[line.id] ?? '',
           quantity: quantities[line.id] || undefined,
+          restock: line.stocked && restock[line.id] ? '1' : undefined,
         })),
         requestKey: requestKey.current,
       });
@@ -196,6 +208,22 @@ export function CreditNoteForm({
                           onChange={(event) => setQuantity(line, event.target.value)}
                           className="text-right tabular-nums"
                         />
+                      ) : null}
+                      {left > 0 && line.stocked && Number(line.returnable ?? 0) > 0 ? (
+                        <label className="mt-1.5 flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(restock[line.id])}
+                            onChange={(event) =>
+                              setRestock((current) => ({
+                                ...current,
+                                [line.id]: event.target.checked,
+                              }))
+                            }
+                            className="size-3.5 accent-primary"
+                          />
+                          Back in stock
+                        </label>
                       ) : null}
                     </td>
                     <td className="px-2 py-3">

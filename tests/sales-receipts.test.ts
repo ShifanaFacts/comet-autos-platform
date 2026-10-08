@@ -31,12 +31,16 @@ const money = (value: { toString(): string } | null | undefined) =>
 let a: TestOrg;
 
 before(async () => {
-  a = await createTestOrg('Receipts');
+  a = await createTestOrg('Receipts', [
+    { sku: 'RC-FUSE', name: 'Fuse', cost: '2', price: '5', stock: '10' },
+  ]);
 });
 
 after(async () => {
   await prisma.$disconnect();
 });
+
+const fuse = () => a.parts['RC-FUSE'].id;
 
 async function customer(suffix: string) {
   return prisma.customer.create({
@@ -81,7 +85,9 @@ describe('a sales receipt', () => {
     await expectDomainError(
       createDirectInvoice(a.owner, {
         customerId,
-        items: [{ itemType: 'PART', description: 'Fuse', quantity: '1', unitPrice: '5' }],
+        items: [
+          { itemType: 'PART', description: 'Fuse', quantity: '1', unitPrice: '5', partId: fuse() },
+        ],
         payNow: '1',
       }),
       /how the customer paid/,
@@ -92,7 +98,9 @@ describe('a sales receipt', () => {
     const { id: customerId } = await customer('12');
     const result = await createDirectInvoice(a.owner, {
       customerId,
-      items: [{ itemType: 'PART', description: 'Fuse', quantity: '1', unitPrice: '5' }],
+      items: [
+        { itemType: 'PART', description: 'Fuse', quantity: '1', unitPrice: '5', partId: fuse() },
+      ],
     });
     assert.equal(result.paymentId, null);
     const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: result.invoiceId } });

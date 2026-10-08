@@ -10,6 +10,7 @@ import { filsToString, toFils } from '@/lib/money';
 import { emptyToNull } from '@/lib/normalize';
 import { claimRequestKey, settleRequestKey } from '@/lib/request-keys';
 import { getLedgerProfitAndLoss } from '@/lib/accounting/reports';
+import { gratuityEarnedFils } from '@/lib/hr/gratuity';
 import {
   addDays,
   corporateTaxDue,
@@ -71,6 +72,24 @@ const datesSchema = z.object({
     ),
   tradeLicenceNumber: z.string().trim().max(40).optional(),
   tradeLicenceExpiry: optionalDate,
+  mohreEstablishmentId: z
+    .string()
+    .trim()
+    .max(30)
+    .optional()
+    .refine(
+      (value) => !value || /^\d{13}$/.test(value.replace(/[\s-]/g, '')),
+      'The MOHRE establishment number is 13 digits.',
+    ),
+  wpsRoutingCode: z
+    .string()
+    .trim()
+    .max(20)
+    .optional()
+    .refine(
+      (value) => !value || /^\d{9}$/.test(value.replace(/[\s-]/g, '')),
+      'A routing code is 9 digits — the bank gives it.',
+    ),
   requestKey: z.string().optional(),
 });
 
@@ -83,6 +102,8 @@ const DATE_FIELDS = {
   corporateTaxNumber: true,
   tradeLicenceNumber: true,
   tradeLicenceExpiry: true,
+  mohreEstablishmentId: true,
+  wpsRoutingCode: true,
 } as const;
 
 /** The company's dates, as the form shows them. */
@@ -108,6 +129,8 @@ export async function getCompanyDates(user: AuthenticatedUser) {
     corporateTaxNumber: org.corporateTaxNumber,
     tradeLicenceNumber: org.tradeLicenceNumber,
     tradeLicenceExpiry: day(org.tradeLicenceExpiry),
+    mohreEstablishmentId: org.mohreEstablishmentId,
+    wpsRoutingCode: org.wpsRoutingCode,
     taxNumber: org.taxNumber,
     isVatRegistered: org.isVatRegistered,
     booksStart: day(org.openingBalanceDate),
@@ -175,6 +198,8 @@ export async function saveCompanyDates(user: AuthenticatedUser, rawInput: unknow
     corporateTaxNumber: emptyToNull(input.corporateTaxNumber)?.replace(/[\s-]/g, '') ?? null,
     tradeLicenceNumber: emptyToNull(input.tradeLicenceNumber),
     tradeLicenceExpiry: asDate(emptyToNull(input.tradeLicenceExpiry)),
+    mohreEstablishmentId: emptyToNull(input.mohreEstablishmentId)?.replace(/[\s-]/g, '') ?? null,
+    wpsRoutingCode: emptyToNull(input.wpsRoutingCode)?.replace(/[\s-]/g, '') ?? null,
   };
 
   return prisma.$transaction(async (tx) => {
@@ -259,6 +284,7 @@ export async function getComplianceCalendar(user: AuthenticatedUser) {
     payroll,
     activeEmployees,
     paidEmployees,
+    team,
     assets,
     depreciated,
     bankAccounts,
@@ -293,6 +319,16 @@ export async function getComplianceCalendar(user: AuthenticatedUser) {
             OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date(`${today}T00:00:00Z`) } }],
           },
         },
+      },
+    }),
+    prisma.employee.findMany({
+      where: { organizationId: org, isActive: true },
+      select: {
+        hireDate: true,
+        wpsPersonCode: true,
+        wpsAgentCode: true,
+        salaryIban: true,
+        salaries: { orderBy: { effectiveFrom: 'desc' }, take: 1, select: { basicSalary: true } },
       },
     }),
     prisma.fixedAsset.count({ where: { organizationId: org, status: 'ACTIVE' } }),
@@ -543,6 +579,47 @@ export async function getComplianceCalendar(user: AuthenticatedUser) {
       href: '/hr/employees',
       action: 'Employees',
     });
+    const noBank = team.filter((e) => !e.wpsPersonCode || !e.wpsAgentCode || !e.salaryIban).length;
+    const companyWps = Boolean(dates.mohreEstablishmentId && dates.wpsRoutingCode);
+    setup.push({
+      key: 'wps',
+      title: 'Salary payment details (WPS)',
+      detail:
+        companyWps && noBank === 0
+          ? 'The company and every employee have their WPS details: the salary file can be made each month.'
+          : [
+              companyWps
+                ? null
+                : 'Enter the MOHRE establishment number and the paying bank’s routing code below.',
+              noBank
+                ? `${noBank} employee${noBank === 1 ? '' : 's'} still need${noBank === 1 ? 's' : ''} a MOHRE person code, routing code and IBAN (on their page, beside the salary).`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(' '),
+      state: companyWps && noBank === 0 ? 'done' : 'missing',
+      href: '/hr/employees',
+      action: 'Employees',
+    });
+    // Gratuity earned before these books began belongs in the opening balances.
+    if (dates.booksStart) {
+      const dayBefore = addDays(dates.booksStart, -1);
+      const earnedFils = team.reduce((sum, e) => {
+        const hired = day(e.hireDate)!;
+        const basic = e.salaries[0] ? toFils(e.salaries[0].basicSalary.toString()) : 0;
+        return hired <= dayBefore ? sum + gratuityEarnedFils(hired, dayBefore, basic) : sum;
+      }, 0);
+      if (earnedFils > 0) {
+        setup.push({
+          key: 'gratuity-opening',
+          title: 'End-of-service owed when the books began',
+          detail: `The team had already earned about ${filsToString(earnedFils)} AED in gratuity by ${dayBefore}. Enter it in opening balances as "Provision for end-of-service benefits" — payroll adds each month's part from then on.`,
+          state: 'todo',
+          href: '/finance/accounting/opening-balances',
+          action: 'Opening balances',
+        });
+      }
+    }
   }
 
   // ── Deadlines, soonest first ──

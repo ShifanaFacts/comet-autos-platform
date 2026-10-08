@@ -3,6 +3,8 @@ import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { notFound } from 'next/navigation';
 import { ArrowRight, Ban, Car, ClipboardList, FileMinus, Info, Pencil, User } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
+import { canSeeJobProfit, getJobCost } from '@/lib/finance/job-costing';
+import { JobCostPanel } from '@/components/finance/job-cost-panel';
 import { NotFoundError } from '@/lib/errors';
 import { getInvoiceDetail } from '@/lib/billing/invoice';
 import { invoiceEditBlocker, invoiceVoidBlocker, isCredited } from '@/lib/billing/invoice-changes';
@@ -60,6 +62,8 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
 
   const { customer, vehicle, jobCard } = invoice;
   const branch = { branchId: invoice.branchId };
+  // What the job cost and made — for those who see the books.
+  const jobCost = canSeeJobProfit(user) ? await getJobCost(user, invoice.id) : null;
   const isVoid = invoice.status === 'VOID';
   const canPay = !isVoid && hasPermission(user, 'payment.create', branch);
   const editBlocker = invoiceEditBlocker(invoice);
@@ -542,6 +546,12 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
               </ul>
             </Panel>
           </Section>
+
+          {jobCost ? (
+            <Section title="Job cost & profit">
+              <JobCostPanel cost={jobCost} />
+            </Section>
+          ) : null}
 
           <Section title="Invoice details">
             <Panel>

@@ -20,6 +20,7 @@ import {
   HandCoins,
   ChartPie,
   ReceiptText,
+  FileSignature,
   Percent,
   IdCard,
   CalendarCheck,
@@ -224,6 +225,12 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/finance/expenses',
         icon: ReceiptText,
         permission: 'expense.view',
+      },
+      {
+        label: 'Payment vouchers',
+        href: '/finance/payment-vouchers',
+        icon: FileSignature,
+        permission: 'payment_voucher.view',
       },
       {
         label: 'Suppliers owed',

@@ -678,6 +678,27 @@ export default async function VatPage({
           />
         )}
       </Section>
+
+      {data.bankCharges.length ? (
+        <Section
+          title="Bank charges"
+          description={`The card machine's fee the bank kept on settlements, with its VAT — less any fee recovered from someone the card money was for, paid over on a payment voucher${data.registered ? ` (${formatMoney(boxes.bankChargesVat)})` : ''}.`}
+        >
+          <DocumentTable
+            empty="No bank charges with VAT in this period."
+            rows={data.bankCharges.map((row) => ({
+              key: row.id,
+              href: row.href,
+              number: row.number,
+              date: formatCalendarDate(row.date),
+              party: row.party,
+              detail: row.description,
+              net: row.net,
+              vat: row.vat,
+            }))}
+          />
+        </Section>
+      ) : null}
     </Stack>
   );
 }

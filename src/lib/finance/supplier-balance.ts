@@ -65,6 +65,24 @@ export function purchaseRoundingFils(purchase: {
   return text.startsWith('-') ? -toFils(text.slice(1)) : toFils(text);
 }
 
+/**
+ * What the supplier's tax invoice, matched after the parts came in, says
+ * beyond what was recorded — bill total less recorded total, signed, in fils.
+ * Owed (or not) from then on, as it is booked with the bill (postings.ts
+ * PURCHASE_BILL); nothing until the whole purchase is received.
+ */
+export function purchaseBillDifferenceFils(purchase: {
+  status: string;
+  billStatus: string;
+  billMatchedByUserId: string | null;
+  billTotalAmount: { toString(): string } | null;
+  totalAmount: { toString(): string } | null;
+}): number {
+  if (purchase.status !== 'RECEIVED' || purchase.billStatus !== 'RECEIVED') return 0;
+  if (!purchase.billMatchedByUserId || !purchase.billTotalAmount || !purchase.totalAmount) return 0;
+  return toFils(purchase.billTotalAmount.toString()) - toFils(purchase.totalAmount.toString());
+}
+
 export type PurchasePaymentState = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
 
 export interface PurchaseBalance {
@@ -89,13 +107,19 @@ export function purchaseBalance(
   purchase: {
     status: string;
     roundingAdjustment: { toString(): string };
+    billStatus: string;
+    billMatchedByUserId: string | null;
+    billTotalAmount: { toString(): string } | null;
+    totalAmount: { toString(): string } | null;
     items: (ValuedLine & { quantityReceived: { toString(): string } })[];
     supplierPayments: SupplierPaymentLike[];
   },
   defaultVat: string,
 ): PurchaseBalance {
   const receivedFils =
-    receivedValueFils(purchase.items, defaultVat) + purchaseRoundingFils(purchase);
+    receivedValueFils(purchase.items, defaultVat) +
+    purchaseRoundingFils(purchase) +
+    purchaseBillDifferenceFils(purchase);
   const paidFils = supplierPaidFils(purchase.supplierPayments);
   const balanceFils = Math.max(receivedFils - paidFils, 0);
   return {
@@ -113,6 +137,10 @@ export function purchaseBalance(
 export const PURCHASE_BALANCE_SELECT = {
   status: true,
   roundingAdjustment: true,
+  billStatus: true,
+  billMatchedByUserId: true,
+  billTotalAmount: true,
+  totalAmount: true,
   items: {
     select: {
       quantityReceived: true,

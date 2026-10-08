@@ -29,7 +29,7 @@ import assert from 'node:assert/strict';
 import type { AccountRole } from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
 import { ensureChart } from '@/lib/accounting/chart';
-import { countUnbooked } from '@/lib/accounting/entries';
+import { bookExistingRecords, countUnbooked } from '@/lib/accounting/entries';
 import { getBalanceSheet } from '@/lib/accounting/reports';
 import { createDirectInvoice } from '@/lib/billing/direct-invoice';
 import { getInvoiceDetail, recordInvoicePayment } from '@/lib/billing/invoice';
@@ -58,9 +58,35 @@ let a: TestOrg;
 let roles: Record<AccountRole, string>;
 let customerId: string;
 
+/** The parts sold below, each in stock: an invoice's Parts line names its part. */
+const PART_NAMES = [
+  'Parts',
+  'Tensioner assy V-belt',
+  'Boot steering',
+  'Oil seal rear main',
+  'Oil seal torque converter',
+  'Oil seal crank front',
+  'Fluid power steering',
+  'Coolant',
+  'Rear lower arm boots',
+  'Front upper and lower boots',
+];
+const partId = (name: string) => a.parts[`ID-${PART_NAMES.indexOf(name)}`].id;
+
 before(async () => {
-  a = await createTestOrg('Invoice discount');
+  a = await createTestOrg(
+    'Invoice discount',
+    PART_NAMES.map((name, index) => ({
+      sku: `ID-${index}`,
+      name,
+      cost: '10',
+      price: '20',
+      stock: '10',
+    })),
+  );
   roles = await prisma.$transaction((tx) => ensureChart(tx, a.organizationId));
+  // Their opening stock, in the books before any is sold.
+  await bookExistingRecords(a.owner);
   customerId = (
     await prisma.customer.create({
       data: { organizationId: a.organizationId, name: `Shaloop ${RUN}`, phone: '050 444 1122' },
@@ -98,7 +124,13 @@ describe('the customer paid 154.00 less', () => {
       customerId,
       items: [
         { itemType: 'LABOUR', description: 'Service', quantity: '1', unitPrice: '1480' },
-        { itemType: 'PART', description: 'Parts', quantity: '1', unitPrice: '2000' },
+        {
+          itemType: 'PART',
+          description: 'Parts',
+          quantity: '1',
+          unitPrice: '2000',
+          partId: partId('Parts'),
+        },
       ],
     }));
     await recordInvoicePayment(a.owner, invoiceId, {
@@ -167,7 +199,13 @@ describe('the discount that settles a job card’s invoice', () => {
       jobCardId,
       items: [
         { itemType: 'LABOUR', description: 'Service', quantity: '1', unitPrice: '1480' },
-        { itemType: 'PART', description: 'Parts', quantity: '1', unitPrice: '2000' },
+        {
+          itemType: 'PART',
+          description: 'Parts',
+          quantity: '1',
+          unitPrice: '2000',
+          partId: partId('Parts'),
+        },
       ],
     }));
     assert.equal(await jobStatus(), 'INVOICED');
@@ -322,6 +360,7 @@ describe('154.00 off the total: a discount, not a credit note', () => {
         description,
         quantity,
         unitPrice,
+        ...(itemType === 'PART' ? { partId: partId(description) } : {}),
       })),
       discountType: 'AMOUNT',
       discount: '146.68',

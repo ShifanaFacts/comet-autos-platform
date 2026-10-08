@@ -19,6 +19,7 @@ import { getPaymentModeOptions } from '@/lib/accounting/payment-modes';
 import { getAccountChoices } from '@/lib/accounting/reports';
 import { allocateDocumentNumber } from '@/lib/numbering';
 import { listExpenseBills } from '@/lib/finance/expense-bills';
+import { listJobChoices } from '@/lib/finance/job-costing';
 
 /*
  * What the workshop spends to keep running — rent, utilities, workshop
@@ -104,8 +105,43 @@ const expenseSchema = z.object({
   /** Paid with an owner's own money; never together with paymentMethod. */
   paidByUserId: z.union([z.literal(''), z.uuid()]).optional(),
   categoryId: z.string().trim().optional(),
+  /**
+   * The job it was a cost of: "card:<job card id>" or "invoice:<invoice id>",
+   * blank for none (lib/finance/job-costing.ts).
+   */
+  forJob: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || /^(card|invoice):[0-9a-f-]{36}$/i.test(value),
+      'Choose the job from the list.',
+    ),
   requestKey: z.string().optional(),
 });
+
+/**
+ * The job an expense is a cost of. An invoice that bills a job card files
+ * the cost under the job card, so every cost of one job is in one place
+ * whether it was entered before or after the invoice.
+ */
+async function readJob(tx: Prisma.TransactionClient, organizationId: string, forJob?: string) {
+  if (!forJob) return { jobCardId: null, invoiceId: null };
+  const [kind, id] = forJob.split(':');
+  if (kind === 'card') {
+    const card = await tx.jobCard.findFirst({ where: { id, organizationId }, select: { id: true } });
+    if (!card) throw new DomainError('Choose the job from the list.', 'forJob');
+    return { jobCardId: card.id, invoiceId: null };
+  }
+  const invoice = await tx.invoice.findFirst({
+    where: { id, organizationId, status: { notIn: ['VOID', 'CANCELLED'] } },
+    select: { id: true, jobCardId: true },
+  });
+  if (!invoice) throw new DomainError('Choose the job from the list.', 'forJob');
+  return invoice.jobCardId
+    ? { jobCardId: invoice.jobCardId, invoiceId: null }
+    : { jobCardId: null, invoiceId: invoice.id };
+}
 
 /**
  * The amount entered is net of VAT; the rate adds the tax on top — the same
@@ -324,6 +360,7 @@ export async function recordExpenseInTransaction(
       expenseNumber,
       ...details,
       chartOfAccountId: categoryId,
+      ...(await readJob(tx, user.organizationId, input.forJob)),
       description: input.description.replace(/\s+/g, ' '),
       // `amount` is the net; `taxAmount` the VAT on top, so net + tax is
       // what left the bank. This matches how the invoice stores money.
@@ -403,6 +440,16 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
     });
     if (!before) throw new NotFoundError('expense');
     if (before.status === 'VOID') throw new DomainError('A voided expense cannot be changed.');
+    // Paid on a signed payment voucher: the paper and the books must agree.
+    const voucher = await tx.paymentVoucher.findFirst({
+      where: { organizationId: user.organizationId, expenseId: before.id },
+      select: { voucherNumber: true },
+    });
+    if (voucher) {
+      throw new DomainError(
+        `This was paid on payment voucher ${voucher.voucherNumber}, which the payee signed. To correct it, void the voucher and write a new one.`,
+      );
+    }
     await assertBillFree(
       tx,
       user.organizationId,
@@ -415,6 +462,7 @@ export async function updateExpense(user: AuthenticatedUser, expenseId: string, 
     const data = {
       ...readDetails(input, payer),
       chartOfAccountId: categoryId,
+      ...(await readJob(tx, user.organizationId, input.forJob)),
       description: input.description.replace(/\s+/g, ' '),
       amount: money.net,
       taxRate,
@@ -479,6 +527,16 @@ export async function voidExpense(user: AuthenticatedUser, expenseId: string, ra
   });
   if (!expense) throw new NotFoundError('expense');
   if (expense.status === 'VOID') throw new DomainError('This expense is already voided.');
+  // Paid on a payment voucher: voided with the voucher, so the two agree.
+  const voucher = await prisma.paymentVoucher.findFirst({
+    where: { organizationId: user.organizationId, expenseId: expense.id },
+    select: { voucherNumber: true },
+  });
+  if (voucher) {
+    throw new DomainError(
+      `This was paid on payment voucher ${voucher.voucherNumber}. Void the voucher instead — the expense is voided with it.`,
+    );
+  }
 
   return prisma.$transaction(async (tx) => {
     const voided = await tx.expense.update({
@@ -622,6 +680,8 @@ export async function getExpenseFormOptions(user: AuthenticatedUser) {
     taxCodes: await getTaxCodeOptions(user.organizationId, 'purchases'),
     // Card settlements are for customers paying the garage; not offered here.
     modes: await getPaymentModeOptions(user.organizationId, 'spending'),
+    /** The jobs a cost can be filed against (lib/finance/job-costing.ts). */
+    jobs: await listJobChoices(user),
     /** Who can pay a cost with their own money: "Paid personally by…". */
     people: (await listPersonalPayers(user.organizationId)).map((person) => ({
       id: person.id,
@@ -646,6 +706,8 @@ export async function getExpenseDetail(user: AuthenticatedUser, expenseId: strin
       recordedBy: { select: { fullName: true } },
       branch: { select: { name: true } },
       taxCode: { select: { code: true, name: true, rate: true, treatment: true } },
+      jobCard: { select: { id: true, jobNumber: true } },
+      invoice: { select: { id: true, invoiceNumber: true } },
     },
   });
   if (!expense) throw new NotFoundError('expense');
@@ -723,6 +785,8 @@ export function toExpenseDraft(expense: {
   paidFromAccountId: string | null;
   paidByUserId: string | null;
   chartOfAccountId: string | null;
+  jobCardId?: string | null;
+  invoiceId?: string | null;
 }) {
   const trim = (value: string) => (value.includes('.') ? value.replace(/\.?0+$/, '') : value);
   return {
@@ -744,5 +808,10 @@ export function toExpenseDraft(expense: {
     paidFromAccountId: expense.paidFromAccountId ?? '',
     paidByUserId: expense.paidByUserId ?? '',
     categoryId: expense.chartOfAccountId ?? '',
+    forJob: expense.jobCardId
+      ? `card:${expense.jobCardId}`
+      : expense.invoiceId
+        ? `invoice:${expense.invoiceId}`
+        : '',
   };
 }

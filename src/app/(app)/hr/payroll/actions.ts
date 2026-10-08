@@ -15,6 +15,7 @@ import {
   runPayroll,
   setSalary,
 } from '@/lib/hr/payroll';
+import { setPayDetails } from '@/lib/hr/wps';
 
 function refresh() {
   revalidatePath('/hr', 'layout');
@@ -89,5 +90,16 @@ export async function setSalaryAction(
     refresh();
     revalidatePath(`/hr/employees/${employeeId}`);
   }
+  return toClientResult(result);
+}
+
+export async function setPayDetailsAction(
+  employeeId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => setPayDetails(user, employeeId, formDataToObject(formData)));
+  if (result.ok || result.duplicate) revalidatePath(`/hr/employees/${employeeId}`);
   return toClientResult(result);
 }

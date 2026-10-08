@@ -12,6 +12,7 @@ import { localDateString, parseCalendarDate } from '@/lib/format';
 import { allocateDocumentNumber } from '@/lib/numbering';
 import { dueFils, paidFils, settlementStatus } from '@/lib/billing/invoice';
 import { syncPosting } from '@/lib/accounting/journal';
+import { syncCreditNoteStock } from '@/lib/inventory/credit-note-stock';
 import { checkMoneyAccount } from '@/lib/accounting/chart';
 import { emptyToNull } from '@/lib/normalize';
 import { returnToAdvances, undoReturnsToAdvances } from '@/lib/billing/advances';
@@ -79,8 +80,10 @@ const creditSchema = z.object({
           .string()
           .trim()
           .refine((value) => !value || AMOUNT.test(value), 'Enter an amount like 250 or 250.50.'),
-        /** For the document only: how many of the line's units come back. */
+        /** How many of the line's units come back (the document's quantity). */
         quantity: z.string().trim().optional(),
+        /** "1": those units came back into stock (a part sold from stock). */
+        restock: z.string().optional(),
       }),
     )
     .max(100),
@@ -109,6 +112,9 @@ interface InvoiceLine {
   taxAmount: { toString(): string } | null;
   vatTreatment: Prisma.InvoiceItemGetPayload<object>['vatTreatment'];
   accountId: string | null;
+  partId?: string | null;
+  partUsageId?: string | null;
+  unitCost?: { toString(): string } | null;
 }
 
 interface CreditedSoFar {
@@ -195,6 +201,34 @@ async function creditedSoFar(tx: Tx | typeof prisma, organizationId: string, inv
   return byLine;
 }
 
+/** A line that sold a part from stock at a known cost: it can come back into stock. */
+const restockable = (item: {
+  partId?: string | null;
+  partUsageId?: string | null;
+  unitCost?: { toString(): string } | null;
+}) => Boolean(item.partId && !item.partUsageId && item.unitCost);
+
+/** How many of each invoice line already came back into stock, in thousandths. */
+async function returnedSoFar(tx: Tx | typeof prisma, organizationId: string, invoiceId: string) {
+  const rows = await tx.creditNoteItem.findMany({
+    where: {
+      organizationId,
+      invoiceItemId: { not: null },
+      returnedQuantity: { not: null },
+      creditNote: { invoiceId, status: 'ISSUED' },
+    },
+    select: { invoiceItemId: true, returnedQuantity: true },
+  });
+  const byLine = new Map<string, number>();
+  for (const row of rows) {
+    byLine.set(
+      row.invoiceItemId!,
+      (byLine.get(row.invoiceItemId!) ?? 0) + milli(row.returnedQuantity!),
+    );
+  }
+  return byLine;
+}
+
 const INVOICE_LINES = {
   orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
   select: {
@@ -208,6 +242,9 @@ const INVOICE_LINES = {
     taxAmount: true,
     vatTreatment: true,
     accountId: true,
+    partId: true,
+    partUsageId: true,
+    unitCost: true,
   },
 };
 
@@ -323,6 +360,7 @@ export async function getCreditableInvoice(user: AuthenticatedUser, invoiceId: s
   if (!invoice) throw new NotFoundError('invoice');
   requirePermission(user, 'credit_note.create', { branchId: invoice.branchId });
   const credited = await creditedSoFar(prisma, user.organizationId, invoice.id);
+  const returned = await returnedSoFar(prisma, user.organizationId, invoice.id);
   const lines = creditableLines(invoice, credited).map((line) => ({
     id: line.item.id,
     itemType: line.item.itemType,
@@ -334,6 +372,12 @@ export async function getCreditableInvoice(user: AuthenticatedUser, invoiceId: s
     net: filsToString(line.net),
     remaining: filsToString(line.remaining),
     remainingTax: filsToString(line.remainingTax),
+    /** A part sold from stock: what is credited can go back on the shelf. */
+    stocked: restockable(line.item),
+    /** How many of it can still come back. */
+    returnable: (
+      Math.max(milli(line.item.quantity) - (returned.get(line.item.id) ?? 0), 0) / 1000
+    ).toString(),
   }));
   return {
     id: invoice.id,
@@ -403,6 +447,7 @@ export async function createCreditNote(
       invoice,
       await creditedSoFar(tx, user.organizationId, invoice.id),
     );
+    const returnedBefore = await returnedSoFar(tx, user.organizationId, invoice.id);
     const items: Prisma.CreditNoteItemCreateManyInput[] = [];
     let grossTotal = 0;
     let shareTotal = 0;
@@ -425,6 +470,23 @@ export async function createCreditNote(
         : entry.quantity && Number(entry.quantity) > 0
           ? Math.min(Math.round(Number(entry.quantity) * 1000), milli(line.item.quantity))
           : 1000;
+      // Back on the shelf: never more than was sold, less what came back before.
+      const restock = entry.restock === '1' || entry.restock === 'on';
+      if (restock) {
+        if (!restockable(line.item)) {
+          throw new DomainError(
+            `"${line.item.description}" was not sold from stock, so it can't go back into it.`,
+            `lines.${index}`,
+          );
+        }
+        const left = milli(line.item.quantity) - (returnedBefore.get(line.item.id) ?? 0);
+        if (quantityMilli > left) {
+          throw new DomainError(
+            `"${line.item.description}": only ${Math.max(left, 0) / 1000} can still come back.`,
+            `lines.${index}`,
+          );
+        }
+      }
       grossTotal += part.gross;
       shareTotal += part.share;
       taxTotal += part.tax;
@@ -444,6 +506,9 @@ export async function createCreditNote(
         taxRate: (line.item.taxRate ?? 0).toString(),
         taxAmount: filsToString(part.tax),
         accountId: line.item.accountId,
+        partId: line.item.partId ?? null,
+        returnedQuantity: restock ? (quantityMilli / 1000).toFixed(3) : null,
+        unitCost: restock ? (line.item.unitCost?.toString() ?? null) : null,
       });
     });
     if (items.length === 0) {
@@ -517,6 +582,13 @@ export async function createCreditNote(
     });
     await tx.creditNoteItem.createMany({
       data: items.map((item) => ({ ...item, creditNoteId: note.id })),
+    });
+    // Parts the customer brought back are in stock again; their cost comes
+    // off cost of sales on the note's entry.
+    await syncCreditNoteStock(tx, {
+      organizationId: user.organizationId,
+      creditNoteId: note.id,
+      userId: user.id,
     });
     const returned = await returnToAdvances(tx, user, {
       invoiceId: invoice.id,
@@ -938,6 +1010,12 @@ export async function voidCreditNote(
     await tx.creditNote.update({
       where: { id: note.id },
       data: { status: 'VOID', voidedAt, voidReason: input.reason },
+    });
+    // Parts it returned to stock leave it again.
+    await syncCreditNoteStock(tx, {
+      organizationId: user.organizationId,
+      creditNoteId: note.id,
+      userId: user.id,
     });
     await tx.invoice.update({
       where: { id: invoice.id },

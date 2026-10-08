@@ -11,6 +11,7 @@ import { localDateString, parseCalendarDate } from '@/lib/format';
 import { filsToString, formatMilli, signedToMilli, toFils } from '@/lib/money';
 import { syncPosting } from '@/lib/accounting/journal';
 import { assertSupplierInvoiceFree } from '@/lib/inventory/purchases';
+import { MAX_ROUNDING_FILS } from '@/lib/billing/document-lines';
 
 /*
  * Matching the supplier's tax invoice to the purchase already recorded.
@@ -28,7 +29,11 @@ import { assertSupplierInvoiceFree } from '@/lib/inventory/purchases';
  *         bill was received (its own entry, PURCHASE_BILL);
  *   it doesn't
  *       → refused, showing which figure differs and by how much, so the
- *         wrong entry is found rather than papered over.
+ *         wrong entry is found rather than papered over — unless the bill is
+ *         right and the purchase was not (a price guessed when the part was
+ *         bought): then, with the reason, the purchase is corrected to the
+ *         bill. The difference is owed to (or by) the supplier and booked on
+ *         cost of sales, with the bill's own VAT claimed.
  *
  * And when the shop will never give a tax invoice, the purchase is closed as
  * "no tax invoice": its VAT can't be claimed and becomes part of the cost.
@@ -67,6 +72,8 @@ const matchSchema = z.discriminatedUnion('outcome', [
     taxAmount: money('VAT'),
     totalAmount: money('total'),
     note: z.string().trim().max(500).optional(),
+    /** "1": the bill is right and the purchase was not — correct it to the bill. */
+    acceptDifference: z.string().optional(),
     requestKey: z.string().optional(),
   }),
   z.object({
@@ -185,6 +192,16 @@ export async function matchBill(user: AuthenticatedUser, purchaseId: string, raw
         taxAmount: purchase.taxAmount?.toString() ?? '0.00',
         totalAmount: purchase.totalAmount?.toString() ?? '0.00',
       };
+      // The bill's own figures must add up (its round-off at most 5.00).
+      if (
+        Math.abs(toFils(input.subtotal) + toFils(input.taxAmount) - toFils(input.totalAmount)) >
+        MAX_ROUNDING_FILS
+      ) {
+        throw new DomainError(
+          'Before VAT plus VAT does not come to the total. Check the figures typed from the bill.',
+          'totalAmount',
+        );
+      }
       const comparison = compareBill(recorded, input);
       if (!comparison.agrees) {
         const off = comparison.rows
@@ -194,10 +211,36 @@ export async function matchBill(user: AuthenticatedUser, purchaseId: string, raw
               `${LABEL[row.field]}: bill ${row.bill}, recorded ${row.recorded} (${row.difference > 0 ? '+' : '−'}${filsToString(Math.abs(row.difference))})`,
           )
           .join('; ');
-        throw new DomainError(
-          `The bill doesn't agree with ${purchase.purchaseNumber} — ${off}. Check the quantity and price on the bill against the purchase.`,
-          'subtotal',
-        );
+        if (input.acceptDifference !== '1') {
+          throw new DomainError(
+            `The bill doesn't agree with ${purchase.purchaseNumber} — ${off}. Check the quantity and price on the bill against the purchase — or, if the bill is right, correct the purchase to it.`,
+            'subtotal',
+          );
+        }
+        // Correcting to the bill: the parts are all in, as recorded, and the
+        // reason is written down. A draft is corrected by editing it instead.
+        if (purchase.status !== 'RECEIVED') {
+          throw new DomainError(
+            purchase.status === 'DRAFT'
+              ? 'Nothing has been received on this purchase yet: edit it to match the bill instead.'
+              : 'Receive the rest of this purchase first, then correct it to the bill.',
+          );
+        }
+        const returned = await tx.inventoryTransaction.count({
+          where: {
+            organizationId: user.organizationId,
+            transactionType: 'RETURN_TO_SUPPLIER',
+            purchaseItem: { purchaseId: purchase.id },
+          },
+        });
+        if (returned > 0) {
+          throw new DomainError(
+            'Parts were returned to the supplier on this purchase: ask the shop for a credit note, and match the bill as it then stands.',
+          );
+        }
+        if ((input.note ?? '').length < 3) {
+          throw new DomainError('Say why the bill differs from what was recorded.', 'note');
+        }
       }
       await assertSupplierInvoiceFree(
         tx,

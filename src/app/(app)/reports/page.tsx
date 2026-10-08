@@ -1,4 +1,6 @@
-import { BarChart3, Car, Cog, Info, Users, Wrench } from 'lucide-react';
+import { BarChart3, Car, Cog, Info, Receipt, Users, Wrench } from 'lucide-react';
+import { canSeeJobProfit } from '@/lib/finance/job-costing';
+import { LinkButton } from '@/components/shared/link-button';
 import { requireUser } from '@/lib/auth/authorize';
 import { AuthError } from '@/lib/auth/authorize';
 import { getWorkshopReport, type WorkshopReport } from '@/lib/reports/workshop';
@@ -50,6 +52,14 @@ export default async function ReportsPage({
         eyebrow="More"
         title="Reports"
         description={`How the workshop did from ${formatDate(period.from)} to ${formatDate(period.to)}: sales, jobs, the team's hours and the parts fitted.`}
+        actions={
+          canSeeJobProfit(user) ? (
+            <LinkButton href="/reports/job-profit" variant="outline" size="lg">
+              <Receipt />
+              Job profit
+            </LinkButton>
+          ) : undefined
+        }
       />
 
       <FinancePeriodPicker

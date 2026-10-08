@@ -32,7 +32,12 @@ const money = (value: { toString(): string } | null | undefined) => Number(value
 let a: TestOrg;
 
 before(async () => {
-  a = await createTestOrg('QuoteChange');
+  // Quoted parts named from the list, so their invoices take them out of stock.
+  a = await createTestOrg('QuoteChange', [
+    { sku: 'QC-PADS', name: 'Brake pads', cost: '90', price: '150', stock: '10' },
+    { sku: 'QC-DISC', name: 'Brake disc', cost: '110', price: '180', stock: '10' },
+    { sku: 'QC-WIPER', name: 'Wiper blade', cost: '12', price: '25', stock: '10' },
+  ]);
 });
 
 after(async () => {
@@ -56,7 +61,13 @@ async function approvedQuotation(input: { customerId: string; jobCardId?: string
     validUntil: validUntil(),
     items: [
       { itemType: 'LABOUR', description: 'Brake service', quantity: '1', unitPrice: '200' },
-      { itemType: 'PART', description: 'Brake pads', quantity: '1', unitPrice: '150' },
+      {
+        itemType: 'PART',
+        description: 'Brake pads',
+        quantity: '1',
+        unitPrice: '150',
+        partId: a.parts['QC-PADS'].id,
+      },
     ],
   });
   await sendEstimate(a.owner, quote.id);
@@ -103,7 +114,13 @@ describe('changing an approved quotation on a job card', () => {
       validUntil: validUntil(),
       items: [
         { itemType: 'LABOUR', description: 'Brake service', quantity: '1', unitPrice: '200' },
-        { itemType: 'PART', description: 'Brake discs (added)', quantity: '2', unitPrice: '180' },
+        {
+          itemType: 'PART',
+          description: 'Brake discs (added)',
+          quantity: '2',
+          unitPrice: '180',
+          partId: a.parts['QC-DISC'].id,
+        },
       ],
     });
     await sendEstimate(a.owner, secondId);
@@ -133,7 +150,15 @@ describe('changing an approved quotation without a job card', () => {
     const revision = await reviseEstimate(a.owner, first.id);
     await saveEstimateDraft(a.owner, revision.id, {
       validUntil: validUntil(),
-      items: [{ itemType: 'PART', description: 'Wiper blades', quantity: '2', unitPrice: '25' }],
+      items: [
+        {
+          itemType: 'PART',
+          description: 'Wiper blades',
+          quantity: '2',
+          unitPrice: '25',
+          partId: a.parts['QC-WIPER'].id,
+        },
+      ],
     });
     await sendEstimate(a.owner, revision.id);
     await recordCustomerDecision(a.owner, revision.id, { decision: 'APPROVED', method: 'PHONE' });

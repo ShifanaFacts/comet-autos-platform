@@ -127,7 +127,8 @@ describe('upgrading the old codes', () => {
         // Modules added after the upgrade: no old code guarded them.
         code.startsWith('money.') ||
         code.startsWith('customer_advance.') ||
-        code.startsWith('task.')
+        code.startsWith('task.') ||
+        code.startsWith('payment_voucher.')
       ) {
         assert.deepEqual(sources, [], `${code} is new: only the Owner starts with it`);
       } else if (code === 'job_card.approve') {

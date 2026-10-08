@@ -72,6 +72,8 @@ before(async () => {
     { sku: 'BK-OIL', name: 'Oil filter', cost: '20', price: '50', stock: '10' },
   ]);
   roles = await prisma.$transaction((tx) => ensureChart(tx, a.organizationId));
+  // The oil filters' opening stock, in the books before any is sold.
+  await bookExistingRecords(a.owner);
 });
 
 after(async () => {

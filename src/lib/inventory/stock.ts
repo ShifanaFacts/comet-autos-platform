@@ -93,6 +93,10 @@ export interface MovementInput {
   partUsageId?: string | null;
   /** SALE: the invoice whose part lines moved it (lib/inventory/invoice-stock.ts). */
   invoiceId?: string | null;
+  /** CUSTOMER_RETURN: the credit note the part came back on (lib/inventory/credit-note-stock.ts). */
+  creditNoteId?: string | null;
+  /** ADJUSTMENT: the stock count that found the difference. */
+  stockCountId?: string | null;
   reversalOfTransactionId?: string | null;
   performedByUserId: string;
   note: string;
@@ -131,6 +135,8 @@ export async function postMovement(tx: Prisma.TransactionClient, input: Movement
       purchaseItemId: input.purchaseItemId ?? null,
       partUsageId: input.partUsageId ?? null,
       invoiceId: input.invoiceId ?? null,
+      creditNoteId: input.creditNoteId ?? null,
+      stockCountId: input.stockCountId ?? null,
       reversalOfTransactionId: input.reversalOfTransactionId ?? null,
       performedByUserId: input.performedByUserId,
       note: input.note,

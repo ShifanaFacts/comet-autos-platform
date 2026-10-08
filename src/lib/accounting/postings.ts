@@ -4,6 +4,7 @@ import { localDateString, parseCalendarDate } from '@/lib/format';
 import { milliToString, multiplyQuantity, signedToMilli, toFils } from '@/lib/money';
 import { withNetQuantities } from '@/lib/inventory/stock';
 import { movementValue, receivedBefore } from '@/lib/inventory/purchase-value';
+import { purchaseBillDifferenceFils } from '@/lib/finance/supplier-balance';
 import { getVatSettings, resolveDefaultVatRate } from '@/lib/tax';
 import { OWNER_MONEY_LABEL } from '@/lib/finance/owner-money-labels';
 import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
@@ -88,6 +89,10 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  *   when paid, on the day paid        Dr Salaries payable
  *                                     Cr Bank
  *   Salaries count at net pay — the same rule as the payroll screens.
+ *   and, in the same entry,           Dr End-of-service benefits expense
+ *                                     Cr Provision for end-of-service benefits
+ *                                     the gratuity set aside for the month (the
+ *                                     other way round if it fell)
  *
  * VAT RETURN (filed with the FTA)
  *   when filed, at the period end     Dr Output VAT payable   the output VAT
@@ -110,6 +115,22 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  * on the day given — the invoice's entry and VAT untouched)
  *   Dr Sales discounts                the discount
  *   Cr Trade receivables              the discount
+ *
+ * MONEY TRANSFER (nothing once void)
+ *   Dr the account it went to         what arrived
+ *   Dr Bank charges                   what the bank kept (card machine fee)
+ *   Dr Input VAT recoverable          the bank's VAT on it (registered only;
+ *                                     otherwise part of the bank charges)
+ *   Cr the account it came from       all of it
+ *
+ * PAYMENT VOUCHER — card money collected for someone else (nothing once void)
+ *   collected, on its day             Dr the card account
+ *                                     Cr Money collected for others
+ *   paid over, on its day             Dr Money collected for others  collected
+ *                                     Cr the account paid from       handed over
+ *                                     Cr Bank charges                the bank's fee
+ *                                     Cr Input VAT recoverable       its VAT
+ *   (outside work on a voucher is an expense, booked as one)
  *
  * OWNER'S MONEY (Money → Owner's money; nothing once void)
  *   capital in                        Dr the money account / Cr Owner's capital
@@ -630,7 +651,14 @@ async function purchaseDeliveredVat(tx: Tx, organizationId: string, purchaseId: 
       quantity: true,
       unitCost: true,
       purchaseItem: {
-        select: { id: true, quantityOrdered: true, unitCost: true, taxRate: true, taxAmount: true, netAmount: true },
+        select: {
+          id: true,
+          quantityOrdered: true,
+          unitCost: true,
+          taxRate: true,
+          taxAmount: true,
+          netAmount: true,
+        },
       },
     },
   });
@@ -669,24 +697,66 @@ const postPurchaseBill: Poster = async (tx, organizationId, purchaseId, accounts
       billStatus: true,
       billReceivedOn: true,
       billMatchedByUserId: true,
+      status: true,
+      subtotal: true,
+      taxAmount: true,
+      totalAmount: true,
+      billSubtotal: true,
+      billTaxAmount: true,
+      billTotalAmount: true,
       supplier: { select: { name: true } },
     },
   });
   if (!purchase || !purchase.billMatchedByUserId || purchase.billStatus === 'PENDING') return null;
-  if (!purchase.billReceivedOn || !(await isVatRegistered(tx, organizationId))) return null;
-  const vat = await purchaseDeliveredVat(tx, organizationId, purchaseId);
-  if (vat === 0) return null;
+  if (!purchase.billReceivedOn) return null;
+  const registered = await isVatRegistered(tx, organizationId);
+  // What waits in "awaiting tax invoice" for it.
+  const held = registered ? await purchaseDeliveredVat(tx, organizationId, purchaseId) : 0;
   const received = purchase.billStatus === 'RECEIVED';
+  const lines = new Lines().credit(accounts.VAT_INPUT_PENDING, held);
+
+  // Received in full and the bill's figures recorded: the bill decides — its
+  // VAT is claimed, and what it says beyond what was recorded is owed (or
+  // not) to the supplier, the price difference on cost of sales and any
+  // rounding to round-off (lib/finance/supplier-balance.ts counts the same).
+  const settled =
+    received &&
+    purchase.status === 'RECEIVED' &&
+    purchase.billSubtotal !== null &&
+    purchase.billTaxAmount !== null &&
+    purchase.billTotalAmount !== null;
+  let differs = false;
+  if (settled) {
+    const claimed = registered ? fils(purchase.billTaxAmount) : 0;
+    const owedMore = purchaseBillDifferenceFils(purchase);
+    const costMore = registered
+      ? fils(purchase.billSubtotal) - fils(purchase.subtotal)
+      : fils(purchase.billSubtotal) +
+        fils(purchase.billTaxAmount) -
+        fils(purchase.subtotal) -
+        fils(purchase.taxAmount);
+    differs = owedMore !== 0;
+    lines
+      .debit(accounts.VAT_INPUT, claimed)
+      .credit(accounts.ACCOUNTS_PAYABLE, owedMore)
+      .debit(accounts.COST_OF_PARTS, costMore)
+      // What is left is the shop's rounding.
+      .debit(accounts.ROUNDING, owedMore + held - claimed - costMore);
+  } else {
+    lines.debit(received ? accounts.VAT_INPUT : accounts.COST_OF_PARTS, held);
+  }
+  const built = lines.build();
+  if (built.length === 0) return null;
   return {
     date: purchase.billReceivedOn,
     branchId: purchase.branchId,
     description: received
-      ? `Tax invoice ${purchase.supplierInvoiceNumber ?? ''} received for ${purchase.purchaseNumber} — ${purchase.supplier.name}: VAT now claimable`.replace('  ', ' ')
+      ? `Tax invoice ${purchase.supplierInvoiceNumber ?? ''} received for ${purchase.purchaseNumber} — ${purchase.supplier.name}: ${differs ? 'corrected to the bill, ' : ''}VAT now claimable`.replace(
+          '  ',
+          ' ',
+        )
       : `No tax invoice for ${purchase.purchaseNumber} — ${purchase.supplier.name}: VAT becomes cost`,
-    lines: new Lines()
-      .debit(received ? accounts.VAT_INPUT : accounts.COST_OF_PARTS, vat)
-      .credit(accounts.VAT_INPUT_PENDING, vat)
-      .build(),
+    lines: built,
   };
 };
 
@@ -734,13 +804,15 @@ const postSupplierPayment: Poster = async (tx, organizationId, paymentId, accoun
  *   Dr the account it went to      Cr the account it came from
  * A void transfer books nothing (its entry is reversed).
  */
-const postMoneyTransfer: Poster = async (tx, organizationId, transferId) => {
+const postMoneyTransfer: Poster = async (tx, organizationId, transferId, accounts) => {
   const transfer = await tx.moneyTransfer.findFirst({
     where: { id: transferId, organizationId },
     select: {
       status: true,
       transferNumber: true,
       amount: true,
+      chargesAmount: true,
+      chargesVatAmount: true,
       transferredOn: true,
       fromAccountId: true,
       toAccountId: true,
@@ -750,13 +822,106 @@ const postMoneyTransfer: Poster = async (tx, organizationId, transferId) => {
   });
   if (!transfer || transfer.status !== 'POSTED') return null;
   const amount = fils(transfer.amount);
+  // What the bank kept on the way: its fee, and the VAT on it — reclaimed
+  // when the workshop is VAT-registered, otherwise part of the charge.
+  const charges = fils(transfer.chargesAmount);
+  const chargesVat = fils(transfer.chargesVatAmount);
+  const recoverable = chargesVat > 0 && (await isVatRegistered(tx, organizationId));
   return {
     date: transfer.transferredOn,
     branchId: null,
-    description: `Money moved ${transfer.transferNumber}: ${transfer.fromAccount.accountName} to ${transfer.toAccount.accountName}`,
+    description: `Money moved ${transfer.transferNumber}: ${transfer.fromAccount.accountName} to ${transfer.toAccount.accountName}${charges + chargesVat > 0 ? ', less bank charges' : ''}`,
     lines: new Lines()
       .debit(transfer.toAccountId, amount)
-      .credit(transfer.fromAccountId, amount)
+      .debit(accounts.BANK_CHARGES, recoverable ? charges : charges + chargesVat)
+      .debit(accounts.VAT_INPUT, recoverable ? chargesVat : 0)
+      .credit(transfer.fromAccountId, amount + charges + chargesVat)
+      .build(),
+  };
+};
+
+// ─── Payment vouchers ───────────────────────────────────────────────────────
+
+async function paymentVoucher(tx: Tx, organizationId: string, voucherId: string) {
+  return tx.paymentVoucher.findFirst({
+    where: { id: voucherId, organizationId },
+    select: {
+      kind: true,
+      status: true,
+      voucherNumber: true,
+      branchId: true,
+      payeeName: true,
+      collectedOn: true,
+      collectedAmount: true,
+      cardAccountId: true,
+      feeAmount: true,
+      feeVatAmount: true,
+      amount: true,
+      paidOn: true,
+      paymentMethod: true,
+      paidFromAccountId: true,
+    },
+  });
+}
+
+/**
+ * Card money taken on the workshop's machine for someone else: it is in the
+ * card account like any card payment, but it is theirs — owed to them.
+ */
+const postCardCollection: Poster = async (tx, organizationId, voucherId, accounts) => {
+  const voucher = await paymentVoucher(tx, organizationId, voucherId);
+  if (
+    !voucher ||
+    voucher.kind !== 'CARD_COLLECTION' ||
+    voucher.status === 'VOID' ||
+    !voucher.collectedOn
+  ) {
+    return null;
+  }
+  const collected = fils(voucher.collectedAmount);
+  return {
+    date: voucher.collectedOn,
+    branchId: voucher.branchId,
+    description: `Card payment collected for ${voucher.payeeName} (${voucher.voucherNumber})`,
+    lines: new Lines()
+      .debit(voucher.cardAccountId ?? accounts.CARD_CLEARING, collected)
+      .credit(accounts.MONEY_HELD_FOR_OTHERS, collected)
+      .build(),
+  };
+};
+
+/**
+ * That money paid over, less what the bank kept for it. The fee was theirs:
+ * recovered from them, it comes off Bank charges — and its VAT off what the
+ * workshop reclaims, since the workshop no longer bears that fee.
+ */
+const postPaymentVoucher: Poster = async (tx, organizationId, voucherId, accounts) => {
+  const voucher = await paymentVoucher(tx, organizationId, voucherId);
+  if (
+    !voucher ||
+    voucher.kind !== 'CARD_COLLECTION' ||
+    voucher.status !== 'PAID' ||
+    !voucher.paidOn ||
+    !voucher.paymentMethod
+  ) {
+    return null;
+  }
+  const collected = fils(voucher.collectedAmount);
+  const paid = fils(voucher.amount);
+  const fee = fils(voucher.feeAmount);
+  const feeVat = fils(voucher.feeVatAmount);
+  const recoverable = feeVat > 0 && (await isVatRegistered(tx, organizationId));
+  const paidFrom =
+    voucher.paidFromAccountId ?? accounts[METHOD_ACCOUNT_ROLE[voucher.paymentMethod]];
+  return {
+    date: voucher.paidOn,
+    branchId: voucher.branchId,
+    description: `Payment voucher ${voucher.voucherNumber} — card money paid over to ${voucher.payeeName}`,
+    lines: new Lines()
+      .debit(accounts.MONEY_HELD_FOR_OTHERS, collected)
+      .credit(paidFrom, paid)
+      .credit(accounts.BANK_CHARGES, recoverable ? fee : fee + feeVat)
+      .credit(accounts.VAT_INPUT, recoverable ? feeVat : 0)
       .build(),
   };
 };
@@ -844,7 +1009,7 @@ async function payrollRun(tx: Tx, organizationId: string, payrollId: string) {
       periodEnd: true,
       approvedAt: true,
       paidAt: true,
-      items: { select: { netPay: true } },
+      items: { select: { netPay: true, gratuityAccrual: true } },
     },
   });
 }
@@ -855,6 +1020,11 @@ const postPayroll: Poster = async (tx, organizationId, payrollId, accounts) => {
   const run = await payrollRun(tx, organizationId, payrollId);
   if (!run || (run.status !== 'APPROVED' && run.status !== 'PAID')) return null;
   const net = run.items.reduce((sum, item) => sum + fils(item.netPay), 0);
+  // Below zero when a salary fell and less gratuity is owed than was set aside.
+  const gratuity = run.items.reduce((sum, item) => {
+    const text = item.gratuityAccrual.toString();
+    return sum + (text.startsWith('-') ? -fils(text.slice(1)) : fils(text));
+  }, 0);
   return {
     date: run.periodEnd,
     branchId: null,
@@ -862,6 +1032,8 @@ const postPayroll: Poster = async (tx, organizationId, payrollId, accounts) => {
     lines: new Lines()
       .debit(accounts.SALARIES_EXPENSE, net)
       .credit(accounts.SALARIES_PAYABLE, net)
+      .debit(accounts.GRATUITY_EXPENSE, gratuity)
+      .credit(accounts.GRATUITY_PROVISION, gratuity)
       .build(),
   };
 };
@@ -945,7 +1117,15 @@ const postCreditNote: Poster = async (tx, organizationId, creditNoteId, accounts
       taxAmount: true,
       totalAmount: true,
       roundingAmount: true,
-      items: { select: { itemType: true, accountId: true, lineTotal: true } },
+      items: {
+        select: {
+          itemType: true,
+          accountId: true,
+          lineTotal: true,
+          returnedQuantity: true,
+          unitCost: true,
+        },
+      },
       invoice: { select: { invoiceNumber: true, customerName: true } },
     },
   });
@@ -960,6 +1140,16 @@ const postCreditNote: Poster = async (tx, organizationId, creditNoteId, accounts
       item.accountId ?? accounts[SALES_ROLE[item.itemType ?? 'OTHER'] ?? 'SALES_OTHER'];
     lines.debit(account, fils(item.lineTotal));
   }
+  // Parts the customer brought back: in stock again, off cost of sales, at
+  // the cost they were sold at (lib/inventory/credit-note-stock.ts).
+  const back = note.items
+    .filter((item) => item.returnedQuantity && item.unitCost)
+    .reduce(
+      (sum, item) =>
+        sum + multiplyQuantity(item.returnedQuantity!.toString(), item.unitCost!.toString()),
+      0,
+    );
+  lines.debit(accounts.INVENTORY, back).credit(accounts.COST_OF_PARTS, back);
   return {
     date: note.issueDate,
     branchId: note.branchId,
@@ -1222,4 +1412,6 @@ export const POSTING_RULES: Record<
   PURCHASE_ROUNDING: postPurchaseRounding,
   OWNER_MONEY: postOwnerMoney,
   PURCHASE_BILL: postPurchaseBill,
+  CARD_COLLECTION: postCardCollection,
+  PAYMENT_VOUCHER: postPaymentVoucher,
 };

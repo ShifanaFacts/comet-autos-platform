@@ -44,6 +44,10 @@ import { VAT_DUE_DAYS } from '@/lib/compliance/rules';
  *       the bill was received (lib/inventory/bills.ts);
  *     - tax invoice still to come, or none: not counted — shown apart as
  *       "awaiting tax invoice".
+ *   And the bank's VAT on the card machine's fee, as each settlement says
+ *   (a money transfer's charges), less the VAT on any of that fee recovered
+ *   from someone the card money was really for (a payment voucher paying it
+ *   over) — the books move exactly these through Input VAT recoverable.
  *
  * A workshop that is not VAT-registered charges and recovers nothing; the
  * return shows zeros and says why.
@@ -81,8 +85,18 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
   const branch = user.primaryBranchId ? { branchId: user.primaryBranchId } : {};
   const dates = { gte: parseCalendarDate(period.from)!, lte: parseCalendarDate(period.to)! };
 
-  const [settings, organization, invoices, creditNotes, expenses, receipts, billedLater, awaiting] =
-    await Promise.all([
+  const [
+    settings,
+    organization,
+    invoices,
+    creditNotes,
+    expenses,
+    receipts,
+    billedLater,
+    awaiting,
+    bankFees,
+    feesRecovered,
+  ] = await Promise.all([
       getVatSettings(organizationId),
       prisma.organization.findUniqueOrThrow({
         where: { id: organizationId },
@@ -219,6 +233,9 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
                   purchaseNumber: true,
                   supplierInvoiceNumber: true,
                   billReceivedOn: true,
+                  status: true,
+                  billSubtotal: true,
+                  billTaxAmount: true,
                   supplier: { select: { name: true } },
                 },
               },
@@ -236,6 +253,39 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
         },
         _count: { _all: true },
         _sum: { taxAmount: true },
+      }),
+      // The bank's fee kept from card money paid in, with its VAT.
+      prisma.moneyTransfer.findMany({
+        where: { organizationId, status: 'POSTED', transferredOn: dates, chargesVatAmount: { gt: 0 } },
+        orderBy: [{ transferredOn: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          transferNumber: true,
+          transferredOn: true,
+          chargesAmount: true,
+          chargesVatAmount: true,
+          fromAccount: { select: { accountName: true } },
+        },
+      }),
+      // That fee recovered from whoever the card money was for: not the workshop's to reclaim.
+      prisma.paymentVoucher.findMany({
+        where: {
+          organizationId,
+          ...branch,
+          kind: 'CARD_COLLECTION',
+          status: 'PAID',
+          paidOn: dates,
+          feeVatAmount: { gt: 0 },
+        },
+        orderBy: [{ paidOn: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          voucherNumber: true,
+          paidOn: true,
+          payeeName: true,
+          feeAmount: true,
+          feeVatAmount: true,
+        },
       }),
     ]);
 
@@ -377,6 +427,17 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
     entry.date = receipt.claimedOn;
     byPurchase.set(purchase.id, entry);
   }
+  // A bill matched later and received in full claims what the bill says —
+  // the purchase may have been corrected to it (postings.ts PURCHASE_BILL).
+  for (const receipt of billedLater) {
+    const purchase = receipt.purchaseItem?.purchase;
+    if (!purchase || purchase.status !== 'RECEIVED') continue;
+    if (purchase.billSubtotal === null || purchase.billTaxAmount === null) continue;
+    const entry = byPurchase.get(purchase.id);
+    if (!entry) continue;
+    entry.net = toFils(purchase.billSubtotal.toString());
+    entry.vat = toFils(purchase.billTaxAmount.toString());
+  }
   let purchaseNetFils = 0;
   let purchaseVatFils = 0;
   const purchaseRows = [...byPurchase.values()]
@@ -388,7 +449,41 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
     });
 
   const output = registered ? outputFils : 0;
-  const inputFils = registered ? expenseVatFils + purchaseVatFils : 0;
+  // ── Bank charges: the card machine's fee, less what was recovered ───────
+  let bankNetFils = 0;
+  let bankVatFils = 0;
+  const bankChargeRows = [
+    ...bankFees.map((transfer) => ({
+      id: transfer.id,
+      number: transfer.transferNumber,
+      date: transfer.transferredOn,
+      party: 'Bank',
+      description: `Fee kept from ${transfer.fromAccount.accountName}`,
+      net: fils(transfer.chargesAmount),
+      vat: fils(transfer.chargesVatAmount),
+      href: '/finance/money/transfers',
+    })),
+    ...feesRecovered.map((voucher) => ({
+      id: voucher.id,
+      number: voucher.voucherNumber,
+      date: voucher.paidOn!,
+      party: voucher.payeeName,
+      description: 'Bank fee recovered on card money paid over',
+      net: -fils(voucher.feeAmount),
+      vat: -fils(voucher.feeVatAmount),
+      href: `/finance/payment-vouchers/${voucher.id}`,
+    })),
+  ]
+    .sort((x, y) => x.date.getTime() - y.date.getTime())
+    .map((row) => {
+      bankNetFils += row.net;
+      bankVatFils += row.vat;
+      const signed = (value: number) =>
+        value < 0 ? `-${filsToString(-value)}` : filsToString(value);
+      return { ...row, net: signed(row.net), vat: signed(row.vat) };
+    });
+
+  const inputFils = registered ? expenseVatFils + purchaseVatFils + bankVatFils : 0;
 
   return {
     period,
@@ -415,10 +510,17 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
       /** Box 8 — total supplies. */
       totalSupplies: filsToString(registered ? standardFils + zeroFils + exemptFils : 0),
       /** Box 9 — standard-rated expenses (expenses + parts received). */
-      standardExpenses: filsToString(registered ? expenseNetFils + purchaseNetFils : 0),
+      standardExpenses: filsToString(
+        registered ? expenseNetFils + purchaseNetFils + bankNetFils : 0,
+      ),
       inputVat: filsToString(inputFils),
       expenseVat: filsToString(registered ? expenseVatFils : 0),
       purchaseVat: filsToString(registered ? purchaseVatFils : 0),
+      /** The bank's VAT on card fees, less what was recovered from others. Can be below zero. */
+      bankChargesVat:
+        registered && bankVatFils < 0
+          ? `-${filsToString(-bankVatFils)}`
+          : filsToString(registered ? bankVatFils : 0),
       /** Box 14 — positive is payable, negative is refundable. */
       net: filsToString(output - inputFils),
       netFils: output - inputFils,
@@ -427,6 +529,7 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
     credits,
     expenses: expenseRows,
     purchases: purchaseRows,
+    bankCharges: bankChargeRows,
     /** Parts received whose tax invoice hasn't come yet: their VAT isn't claimable until it does. */
     awaitingTaxInvoice: {
       purchases: awaiting._count._all,

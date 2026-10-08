@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { LIKELY_SAME, similarParts } from '@/lib/inventory/part-match';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
 import { DomainError } from '@/lib/errors';
@@ -159,12 +160,27 @@ async function matchParts(organizationId: string, descriptions: string[]) {
   return descriptions.map((description) => {
     const text = description.toLowerCase();
     const key = nameKey(description);
-    const match =
+    const exact =
       keyed.find(
         (part) => !taken.has(part.id) && part.sku.length >= 3 && text.includes(part.sku),
       ) ?? keyed.find((part) => !taken.has(part.id) && part.name.length >= 4 && part.name === key);
-    if (match) taken.add(match.id);
-    return match?.id ?? '';
+    // Else the part on file the shop's wording most surely means ("BRAKE PADS
+    // FRONT" for "Brake pad front") — only when one stands out, so a row is
+    // never filled with a guess; the form shows it to check either way.
+    const close = exact
+      ? null
+      : similarParts(
+          { name: description },
+          parts.filter((part) => !taken.has(part.id)),
+          { threshold: LIKELY_SAME, limit: 2 },
+        );
+    const id =
+      exact?.id ??
+      (close && close.length > 0 && (close.length === 1 || close[0].score > close[1].score)
+        ? close[0].part.id
+        : '');
+    if (id) taken.add(id);
+    return id;
   });
 }
 

@@ -28,6 +28,8 @@ const SOURCE_LABEL: Record<string, string> = {
   SUPPLIER_PAYMENT: 'Supplier payment',
   PAYROLL: 'Payroll',
   PAYROLL_PAYMENT: 'Payroll',
+  CARD_COLLECTION: 'Payment voucher',
+  PAYMENT_VOUCHER: 'Payment voucher',
   MANUAL: 'Manual',
 };
 

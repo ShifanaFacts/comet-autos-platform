@@ -14,7 +14,7 @@ import { LinkButton } from '@/components/shared/link-button';
 import { StatusPill } from '@/components/shared/status-pill';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { InlineForm } from '@/components/shared/inline-form';
-import { SalaryForm } from '@/components/hr/payroll-forms';
+import { PayDetailsForm, SalaryForm } from '@/components/hr/payroll-forms';
 import { ResetLoginButton } from '@/components/hr/reset-login-button';
 
 export default async function EmployeePage({ params }: { params: Promise<{ id: string }> }) {
@@ -167,7 +167,9 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
                       </Link>
                     ) : (
                       <span className="text-muted-foreground">
-                        {employee.jobTitle ? `${employee.jobTitle} (no designation set)` : 'Not set'}
+                        {employee.jobTitle
+                          ? `${employee.jobTitle} (no designation set)`
+                          : 'Not set'}
                       </span>
                     )}
                   </dd>
@@ -325,6 +327,34 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
                             : null
                         }
                       />
+                    </InlineForm>
+                  ) : null}
+                  <dl className="grid gap-4 border-t border-border px-4 py-4 text-sm sm:grid-cols-3 sm:px-6">
+                    <div className="flex flex-col gap-1">
+                      <dt className="text-xs font-medium text-muted-foreground">
+                        MOHRE person code
+                      </dt>
+                      <dd className="font-mono">{pay.payDetails.wpsPersonCode ?? '—'}</dd>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <dt className="text-xs font-medium text-muted-foreground">
+                        Bank routing code
+                      </dt>
+                      <dd className="font-mono">{pay.payDetails.wpsAgentCode ?? '—'}</dd>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <dt className="text-xs font-medium text-muted-foreground">IBAN</dt>
+                      <dd className="font-mono break-all">{pay.payDetails.salaryIban ?? '—'}</dd>
+                    </div>
+                  </dl>
+                  {canSetSalary ? (
+                    <InlineForm
+                      label={pay.payDetails.salaryIban ? 'Change bank details' : 'Add bank details'}
+                      hint="For the WPS salary file the bank pays from."
+                      icon={<Banknote className="size-4" />}
+                      defaultOpen={false}
+                    >
+                      <PayDetailsForm employeeId={employee.id} current={pay.payDetails} />
                     </InlineForm>
                   ) : null}
                 </Panel>

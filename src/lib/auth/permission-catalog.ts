@@ -194,6 +194,17 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     },
   },
   {
+    key: 'payment_voucher',
+    label: 'Payment vouchers',
+    description:
+      'Money paid out on a signed voucher: card payments collected for someone else and paid over, and outside work paid for.',
+    actions: {
+      view: 'Payment vouchers, and print them.',
+      create: 'Record card money collected for someone, pay it over, or pay for outside work.',
+      delete: 'Void a payment voucher entered by mistake.',
+    },
+  },
+  {
     key: 'accounting',
     label: 'Accounts & ledger',
     description:
@@ -425,6 +436,7 @@ export const ROLE_PRESETS: RolePreset[] = [
         'payment',
         'credit_note',
         'expense',
+        'payment_voucher',
         'supplier_payment',
         'accounting',
         'vat',

@@ -38,8 +38,18 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
     if (error instanceof NotFoundError) notFound();
     throw error;
   }
-  const { purchase, lines, receivedValue, receipts, paid, owed, linesGross, discountTotal } =
-    detail;
+  const {
+    purchase,
+    lines,
+    receivedValue,
+    receipts,
+    paid,
+    owed,
+    linesGross,
+    discountTotal,
+    billDifference,
+    billDifferenceSign,
+  } = detail;
   const hasDiscount = toFils(discountTotal) > 0;
   const billDiscount = toFils(purchase.billDiscountAmount.toString());
   // A reversal and the payment it reversed are not payments.
@@ -163,6 +173,9 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
         <p className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground sm:px-5">
           Tax invoice matched after the parts arrived; its VAT is claimed from{' '}
           {formatCalendarDate(purchase.billReceivedOn)}.
+          {billDifferenceSign !== 0
+            ? ` Corrected to the bill: ${formatMoney(billDifference)} ${billDifferenceSign > 0 ? 'more' : 'less'} than recorded${purchase.billNote ? ` — ${purchase.billNote}` : ''}.`
+            : ''}
         </p>
       ) : null}
 

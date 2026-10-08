@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Info } from 'lucide-react';
+import { Download, Info, Printer, TriangleAlert } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { NotFoundError } from '@/lib/errors';
 import { canSeePay, getPayrollRun, PAYROLL_STATUS_LABEL, type PayrollRun } from '@/lib/hr/payroll';
+import { getWpsFile } from '@/lib/hr/wps';
 import { formatCalendarDate, formatDateTime, formatMoney } from '@/lib/format';
 import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
@@ -49,6 +50,9 @@ export default async function PayrollRunPage({ params }: { params: Promise<{ id:
   const canPrepare = hasPermission(user, 'payroll.edit');
   const canApprove = hasPermission(user, 'payroll.approve');
   const editable = run.status === 'CALCULATED' && canPrepare;
+  // Paying out: the bank's salary file and the payslips, once approved.
+  const payable = run.status === 'APPROVED' || run.status === 'PAID';
+  const wps = payable ? await getWpsFile(user, run.id) : null;
 
   const trail = [
     run.calculatedAt ? `Calculated ${formatDateTime(run.calculatedAt)} by ${run.createdBy}` : null,
@@ -225,6 +229,90 @@ export default async function PayrollRunPage({ params }: { params: Promise<{ id:
             </table>
           </TableWrap>
         </Panel>
+      </Section>
+
+      {payable && wps ? (
+        <Section
+          title="Paying the team"
+          description="Upload the salary file to the bank or exchange house (WPS), then give each person their payslip."
+        >
+          <Panel className="flex flex-col gap-4">
+            {wps.problems.length ? (
+              <div className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm">
+                <p className="flex items-center gap-2 font-medium text-warning">
+                  <TriangleAlert className="size-4 shrink-0" />
+                  The WPS salary file needs a few details first
+                </p>
+                <ul className="list-disc pl-5 text-muted-foreground">
+                  {wps.problems.map((problem) => (
+                    <li key={problem}>{problem}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-3">
+              {wps.problems.length === 0 ? (
+                <a
+                  href={`/hr/payroll/${run.id}/wps`}
+                  className="inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  <Download className="size-4" />
+                  Download WPS salary file
+                </a>
+              ) : null}
+              <Link
+                href={`/hr/payroll/${run.id}/payslips`}
+                className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-card px-4 text-sm font-medium hover:bg-muted"
+              >
+                <Printer className="size-4" />
+                Payslips
+              </Link>
+            </div>
+          </Panel>
+        </Section>
+      ) : null}
+
+      <Section
+        title="End-of-service gratuity"
+        description={`What each person would be owed if they left on ${formatCalendarDate(run.periodEnd)}, and this month's part of it — set aside in the books with the payroll.`}
+      >
+        <Panel padding="none" className="overflow-hidden">
+          <ul className="divide-y divide-border">
+            {run.lines.map((line) => (
+              <li
+                key={line.id}
+                className="grid grid-cols-[1fr_auto] items-baseline gap-x-4 gap-y-1 px-4 py-3 text-sm sm:grid-cols-[1fr_9rem_9rem] sm:px-6"
+              >
+                <span className="font-medium">{line.employee.name}</span>
+                <span className="text-right tabular-nums text-muted-foreground">
+                  {line.gratuityAccrual.startsWith('-')
+                    ? `−${formatMoney(line.gratuityAccrual.slice(1))}`
+                    : `+${formatMoney(line.gratuityAccrual)}`}{' '}
+                  <span className="sm:hidden">this month</span>
+                </span>
+                <span className="col-span-2 text-right font-semibold tabular-nums sm:col-span-1">
+                  {formatMoney(line.gratuityLiability)}
+                </span>
+              </li>
+            ))}
+            <li className="grid grid-cols-[1fr_auto] items-baseline gap-x-4 bg-muted/30 px-4 py-3 text-sm font-semibold sm:grid-cols-[1fr_9rem_9rem] sm:px-6">
+              <span>Total</span>
+              <span className="text-right tabular-nums">
+                {run.totals.gratuity.startsWith('-')
+                  ? `−${formatMoney(run.totals.gratuity.slice(1))}`
+                  : `+${formatMoney(run.totals.gratuity)}`}
+              </span>
+              <span className="col-span-2 text-right tabular-nums sm:col-span-1">
+                {formatMoney(run.gratuityOwed)}
+              </span>
+            </li>
+          </ul>
+        </Panel>
+        <p className="text-xs text-muted-foreground">
+          UAE Labour Law: 21 days of basic salary for each of the first five years, 30 days for each
+          year after, at most two years&apos; salary. Nothing is due to someone who leaves in their
+          first year — what was set aside for them is released then.
+        </p>
       </Section>
 
       <div className="flex flex-col gap-2 text-xs text-muted-foreground">

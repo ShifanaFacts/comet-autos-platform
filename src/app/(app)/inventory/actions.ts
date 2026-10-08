@@ -22,6 +22,7 @@ import {
 import { removeAttachment } from '@/lib/documents/attachments';
 import { buyPartForJob, refuseLikelyDuplicate } from '@/lib/inventory/quick-purchase';
 import { matchBill } from '@/lib/inventory/bills';
+import { postStockCount } from '@/lib/inventory/stock-count';
 
 function refreshInventory() {
   revalidatePath('/inventory', 'layout');
@@ -322,4 +323,19 @@ export async function matchBillAction(
   refreshInventory();
   revalidatePath('/finance', 'layout');
   redirect('/inventory/purchases/bills?matched=1');
+}
+
+/** Posts a stock count: each part's stock corrected to what was counted. */
+export async function postStockCountAction(
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => postStockCount(user, formDataToObject(formData)));
+  if (!result.ok || !result.data) return toClientResult(result);
+  refreshInventory();
+  revalidatePath('/finance', 'layout');
+  redirect(
+    `/inventory/stock-count?posted=${result.data.countNumber}&corrected=${result.data.corrected}&counted=${result.data.counted}`,
+  );
 }

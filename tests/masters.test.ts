@@ -43,7 +43,9 @@ let a: TestOrg;
 let roles: Record<AccountRole, string>;
 
 before(async () => {
-  a = await createTestOrg('Masters');
+  a = await createTestOrg('Masters', [
+    { sku: 'MS-EXPORT', name: 'Export part', cost: '60', price: '100', stock: '5' },
+  ]);
   roles = await prisma.$transaction((tx) => ensureChart(tx, a.organizationId));
 });
 
@@ -147,6 +149,7 @@ describe('tax codes', () => {
           quantity: '1',
           unitPrice: '100',
           taxCodeId: zr.id,
+          partId: a.parts['MS-EXPORT'].id,
         },
         {
           itemType: 'LABOUR',

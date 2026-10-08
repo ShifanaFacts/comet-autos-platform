@@ -35,6 +35,11 @@ import { sourceLinks } from '@/lib/accounting/reports';
  * into the petty-cash box, takings into the bank. It is neither income nor
  * expense; the books show Dr the account it went to, Cr the one it came from.
  * It is never edited: a mistake is voided, which reverses its entry.
+ *
+ * Card money paid into the bank arrives less the card machine's fee. The
+ * transfer then says what the bank kept — its fee and the VAT on it — and
+ * that is a bank charge: Card payments on the way go down by all of it, the
+ * bank up by what arrived (lib/accounting/postings.ts).
  */
 
 export type MoneyKind = 'cash' | 'petty' | 'bank' | 'card-settlements' | 'company-card' | 'other';
@@ -228,6 +233,25 @@ const transferSchema = z.object({
     .string({ error: 'Enter the amount.' })
     .trim()
     .regex(/^\d{1,9}(\.\d{1,2})?$/, 'Enter the amount like 500.00.'),
+  /** What the bank kept on the way: its fee before VAT, and the VAT on it. */
+  chargesAmount: z
+    .union([
+      z.literal(''),
+      z
+        .string()
+        .trim()
+        .regex(/^\d{1,9}(\.\d{1,2})?$/, 'Enter the charges like 25.00.'),
+    ])
+    .optional(),
+  chargesVatAmount: z
+    .union([
+      z.literal(''),
+      z
+        .string()
+        .trim()
+        .regex(/^\d{1,9}(\.\d{1,2})?$/, 'Enter the VAT like 1.25.'),
+    ])
+    .optional(),
   transferredOn: z
     .string({ error: 'Enter the date.' })
     .trim()
@@ -245,6 +269,14 @@ export async function recordMoneyTransfer(user: AuthenticatedUser, rawInput: unk
     throw new DomainError('Choose two different accounts.', 'toAccountId');
   }
   if (toFils(input.amount) <= 0) throw new DomainError('Enter an amount above zero.', 'amount');
+  const charges = toFils(input.chargesAmount || '0');
+  const chargesVat = toFils(input.chargesVatAmount || '0');
+  if (chargesVat > 0 && charges === 0) {
+    throw new DomainError('Enter the bank’s fee the VAT is charged on.', 'chargesAmount');
+  }
+  if (chargesVat > charges) {
+    throw new DomainError('The VAT can’t be more than the fee it is on.', 'chargesVatAmount');
+  }
   const transferredOn = parseCalendarDate(input.transferredOn);
   if (!transferredOn || input.transferredOn > localDateString()) {
     throw new DomainError('Enter the date — not a future one.', 'transferredOn');
@@ -268,6 +300,8 @@ export async function recordMoneyTransfer(user: AuthenticatedUser, rawInput: unk
         fromAccountId: input.fromAccountId,
         toAccountId: input.toAccountId,
         amount: filsToString(toFils(input.amount)),
+        chargesAmount: filsToString(charges),
+        chargesVatAmount: filsToString(chargesVat),
         transferredOn,
         reference: input.reference || null,
         notes: input.notes || null,
@@ -287,6 +321,9 @@ export async function recordMoneyTransfer(user: AuthenticatedUser, rawInput: unk
         fromAccountId: input.fromAccountId,
         toAccountId: input.toAccountId,
         amount: filsToString(toFils(input.amount)),
+        ...(charges + chargesVat > 0
+          ? { chargesAmount: filsToString(charges), chargesVatAmount: filsToString(chargesVat) }
+          : {}),
         transferredOn: input.transferredOn,
         reference: input.reference || null,
       },
@@ -360,6 +397,8 @@ export async function listMoneyTransfers(
         id: true,
         transferNumber: true,
         amount: true,
+        chargesAmount: true,
+        chargesVatAmount: true,
         transferredOn: true,
         reference: true,
         notes: true,
