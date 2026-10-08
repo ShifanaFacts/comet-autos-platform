@@ -14,6 +14,7 @@ import { parseCalendarDate } from '@/lib/format';
 import { getVatSettings } from '@/lib/tax';
 import { isDiscountedLine, movementValue, receivedBefore } from '@/lib/inventory/purchase-value';
 import { resolvePeriod, type ResolvedPeriod } from '@/lib/finance/dashboard';
+import { VAT_DUE_DAYS } from '@/lib/compliance/rules';
 
 /*
  * The VAT return for a period — the figures a UAE VAT201 asks for, taken
@@ -35,10 +36,14 @@ import { resolvePeriod, type ResolvedPeriod } from '@/lib/finance/dashboard';
  *
  * INPUT TAX — what the workshop can recover
  *   Expenses dated in the period that carry VAT (voided ones never count),
- *   and parts received into stock in the period, valued per delivery from
- *   the purchase line's cost and VAT rate, less parts returned to the
- *   supplier in the period. Dated by delivery, not by order: VAT is
- *   recoverable once the goods and the supplier's invoice arrive.
+ *   and parts received into stock, valued per delivery from the purchase
+ *   line's cost and VAT rate, less parts returned to the supplier. Input VAT
+ *   is recoverable only with the supplier's tax invoice in hand:
+ *     - recorded with its tax invoice: counted by delivery date;
+ *     - tax invoice matched later: the purchase's VAT is counted on the day
+ *       the bill was received (lib/inventory/bills.ts);
+ *     - tax invoice still to come, or none: not counted — shown apart as
+ *       "awaiting tax invoice".
  *
  * A workshop that is not VAT-registered charges and recovers nothing; the
  * return shows zeros and says why.
@@ -50,7 +55,7 @@ import { resolvePeriod, type ResolvedPeriod } from '@/lib/finance/dashboard';
 const SUPPLY_STATUSES: InvoiceStatus[] = ['ISSUED', 'PARTIALLY_PAID', 'PAID'];
 
 /** Days after a VAT period ends by which the return and the payment are due. */
-export const VAT_DUE_DAYS = 28;
+export { VAT_DUE_DAYS };
 
 /**
  * When a return for a period ending on `periodEnd` ("YYYY-MM-DD", the last
@@ -76,102 +81,163 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
   const branch = user.primaryBranchId ? { branchId: user.primaryBranchId } : {};
   const dates = { gte: parseCalendarDate(period.from)!, lte: parseCalendarDate(period.to)! };
 
-  const [settings, organization, invoices, creditNotes, expenses, receipts] = await Promise.all([
-    getVatSettings(organizationId),
-    prisma.organization.findUniqueOrThrow({
-      where: { id: organizationId },
-      select: { emirate: true },
-    }),
-    prisma.invoice.findMany({
-      where: {
-        organizationId,
-        ...branch,
-        invoiceType: 'TAX_INVOICE',
-        status: { in: SUPPLY_STATUSES },
-        issueDate: dates,
-      },
-      orderBy: [{ issueDate: 'asc' }, { invoiceNumber: 'asc' }],
-      select: {
-        id: true,
-        invoiceNumber: true,
-        issueDate: true,
-        subtotal: true,
-        taxAmount: true,
-        totalAmount: true,
-        customerName: true,
-        customerTaxNumber: true,
-        jobCardId: true,
-        customer: { select: { name: true, taxNumber: true } },
-        items: { select: { lineTotal: true, vatTreatment: true } },
-      },
-    }),
-    prisma.creditNote.findMany({
-      where: { organizationId, ...branch, status: 'ISSUED', issueDate: dates },
-      orderBy: [{ issueDate: 'asc' }, { creditNoteNumber: 'asc' }],
-      select: {
-        id: true,
-        creditNoteNumber: true,
-        issueDate: true,
-        subtotal: true,
-        taxAmount: true,
-        totalAmount: true,
-        reason: true,
-        invoice: {
-          select: { id: true, invoiceNumber: true, customerName: true, jobCardId: true },
+  const [settings, organization, invoices, creditNotes, expenses, receipts, billedLater, awaiting] =
+    await Promise.all([
+      getVatSettings(organizationId),
+      prisma.organization.findUniqueOrThrow({
+        where: { id: organizationId },
+        select: { emirate: true },
+      }),
+      prisma.invoice.findMany({
+        where: {
+          organizationId,
+          ...branch,
+          invoiceType: 'TAX_INVOICE',
+          status: { in: SUPPLY_STATUSES },
+          issueDate: dates,
         },
-        customer: { select: { name: true, taxNumber: true } },
-        items: { select: { lineTotal: true, vatTreatment: true } },
-      },
-    }),
-    prisma.expense.findMany({
-      where: { organizationId, ...branch, status: 'RECORDED', expenseDate: dates },
-      orderBy: [{ expenseDate: 'asc' }, { createdAt: 'asc' }],
-      select: {
-        id: true,
-        expenseNumber: true,
-        description: true,
-        vendorName: true,
-        expenseDate: true,
-        amount: true,
-        taxAmount: true,
-        chartOfAccount: { select: { accountName: true } },
-      },
-    }),
-    prisma.inventoryTransaction.findMany({
-      where: {
-        organizationId,
-        ...branch,
-        transactionType: { in: ['PURCHASE_RECEIPT', 'RETURN_TO_SUPPLIER'] },
-        createdAt: { gte: period.start, lt: period.end },
-        purchaseItem: { purchase: { status: { notIn: ['CANCELLED', 'REVERSED'] } } },
-      },
-      orderBy: { createdAt: 'asc' },
-      select: {
-        id: true,
-        quantity: true,
-        unitCost: true,
-        createdAt: true,
-        purchaseItem: {
-          select: {
-            id: true,
-            quantityOrdered: true,
-            unitCost: true,
-            taxRate: true,
-            taxAmount: true,
-            netAmount: true,
+        orderBy: [{ issueDate: 'asc' }, { invoiceNumber: 'asc' }],
+        select: {
+          id: true,
+          invoiceNumber: true,
+          issueDate: true,
+          subtotal: true,
+          taxAmount: true,
+          totalAmount: true,
+          customerName: true,
+          customerTaxNumber: true,
+          jobCardId: true,
+          customer: { select: { name: true, taxNumber: true } },
+          items: { select: { lineTotal: true, vatTreatment: true } },
+        },
+      }),
+      prisma.creditNote.findMany({
+        where: { organizationId, ...branch, status: 'ISSUED', issueDate: dates },
+        orderBy: [{ issueDate: 'asc' }, { creditNoteNumber: 'asc' }],
+        select: {
+          id: true,
+          creditNoteNumber: true,
+          issueDate: true,
+          subtotal: true,
+          taxAmount: true,
+          totalAmount: true,
+          reason: true,
+          invoice: {
+            select: { id: true, invoiceNumber: true, customerName: true, jobCardId: true },
+          },
+          customer: { select: { name: true, taxNumber: true } },
+          items: { select: { lineTotal: true, vatTreatment: true } },
+        },
+      }),
+      prisma.expense.findMany({
+        where: { organizationId, ...branch, status: 'RECORDED', expenseDate: dates },
+        orderBy: [{ expenseDate: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          expenseNumber: true,
+          description: true,
+          vendorName: true,
+          expenseDate: true,
+          amount: true,
+          taxAmount: true,
+          chartOfAccount: { select: { accountName: true } },
+        },
+      }),
+      // Recorded with its tax invoice: by delivery date.
+      prisma.inventoryTransaction.findMany({
+        where: {
+          organizationId,
+          ...branch,
+          transactionType: { in: ['PURCHASE_RECEIPT', 'RETURN_TO_SUPPLIER'] },
+          createdAt: { gte: period.start, lt: period.end },
+          purchaseItem: {
             purchase: {
-              select: {
-                id: true,
-                purchaseNumber: true,
-                supplierInvoiceNumber: true,
-                supplier: { select: { name: true } },
+              status: { notIn: ['CANCELLED', 'REVERSED'] },
+              billStatus: 'RECEIVED',
+              billMatchedByUserId: null,
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          quantity: true,
+          unitCost: true,
+          createdAt: true,
+          purchaseItem: {
+            select: {
+              id: true,
+              quantityOrdered: true,
+              unitCost: true,
+              taxRate: true,
+              taxAmount: true,
+              netAmount: true,
+              purchase: {
+                select: {
+                  id: true,
+                  purchaseNumber: true,
+                  supplierInvoiceNumber: true,
+                  supplier: { select: { name: true } },
+                },
               },
             },
           },
         },
-      },
-    }),
-  ]);
+      }),
+      // Tax invoice matched later: every delivery of it, on the bill's day.
+      prisma.inventoryTransaction.findMany({
+        where: {
+          organizationId,
+          ...branch,
+          transactionType: { in: ['PURCHASE_RECEIPT', 'RETURN_TO_SUPPLIER'] },
+          purchaseItem: {
+            purchase: {
+              status: { notIn: ['CANCELLED', 'REVERSED'] },
+              billStatus: 'RECEIVED',
+              billMatchedByUserId: { not: null },
+              billReceivedOn: dates,
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          quantity: true,
+          unitCost: true,
+          createdAt: true,
+          purchaseItem: {
+            select: {
+              id: true,
+              quantityOrdered: true,
+              unitCost: true,
+              taxRate: true,
+              taxAmount: true,
+              netAmount: true,
+              purchase: {
+                select: {
+                  id: true,
+                  purchaseNumber: true,
+                  supplierInvoiceNumber: true,
+                  billReceivedOn: true,
+                  supplier: { select: { name: true } },
+                },
+              },
+            },
+          },
+        },
+      }),
+      // Not claimable yet: received, tax invoice still to come.
+      prisma.purchase.aggregate({
+        where: {
+          organizationId,
+          ...branch,
+          status: { in: ['RECEIVED', 'PARTIALLY_RECEIVED'] },
+          billStatus: 'PENDING',
+        },
+        _count: { _all: true },
+        _sum: { taxAmount: true },
+      }),
+    ]);
 
   const registered = settings.isVatRegistered;
   const defaultRate = registered ? settings.vatRate : '0.00';
@@ -271,12 +337,19 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
   >();
   // A discounted line values each delivery from the ones before it, even
   // those in an earlier period.
+  const counted = [
+    ...receipts.map((receipt) => ({ ...receipt, claimedOn: receipt.createdAt })),
+    ...billedLater.map((receipt) => ({
+      ...receipt,
+      claimedOn: receipt.purchaseItem?.purchase.billReceivedOn ?? receipt.createdAt,
+    })),
+  ];
   const before = await receivedBefore(
     prisma,
     organizationId,
-    receipts.filter((r) => isDiscountedLine(r.purchaseItem)).map((r) => r.purchaseItem!.id),
+    counted.filter((r) => isDiscountedLine(r.purchaseItem)).map((r) => r.purchaseItem!.id),
   );
-  for (const receipt of receipts) {
+  for (const receipt of counted) {
     const item = receipt.purchaseItem;
     const qty = signedToMilli(receipt.quantity);
     if (!item || qty === 0) continue;
@@ -295,13 +368,13 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
       number: purchase.purchaseNumber,
       reference: purchase.supplierInvoiceNumber,
       party: purchase.supplier.name,
-      date: receipt.createdAt,
+      date: receipt.claimedOn,
       net: 0,
       vat: 0,
     };
     entry.net += valued.netFils;
     entry.vat += valued.taxFils;
-    entry.date = receipt.createdAt;
+    entry.date = receipt.claimedOn;
     byPurchase.set(purchase.id, entry);
   }
   let purchaseNetFils = 0;
@@ -354,6 +427,11 @@ export async function getVatReturn(user: AuthenticatedUser, input: VatReturnInpu
     credits,
     expenses: expenseRows,
     purchases: purchaseRows,
+    /** Parts received whose tax invoice hasn't come yet: their VAT isn't claimable until it does. */
+    awaitingTaxInvoice: {
+      purchases: awaiting._count._all,
+      vat: (awaiting._sum.taxAmount ?? 0).toString(),
+    },
   };
 }
 

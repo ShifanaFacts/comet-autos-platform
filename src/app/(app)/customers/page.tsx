@@ -2,12 +2,14 @@ import Link from 'next/link';
 import { UserPlus, Users } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { canExport } from '@/lib/data-transfer/exports';
-import { listCustomers } from '@/lib/customers/service';
+import { pageCustomers } from '@/lib/customers/service';
 import { formatDate } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { SearchField } from '@/components/shared/search-field';
 import { ActiveDeletedTabs } from '@/components/shared/active-deleted-tabs';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { LinkButton } from '@/components/shared/link-button';
 import { ListDataActions } from '@/components/shared/list-data-actions';
 import { importColumns } from '@/lib/data-transfer/imports';
@@ -32,14 +34,19 @@ import {
 export default async function CustomersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; show?: string }>;
+  searchParams: Promise<{ q?: string; show?: string; page?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
   const query = (params.q ?? '').trim();
   const deleted = params.show === 'deleted';
   const canImport = hasPermission(user, 'customer.create');
-  const customers = await listCustomers(user, query, 50, deleted);
+  const {
+    result: { customers },
+    info,
+  } = await loadPage(pageFrom(params.page), (skip, take) =>
+    pageCustomers(user, { query, deleted }, take, skip),
+  );
   // Nothing on the Deleted tab can be deleted again; it is restored from its page.
   const canRemove = !deleted && hasPermission(user, REMOVAL.customers.permission);
   const rows = customers.map((customer) => ({ id: customer.id, label: customer.name }));
@@ -97,10 +104,10 @@ export default async function CustomersPage({
             }
             action={
               !canImport ? undefined : (
-              <LinkButton href="/customers/new">
-                <UserPlus />
-                New customer
-              </LinkButton>
+                <LinkButton href="/customers/new">
+                  <UserPlus />
+                  New customer
+                </LinkButton>
               )
             }
           />
@@ -164,6 +171,7 @@ export default async function CustomersPage({
                   ))}
                 </TableBody>
               </Table>
+              <Pagination info={info} basePath="/customers" params={params} noun="customers" />
             </Panel>
           </RecordSelection>
         )}

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { ChevronRight, Gauge, ListTodo, LogIn } from 'lucide-react';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { hasPermission } from '@/lib/auth/authorize';
-import { getMyDay } from '@/lib/hr/self-attendance';
+import { getMyDay, SELF_CHECK_IN } from '@/lib/hr/self-attendance';
 import { prisma } from '@/lib/prisma';
 import { formatTime, localDateString, parseCalendarDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -41,19 +41,21 @@ export async function MyDayStrip({ user }: { user: AuthenticatedUser }) {
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
       {day ? (
         <>
-          <Link href="/my-work" className={cn(tile, day.next === 'IN' && day.fence && 'border-primary/40 bg-primary/5')}>
-            <LogIn className="size-5 shrink-0 text-muted-foreground" />
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-sm font-medium">
-                {day.next === 'IN' ? 'Not checked in' : day.next === 'OUT' ? 'Checked in' : 'Day done'}
+          {SELF_CHECK_IN ? (
+            <Link href="/my-work" className={cn(tile, day.next === 'IN' && day.fence && 'border-primary/40 bg-primary/5')}>
+              <LogIn className="size-5 shrink-0 text-muted-foreground" />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-sm font-medium">
+                  {day.next === 'IN' ? 'Not checked in' : day.next === 'OUT' ? 'Checked in' : 'Day done'}
+                </span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {day.record?.clockInAt ? `In at ${formatTime(day.record.clockInAt)}` : 'Tap to check in at the workshop'}
+                  {day.openEarlier ? ' · a past day needs a check-out time' : ''}
+                </span>
               </span>
-              <span className="truncate text-xs text-muted-foreground">
-                {day.record?.clockInAt ? `In at ${formatTime(day.record.clockInAt)}` : 'Tap to check in at the workshop'}
-                {day.openEarlier ? ' · a past day needs a check-out time' : ''}
-              </span>
-            </span>
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-          </Link>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            </Link>
+          ) : null}
           <Link href="/my-work" className={tile}>
             <ListTodo className="size-5 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-1 flex-col">

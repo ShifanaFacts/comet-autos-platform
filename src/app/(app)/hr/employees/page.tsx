@@ -6,6 +6,8 @@ import { formatDate } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { pageFrom, slicePage } from '@/lib/pagination';
 import { LinkButton } from '@/components/shared/link-button';
 import { SearchField } from '@/components/shared/search-field';
 import { StatusPill } from '@/components/shared/status-pill';
@@ -24,7 +26,7 @@ type Show = (typeof SHOW)[number];
 export default async function EmployeesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; show?: string }>;
+  searchParams: Promise<{ q?: string; show?: string; page?: string }>;
 }) {
   const user = await requireUser();
   if (!hasPermission(user, 'employee.view')) return <AccessDenied what="the team" />;
@@ -32,7 +34,10 @@ export default async function EmployeesPage({
   const params = await searchParams;
   const query = (params.q ?? '').trim();
   const show: Show = SHOW.includes(params.show as Show) ? (params.show as Show) : 'active';
-  const employees = await listEmployees(user, { query, show });
+  const { rows: employees, info } = slicePage(
+    await listEmployees(user, { query, show }),
+    pageFrom(params.page),
+  );
   const canManage = hasPermission(user, 'employee.create');
   const filtered = Boolean(query) || show !== 'active';
 
@@ -170,6 +175,7 @@ export default async function EmployeesPage({
                 </TableBody>
               </Table>
             </div>
+            <Pagination info={info} basePath="/hr/employees" params={params} noun="people" />
           </Panel>
         )}
       </Stack>

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { NextResponse, type NextRequest } from 'next/server';
 import { runAttendanceReminders } from '@/lib/notifications/reminders';
+import { SELF_CHECK_IN } from '@/lib/hr/self-attendance';
 
 /*
  * The scheduled job behind the check-in and check-out reminders. Something
@@ -26,6 +27,8 @@ function authorized(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   if (!authorized(request)) return new NextResponse('Unauthorized', { status: 401 });
+  // Checking in from the phone is switched off: nobody to remind.
+  if (!SELF_CHECK_IN) return NextResponse.json({ ok: true, off: true, sent: 0 });
   const result = await runAttendanceReminders();
   return NextResponse.json({ ok: true, ...result });
 }

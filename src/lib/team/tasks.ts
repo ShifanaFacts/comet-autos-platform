@@ -319,7 +319,7 @@ export async function createTasks(
         userId: employee.userId,
         kind: 'TASK_ASSIGNED',
         title: `New task from ${sender}`,
-        body: input.title.replace(/s+/g, ' '),
+        body: input.title.replace(/\s+/g, ' '),
         href: `/team/tasks/${task.id}`,
       }).catch((error) => console.error('Task notification failed', error));
     }),
@@ -635,7 +635,7 @@ export async function editTask(user: AuthenticatedUser, taskId: string, rawInput
         userId: assignee.userId,
         kind: 'TASK_ASSIGNED',
         title: `New task from ${user.fullName.split(' ')[0] || 'your manager'}`,
-        body: input.title.replace(/s+/g, ' '),
+        body: input.title.replace(/\s+/g, ' '),
         href: `/team/tasks/${task.id}`,
       }).catch((error) => console.error('Task notification failed', error));
     }

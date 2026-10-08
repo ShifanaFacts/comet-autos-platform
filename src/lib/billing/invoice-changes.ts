@@ -19,6 +19,13 @@ import {
 import { dueFils, paidFils, settlementStatus, takePayment } from '@/lib/billing/invoice';
 import { readDueDate } from '@/lib/billing/direct-invoice';
 import { syncPosting } from '@/lib/accounting/journal';
+import { syncInvoiceStock } from '@/lib/inventory/invoice-stock';
+import {
+  assertNotFitted,
+  partsFittedOnJob,
+  resolvePartLines,
+  unlinkedAllowed,
+} from '@/lib/billing/part-lines';
 import {
   assertIncomeAccounts,
   discountFields,
@@ -227,12 +234,23 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
     });
     if (blocker) throw new DomainError(blocker);
 
-    const { lines, totals } = priceDocument(
+    const priced = priceDocument(
       input.items,
       defaultVatRate,
       input,
       await resolveTaxCodes(tx, user.organizationId, input.items),
     );
+    const { totals } = priced;
+    // Parts lines name their part and cost, as on a new invoice — but a line
+    // billed from the repair records, or kept from before parts were tied to
+    // stock, may stay as it was.
+    const fitted = await partsFittedOnJob(tx, user.organizationId, invoice.jobCardId);
+    const free = unlinkedAllowed(invoice.items);
+    const lines = await resolvePartLines(tx, user.organizationId, priced.lines, {
+      required: (_line, index) => fitted.size === 0 && !free(input.items[index]),
+      keep: new Set(invoice.items.flatMap((item) => (item.partId ? [item.partId] : []))),
+    });
+    assertNotFitted(lines, fitted);
     await assertIncomeAccounts(tx, user.organizationId, lines);
     const dueDate = readDueDate(input.dueDate, invoice.issueDate);
     const rounded = withRounding(totals, input.roundingAdjustment);
@@ -269,6 +287,9 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
           accountId: line.accountId ?? null,
           vatTreatment: line.vatTreatment,
           taxCodeId: line.taxCodeId ?? null,
+          // A line billing a fitted part left stock with the job, not here.
+          partId: link?.partUsageId ? null : (line.partId ?? null),
+          unitCost: link?.partUsageId ? null : (line.unitCost ?? null),
           ...lineData(line.amounts),
         },
       });
@@ -305,6 +326,12 @@ export async function updateInvoice(user: AuthenticatedUser, invoiceId: string, 
         notes: emptyToNull(input.notes),
         ...parties,
       },
+    });
+    // Stock follows the corrected lines: only the difference moves.
+    await syncInvoiceStock(tx, {
+      organizationId: user.organizationId,
+      invoiceId: invoice.id,
+      userId: user.id,
     });
     // The corrected figures replace the old ones in the books: the old entry
     // is reversed and the new one booked, on the invoice's own date.
@@ -819,7 +846,13 @@ export async function voidInvoice(user: AuthenticatedUser, invoiceId: string, ra
       where: { id: invoice.id },
       data: { status: 'VOID', voidedAt, voidReason: input.reason },
     });
-    // A void invoice was never a sale: its entry is reversed.
+    // A void invoice was never a sale: its parts go back to stock, and its
+    // entry is reversed.
+    await syncInvoiceStock(tx, {
+      organizationId: user.organizationId,
+      invoiceId: invoice.id,
+      userId: user.id,
+    });
     await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
 
     let reopenedTo: WorkflowStatus | null = null;

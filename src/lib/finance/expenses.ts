@@ -536,15 +536,25 @@ function where(organizationId: string, filters: ExpenseFilters): Prisma.ExpenseW
   };
 }
 
-/** Expenses for the filters given, with the totals for exactly that set. */
-export async function listExpenses(user: AuthenticatedUser, filters: ExpenseFilters = {}) {
+/**
+ * One page of expenses for the filters given, with the totals for every
+ * expense the filters match — not only the page shown.
+ */
+export async function listExpenses(
+  user: AuthenticatedUser,
+  filters: ExpenseFilters = {},
+  limit = 300,
+  /** Rows to skip: the pages before the one shown. */
+  offset = 0,
+) {
   requirePermission(user, 'expense.view');
   const clause = where(user.organizationId, filters);
-  const [expenses, categories] = await Promise.all([
+  const [expenses, total, recorded, categories] = await Promise.all([
     prisma.expense.findMany({
       where: clause,
       orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }],
-      take: 300,
+      skip: offset,
+      take: limit,
       include: {
         chartOfAccount: { select: { id: true, accountName: true } },
         recordedBy: { select: { fullName: true } },
@@ -552,19 +562,23 @@ export async function listExpenses(user: AuthenticatedUser, filters: ExpenseFilt
         paidByUser: { select: { id: true, fullName: true } },
       },
     }),
+    prisma.expense.count({ where: clause }),
+    // Voided expenses are listed on "All" but never count towards what was spent.
+    prisma.expense.aggregate({
+      where: { AND: [clause, { status: 'RECORDED' }] },
+      _sum: { amount: true, taxAmount: true },
+      _count: { _all: true },
+    }),
     listExpenseCategories(user),
   ]);
 
   // Totalled in fils so the figures are exact.
-  let netFils = 0;
-  let taxFils = 0;
-  for (const expense of expenses) {
-    if (expense.status !== 'RECORDED') continue;
-    netFils += toFils(expense.amount.toString());
-    taxFils += expense.taxAmount ? toFils(expense.taxAmount.toString()) : 0;
-  }
+  const netFils = toFils(recorded._sum.amount?.toString() ?? '0');
+  const taxFils = toFils(recorded._sum.taxAmount?.toString() ?? '0');
 
   return {
+    /** Every expense the filters match, not only the page shown. */
+    total,
     expenses: expenses.map((expense) => ({
       ...expense,
       total: filsToString(
@@ -577,7 +591,7 @@ export async function listExpenses(user: AuthenticatedUser, filters: ExpenseFilt
       net: filsToString(netFils),
       tax: filsToString(taxFils),
       total: filsToString(netFils + taxFils),
-      count: expenses.filter((e) => e.status === 'RECORDED').length,
+      count: recorded._count._all,
     },
   };
 }

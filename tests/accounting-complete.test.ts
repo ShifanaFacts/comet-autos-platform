@@ -68,7 +68,9 @@ let a: TestOrg;
 let roles: Record<AccountRole, string>;
 
 before(async () => {
-  a = await createTestOrg('Books');
+  a = await createTestOrg('Books', [
+    { sku: 'BK-OIL', name: 'Oil filter', cost: '20', price: '50', stock: '10' },
+  ]);
   roles = await prisma.$transaction((tx) => ensureChart(tx, a.organizationId));
 });
 
@@ -126,7 +128,13 @@ describe('tax credit notes', () => {
       customerId,
       items: [
         { itemType: 'LABOUR', description: 'Service', quantity: '1', unitPrice: '400' },
-        { itemType: 'PART', description: 'Oil filter', quantity: '2', unitPrice: '50' },
+        {
+          itemType: 'PART',
+          description: 'Oil filter',
+          quantity: '2',
+          unitPrice: '50',
+          partId: a.parts['BK-OIL'].id,
+        },
       ],
       discountType: 'AMOUNT',
       discount: '10',

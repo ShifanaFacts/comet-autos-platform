@@ -6,6 +6,8 @@ import { listSuppliers } from '@/lib/inventory/suppliers';
 import { formatDate, formatMoney } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { pageFrom, slicePage } from '@/lib/pagination';
 import { LinkButton } from '@/components/shared/link-button';
 import { ListDataActions } from '@/components/shared/list-data-actions';
 import { importColumns } from '@/lib/data-transfer/imports';
@@ -32,11 +34,15 @@ import { REMOVAL } from '@/lib/records/removal';
 export default async function SuppliersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; page?: string }>;
 }) {
   const user = await requireUser();
-  const query = ((await searchParams).q ?? '').trim();
-  const suppliers = await listSuppliers(user, query);
+  const params = await searchParams;
+  const query = (params.q ?? '').trim();
+  const { rows: suppliers, info } = slicePage(
+    await listSuppliers(user, query),
+    pageFrom(params.page),
+  );
   const canManage = hasPermission(user, 'inventory.create');
   const canRemove = hasPermission(user, REMOVAL.suppliers.permission);
   // Money still owed would drop out of Payables, so only an active supplier
@@ -173,6 +179,12 @@ export default async function SuppliersPage({
                   </TableBody>
                 </Table>
               </div>
+              <Pagination
+                info={info}
+                basePath="/inventory/suppliers"
+                params={params}
+                noun="suppliers"
+              />
             </Panel>
           </RecordSelection>
         )}

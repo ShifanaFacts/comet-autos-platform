@@ -38,6 +38,10 @@ export interface PartCatalog {
   parts: PartOption[];
   suppliers: { id: string; name: string }[];
   canCreate: boolean;
+  /** May record a part bought for a job (a purchase, received) from an invoice line. */
+  canBuy?: boolean;
+  /** May record paying the shop for it there and then. */
+  canPay?: boolean;
   /** The workshop's standard VAT rate ("5.00"), the default for a new part. */
   defaultVat: string;
 }
@@ -108,14 +112,26 @@ export async function getPartOption(user: AuthenticatedUser, partId: string): Pr
  * The picker's catalogue for an invoice or quotation: empty for someone who
  * may not see the inventory (they type the line as before).
  */
-export async function getPartCatalog(user: AuthenticatedUser): Promise<PartCatalog> {
-  if (!hasPermission(user, 'inventory.view')) {
+export async function getPartCatalog(
+  user: AuthenticatedUser,
+  /** An invoice: whoever may invoice sees the parts, since every Parts line must name one. */
+  options: { forSale?: boolean } = {},
+): Promise<PartCatalog> {
+  const sees =
+    hasPermission(user, 'inventory.view') ||
+    (options.forSale === true && hasPermission(user, 'invoice.create'));
+  if (!sees) {
     return { parts: [], suppliers: [], canCreate: false, defaultVat: '' };
   }
   const canCreate = hasPermission(user, 'inventory.create');
+  const canBuy =
+    options.forSale === true &&
+    hasPermission(user, 'purchase.create') &&
+    hasPermission(user, 'purchase.approve');
+  const canPay = canBuy && hasPermission(user, 'supplier_payment.create');
   const [parts, suppliers, defaultVat] = await Promise.all([
     loadPartOptions(user),
-    canCreate
+    canCreate || canBuy
       ? prisma.supplier.findMany({
           where: { organizationId: user.organizationId, isActive: true },
           orderBy: { name: 'asc' },
@@ -124,5 +140,5 @@ export async function getPartCatalog(user: AuthenticatedUser): Promise<PartCatal
       : Promise.resolve([]),
     resolveDefaultVatRate(user.organizationId),
   ]);
-  return { parts, suppliers, canCreate, defaultVat };
+  return { parts, suppliers, canCreate, canBuy, canPay, defaultVat };
 }

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { ClipboardList, ListTodo, Plus, UserRoundX } from 'lucide-react';
 import { requireUser } from '@/lib/auth/authorize';
-import { getMyDay } from '@/lib/hr/self-attendance';
+import { getMyDay, SELF_CHECK_IN } from '@/lib/hr/self-attendance';
 import { listMyTasks } from '@/lib/team/tasks';
 import { localDateString } from '@/lib/format';
 import { prisma } from '@/lib/prisma';
@@ -16,8 +16,8 @@ import { DayNav } from '@/components/team/day-nav';
 export const dynamic = 'force-dynamic';
 
 /*
- * The employee's own screen, made for a phone: check in, see the day's
- * to-dos (with anything left from earlier days above them), tick them off,
+ * The employee's own screen, made for a phone: check in (when SELF_CHECK_IN
+ * is on), see the day's to-dos (with anything left from earlier days above them), tick them off,
  * add their own, and see the job cards they are on.
  */
 export default async function MyWorkPage({
@@ -83,7 +83,7 @@ export default async function MyWorkPage({
         }
       />
 
-      {tasks.view === 'list' ? (
+      {SELF_CHECK_IN && tasks.view === 'list' ? (
         <CheckInCard
           firstName={day.employee.firstName}
           day={{

@@ -91,6 +91,8 @@ export interface MovementInput {
   unitCost?: string | null;
   purchaseItemId?: string | null;
   partUsageId?: string | null;
+  /** SALE: the invoice whose part lines moved it (lib/inventory/invoice-stock.ts). */
+  invoiceId?: string | null;
   reversalOfTransactionId?: string | null;
   performedByUserId: string;
   note: string;
@@ -128,6 +130,7 @@ export async function postMovement(tx: Prisma.TransactionClient, input: Movement
       unitCost: input.unitCost ?? null,
       purchaseItemId: input.purchaseItemId ?? null,
       partUsageId: input.partUsageId ?? null,
+      invoiceId: input.invoiceId ?? null,
       reversalOfTransactionId: input.reversalOfTransactionId ?? null,
       performedByUserId: input.performedByUserId,
       note: input.note,

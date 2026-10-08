@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { NumberInput, type NumberKind } from '@/components/forms/number-input';
 import { NativeSelect } from '@/components/forms/fields';
 import { Package, Plus, Trash2, Wrench } from 'lucide-react';
@@ -24,7 +24,13 @@ import { rateFor, VAT_TREATMENTS, type VatTreatment } from '@/lib/vat-treatment'
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
 import { cn } from '@/lib/utils';
 import type { PartCatalog, PartOption } from '@/lib/inventory/part-options';
-import { PartCatalogProvider, PartPicker } from '@/components/inventory/part-picker';
+import {
+  PartCatalogProvider,
+  PartPicker,
+  usePartCatalog,
+} from '@/components/inventory/part-picker';
+import { BuyPartDialog } from '@/components/inventory/buy-part-dialog';
+import type { BoughtPart } from '@/app/(app)/inventory/actions';
 
 /*
  * Typing the lines of a quotation or an invoice, laid out like the
@@ -64,6 +70,8 @@ export function newEditableLine(
     discountType: 'PERCENT',
     discount: '',
     accountId: '',
+    partId: '',
+    unitCost: '',
   };
 }
 
@@ -83,6 +91,8 @@ export function linesPayload(lines: EditableLine[]) {
         discountType,
         discount,
         accountId,
+        partId,
+        unitCost,
       }) => ({
         ...(sourceId ? { sourceId } : {}),
         itemType,
@@ -94,6 +104,7 @@ export function linesPayload(lines: EditableLine[]) {
         discountType,
         discount,
         accountId,
+        ...(itemType === 'PART' ? { partId, unitCost } : {}),
       }),
     );
 }
@@ -170,6 +181,9 @@ export function DocumentLinesEditor({
   rounding,
   onRoundingChange,
   catalog,
+  requireParts = false,
+  heldByDocument,
+  onPartAdded,
 }: {
   lines: EditableLine[];
   onChange: (lines: EditableLine[]) => void;
@@ -195,6 +209,16 @@ export function DocumentLinesEditor({
    * stock as it is typed, and picking one fills its name and selling price.
    */
   catalog?: PartCatalog;
+  /**
+   * Invoices: every Parts line must name a part from the list, and have it
+   * in stock — each shows its part, cost and stock, and a part not in stock
+   * (or not in the list) is recorded as bought for the job right there.
+   */
+  requireParts?: boolean;
+  /** Editing an issued invoice: what it already took out of stock, per part (thousandths). */
+  heldByDocument?: Record<string, number>;
+  /** A part added or bought from a line — for the parent's own check of the lines. */
+  onPartAdded?: (part: PartOption) => void;
 }) {
   const { priced, totals, vatLabel, billError } = useLineTotals(lines, defaultVatRate, bill);
   const billOff = toFils(totals.discountAmount) > 0;
@@ -217,9 +241,47 @@ export function DocumentLinesEditor({
   const update = (key: string, patch: Partial<EditableLine>) =>
     onChange(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
   const remove = (key: string) => onChange(lines.filter((line) => line.key !== key));
-  /** A part picked for a line: its name, and its selling price when it has one. */
+  /** A part picked for a line: its name, its selling price when it has one, and its last cost. */
   const pick = (line: EditableLine, part: PartOption) =>
-    update(line.key, { description: part.name, unitPrice: part.price || line.unitPrice });
+    update(line.key, {
+      description: part.name,
+      unitPrice: part.price || line.unitPrice,
+      partId: part.id,
+      unitCost: part.cost,
+    });
+  /** Typing the description: a line cleared lets go of its part. */
+  const describe = (line: EditableLine, value: string) =>
+    update(
+      line.key,
+      value.trim() ? { description: value } : { description: value, partId: '', unitCost: '' },
+    );
+  /** The "bought for this job" form open for a line: its part, or a new one by name. */
+  const [buying, setBuying] = useState<{
+    key: string;
+    part: PartOption | null;
+    name: string;
+    quantity: string;
+    price: string;
+  } | null>(null);
+  const buy = (line: EditableLine, part: PartOption | null, quantity: string) =>
+    setBuying({ key: line.key, part, name: line.description, quantity, price: line.unitPrice });
+  const bought = (result: BoughtPart) => {
+    if (!buying) return;
+    const line = lines.find((entry) => entry.key === buying.key);
+    setBuying(null);
+    if (!line) return;
+    update(line.key, {
+      description: line.partId === result.part.id ? line.description : result.part.name,
+      unitPrice: line.unitPrice || result.part.price,
+      partId: result.part.id,
+      unitCost: result.unitCost,
+    });
+  };
+  const addNew = (line: EditableLine) =>
+    requireParts && catalog?.canBuy
+      ? (typed: string) =>
+          setBuying({ key: line.key, part: null, name: typed, quantity: line.quantity, price: line.unitPrice })
+      : undefined;
   const picks = (line: EditableLine) => Boolean(catalog) && line.itemType === 'PART';
   const add = (itemType: LineType) => {
     const line = newEditableLine(
@@ -290,12 +352,23 @@ export function DocumentLinesEditor({
                   <PartPicker
                     aria-label={`Line ${n} description`}
                     value={line.description}
-                    onValueChange={(value) => update(line.key, { description: value })}
+                    onValueChange={(value) => describe(line, value)}
                     onPick={(part) => pick(line, part)}
+                    onAddNew={addNew(line)}
                     placeholder="Type to find a part in stock"
                     className="h-12 text-base"
                   />
                 </label>
+              ) : null}
+              {picks(line) ? (
+                <PartLineInfo
+                  line={line}
+                  lines={lines}
+                  required={requireParts}
+                  held={heldByDocument}
+                  onCost={(unitCost) => update(line.key, { unitCost })}
+                  onBuy={(part, quantity) => buy(line, part, quantity)}
+                />
               ) : (
                 <LabelledInput
                   label="Description"
@@ -410,13 +483,24 @@ export function DocumentLinesEditor({
                   </td>
                   <td className="px-2 py-2">
                     {picks(line) ? (
-                      <PartPicker
-                        aria-label={`Line ${n} description`}
-                        value={line.description}
-                        onValueChange={(value) => update(line.key, { description: value })}
-                        onPick={(part) => pick(line, part)}
-                        placeholder="Type to find a part in stock"
-                      />
+                      <div className="flex flex-col gap-1.5">
+                        <PartPicker
+                          aria-label={`Line ${n} description`}
+                          value={line.description}
+                          onValueChange={(value) => describe(line, value)}
+                          onPick={(part) => pick(line, part)}
+                          onAddNew={addNew(line)}
+                          placeholder="Type to find a part in stock"
+                        />
+                        <PartLineInfo
+                          line={line}
+                          lines={lines}
+                          required={requireParts}
+                          held={heldByDocument}
+                          onCost={(unitCost) => update(line.key, { unitCost })}
+                          onBuy={(part, quantity) => buy(line, part, quantity)}
+                        />
+                      </div>
                     ) : (
                       <Input
                         aria-label={`Line ${n} description`}
@@ -574,7 +658,187 @@ export function DocumentLinesEditor({
       </dl>
     </div>
   );
-  return catalog ? <PartCatalogProvider catalog={catalog}>{editor}</PartCatalogProvider> : editor;
+  return catalog ? (
+    <PartCatalogProvider catalog={catalog} onAdd={onPartAdded}>
+      {editor}
+      {buying ? (
+        <BuyPartDialog
+          part={buying.part}
+          name={buying.name}
+          quantity={buying.quantity}
+          sellingPrice={buying.price}
+          onClose={() => setBuying(null)}
+          onDone={bought}
+          onUseExisting={(part) => {
+            const line = lines.find((entry) => entry.key === buying.key);
+            setBuying(null);
+            if (line) pick(line, part);
+          }}
+        />
+      ) : null}
+    </PartCatalogProvider>
+  ) : (
+    editor
+  );
+}
+
+/**
+ * The catalogue's parts as the page knows them now — those it loaded with,
+ * and any added or bought from a line since (pass `add` to the editor's
+ * onPartAdded).
+ */
+export function useCatalogParts(catalog: PartCatalog | undefined) {
+  const [added, setAdded] = useState<PartOption[]>([]);
+  const add = useCallback(
+    (part: PartOption) => setAdded((current) => [...current.filter((p) => p.id !== part.id), part]),
+    [],
+  );
+  const parts = useMemo(() => {
+    const ids = new Set(added.map((part) => part.id));
+    return [...(catalog?.parts ?? []).filter((part) => !ids.has(part.id)), ...added];
+  }, [catalog, added]);
+  return { parts, add };
+}
+
+/** "2 lines need a part from the list" / "1 part is short of stock", or null. */
+export function partIssueMessage(issues: { unlinked: number; short: number }) {
+  if (issues.unlinked) {
+    return `${issues.unlinked} Parts line${issues.unlinked === 1 ? ' needs' : 's need'} a part from the list — pick it, or add it as bought for this job.`;
+  }
+  if (issues.short) {
+    return `${issues.short} part${issues.short === 1 ? ' is' : 's are'} short of stock — record it as bought for this job on the line.`;
+  }
+  return null;
+}
+
+/** Thousandths from a typed quantity (0 while it doesn't parse). */
+function quantityMilli(value: string) {
+  try {
+    return signedToMilli(value || '0');
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * What a document's Parts lines still need before it can be issued: lines
+ * naming no part, and parts with less in stock than the lines sell. The
+ * server checks the same again; this only keeps the button honest.
+ */
+export function partLineIssues(
+  lines: EditableLine[],
+  parts: PartOption[],
+  held: Record<string, number> = {},
+) {
+  const byId = new Map(parts.map((part) => [part.id, part]));
+  const used = lines.filter((line) => line.itemType === 'PART' && !isBlankLine(line));
+  const unlinked = used.filter((line) => !line.partId && !line.sourceId).length;
+  const need = new Map<string, number>();
+  for (const line of used) {
+    if (line.partId) need.set(line.partId, (need.get(line.partId) ?? 0) + quantityMilli(line.quantity));
+  }
+  let short = 0;
+  for (const [partId, milli] of need) {
+    const part = byId.get(partId);
+    if (part && signedToMilli(part.stock) + (held[partId] ?? 0) < milli) short += 1;
+  }
+  return { unlinked, short };
+}
+
+/**
+ * Under a Parts line: the part it sells — code, usual supplier, what it
+ * cost (editable: the invoice writer decides the cost) and the stock — or,
+ * with no part picked, why one is needed. When the stock is short, the part
+ * is recorded as bought for the job from here.
+ */
+function PartLineInfo({
+  line,
+  lines,
+  required,
+  held,
+  onCost,
+  onBuy,
+}: {
+  line: EditableLine;
+  lines: EditableLine[];
+  required: boolean;
+  held?: Record<string, number>;
+  onCost: (unitCost: string) => void;
+  onBuy: (part: PartOption | null, quantity: string) => void;
+}) {
+  const catalog = usePartCatalog();
+  if (isBlankLine(line)) return null;
+  const part = line.partId ? catalog?.parts.find((option) => option.id === line.partId) : undefined;
+
+  if (!line.partId) {
+    // Kept from an invoice issued before parts were tied to stock, or quoted.
+    if (!required || line.sourceId) return null;
+    return (
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-warning">
+        <span>Not from the parts list — pick it above</span>
+        {catalog?.canBuy ? (
+          <button
+            type="button"
+            onClick={() => onBuy(null, line.quantity)}
+            className="font-medium text-primary hover:underline"
+          >
+            or add it as bought for this job
+          </button>
+        ) : null}
+      </p>
+    );
+  }
+  if (!part) {
+    return <p className="text-xs text-muted-foreground">Linked to a part from the list.</p>;
+  }
+
+  // Every line of this document selling the same part draws on the same stock.
+  const need = lines
+    .filter((other) => other.itemType === 'PART' && other.partId === part.id)
+    .reduce((sum, other) => sum + quantityMilli(other.quantity), 0);
+  const available = signedToMilli(part.stock) + (held?.[part.id] ?? 0);
+  const shortBy = need - available;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+      <span className="min-w-0 truncate">
+        <span className="font-mono">{part.sku}</span>
+        {part.supplierName ? ` · ${part.supplierName}` : ''}
+      </span>
+      {/* Invoices only: the cost of what is sold, decided here. */}
+      {required ? (
+        <label className="flex items-center gap-1.5">
+          <span>Cost</span>
+          <NumberInput
+            kind="money"
+            aria-label={`Cost of ${part.name}`}
+            value={line.unitCost}
+            placeholder={part.cost || '0.00'}
+            onChange={(event) => onCost(event.target.value)}
+            className="h-7 w-20 text-right text-xs tabular-nums"
+          />
+        </label>
+      ) : null}
+      {shortBy > 0 ? (
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium text-destructive">
+            {available > 0 ? `Only ${formatMilli(available)} in stock` : 'Not in stock'}
+          </span>
+          {catalog?.canBuy ? (
+            <button
+              type="button"
+              onClick={() => onBuy(part, formatMilli(shortBy))}
+              className="font-medium text-primary hover:underline"
+            >
+              Bought for this job
+            </button>
+          ) : null}
+        </span>
+      ) : (
+        <span className="text-success">{formatMilli(available)} in stock</span>
+      )}
+    </div>
+  );
 }
 
 /** Parts / Labour, as a two-button switch — one tap, no dropdown. */

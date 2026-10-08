@@ -17,6 +17,7 @@ import {
   priceDocument,
   totalsData,
 } from '@/lib/billing/document-lines';
+import { resolvePartLines } from '@/lib/billing/part-lines';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { endOfLocalDay, localDateString, parseCalendarDate } from '@/lib/format';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
@@ -340,10 +341,15 @@ export async function saveEstimateDraft(
       );
     }
 
+    // A part picked from the catalogue stays with the line, for the invoice.
+    const linked = await resolvePartLines(tx, user.organizationId, lines, {
+      required: () => false,
+      keep: new Set(estimate.items.flatMap((item) => (item.partId ? [item.partId] : []))),
+    });
     await tx.estimateItem.deleteMany({
       where: { estimateId: estimate.id, organizationId: user.organizationId },
     });
-    for (const line of lines) {
+    for (const line of linked) {
       await tx.estimateItem.create({
         data: {
           organizationId: user.organizationId,
@@ -352,6 +358,7 @@ export async function saveEstimateDraft(
           description: line.description,
           vatTreatment: line.vatTreatment,
           taxCodeId: line.taxCodeId,
+          partId: line.partId ?? null,
           ...lineData(line.amounts),
         },
       });

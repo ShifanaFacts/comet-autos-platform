@@ -30,7 +30,9 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  *   Cr VAT payable                    the VAT
  *   Cr / Dr Rounding adjustments      the round-off, outside VAT
  *   Dr Cost of parts sold             parts fitted on its job, at cost,
- *   Cr Parts inventory                after any taken back
+ *   Cr Parts inventory                after any taken back — and each PART
+ *                                     line sold from stock (part_id), at the
+ *                                     cost decided on the line
  *
  * PAYMENT from a customer             Dr the cash, bank or card account
  *                                     Cr Accounts receivable
@@ -52,6 +54,11 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  * STOCK MOVEMENT
  *   delivery from a supplier          Dr Parts inventory, Dr VAT recoverable
  *   (and returns to one, negative)    Cr Accounts payable
+ *     — tax invoice still to come      the VAT to Input VAT awaiting tax
+ *                                     invoice instead (claimable only once
+ *                                     the bill is in hand)
+ *     — supplier gives no tax invoice  the VAT stays in the parts' cost
+ *   a part sold on an invoice line    nothing here — costed on that invoice
  *   opening stock                     Dr Parts inventory
  *                                     Cr Opening balance equity
  *   adjustment (count, damage…)       Dr/Cr Parts inventory
@@ -63,6 +70,13 @@ import { METHOD_ACCOUNT_ROLE, type RoleAccounts } from '@/lib/accounting/chart';
  * the whole purchase is received, on the day it was)
  *   round-off down (−)                Dr Accounts payable / Cr Rounding adjustments
  *   round-off up (+)                  Dr Rounding adjustments / Cr Accounts payable
+ *
+ * PURCHASE BILL (the supplier's tax invoice, matched after the parts; on
+ * the day it was received)
+ *   bill received                     Dr Input VAT recoverable
+ *                                     Cr Input VAT awaiting tax invoice
+ *   no tax invoice after all          Dr Cost of parts sold
+ *                                     Cr Input VAT awaiting tax invoice
  *
  * SUPPLIER PAYMENT                    Dr Accounts payable
  *                                     Cr the cash or bank account
@@ -239,7 +253,17 @@ const postInvoice: Poster = async (tx, organizationId, invoiceId, accounts) => {
       taxAmount: true,
       totalAmount: true,
       roundingAdjustment: true,
-      items: { select: { itemType: true, accountId: true, lineTotal: true } },
+      items: {
+        select: {
+          itemType: true,
+          accountId: true,
+          lineTotal: true,
+          quantity: true,
+          partId: true,
+          unitCost: true,
+          partUsageId: true,
+        },
+      },
       customer: { select: { name: true } },
     },
   });
@@ -292,6 +316,17 @@ const postInvoice: Poster = async (tx, organizationId, invoiceId, accounts) => {
     );
     lines.debit(accounts.COST_OF_PARTS, cost).credit(accounts.INVENTORY, cost);
   }
+
+  // Parts sold from stock on its own lines (not through a job's repair
+  // records), at the cost decided on each line — the same quantity the
+  // line's SALE movement took out of stock.
+  const sold = invoice.items
+    .filter((item) => item.partId && !item.partUsageId && item.unitCost)
+    .reduce(
+      (sum, item) => sum + multiplyQuantity(item.quantity.toString(), item.unitCost!.toString()),
+      0,
+    );
+  lines.debit(accounts.COST_OF_PARTS, sold).credit(accounts.INVENTORY, sold);
 
   return {
     date: invoice.issueDate,
@@ -470,7 +505,14 @@ const postStockMovement: Poster = async (tx, organizationId, movementId, account
           taxRate: true,
           taxAmount: true,
           netAmount: true,
-          purchase: { select: { purchaseNumber: true, supplier: { select: { name: true } } } },
+          purchase: {
+            select: {
+              purchaseNumber: true,
+              billStatus: true,
+              billMatchedByUserId: true,
+              supplier: { select: { name: true } },
+            },
+          },
         },
       },
     },
@@ -513,14 +555,15 @@ const postStockMovement: Poster = async (tx, organizationId, movementId, account
       unitCost: movement.unitCost.toString(),
       taxRate: rate,
     });
-    const recoverable = await isVatRegistered(tx, organizationId);
     const purchase = movement.purchaseItem?.purchase;
+    const vatTo = receiptVatAccount(purchase, await isVatRegistered(tx, organizationId));
     return {
       ...base,
-      description: `${sign > 0 ? 'Stock received' : 'Stock returned'}: ${what}${purchase ? ` — ${purchase.purchaseNumber}, ${purchase.supplier.name}` : ''}`,
+      description: `${sign > 0 ? 'Stock received' : 'Stock returned'}: ${what}${purchase ? ` — ${purchase.purchaseNumber}, ${purchase.supplier.name}` : ''}${vatTo === 'PENDING' && vat !== 0 ? ' (tax invoice awaited)' : ''}`,
       lines: new Lines()
-        .debit(accounts.INVENTORY, recoverable ? net : net + vat)
-        .debit(accounts.VAT_INPUT, recoverable ? vat : 0)
+        .debit(accounts.INVENTORY, vatTo === 'COST' ? net + vat : net)
+        .debit(accounts.VAT_INPUT, vatTo === 'RECOVERABLE' ? vat : 0)
+        .debit(accounts.VAT_INPUT_PENDING, vatTo === 'PENDING' ? vat : 0)
         .credit(accounts.ACCOUNTS_PAYABLE, net + vat)
         .build(),
     };
@@ -548,6 +591,103 @@ const postStockMovement: Poster = async (tx, organizationId, movementId, account
   // Fitted to or taken back from a job, moved between branches: costed on
   // the job's invoice, or no change in value at all.
   return null;
+};
+
+/**
+ * Where a delivery's input VAT is booked:
+ *
+ *   RECOVERABLE  the tax invoice was in hand when the purchase was recorded;
+ *   PENDING      the tax invoice is still to come, or came later and is moved
+ *                on its own entry (PURCHASE BILL) — so this entry never has to
+ *                change when the bill arrives;
+ *   COST         not VAT-registered, or the supplier gave no tax invoice from
+ *                the start: the VAT is part of what the parts cost.
+ *
+ * "Came later" is told by billMatchedByUserId: set when someone matches the
+ * bill after the parts were received (lib/inventory/bills.ts).
+ */
+export function receiptVatAccount(
+  purchase: { billStatus: string; billMatchedByUserId: string | null } | null | undefined,
+  vatRegistered: boolean,
+): 'RECOVERABLE' | 'PENDING' | 'COST' {
+  if (!vatRegistered) return 'COST';
+  if (!purchase) return 'RECOVERABLE';
+  if (purchase.billStatus === 'PENDING' || purchase.billMatchedByUserId) return 'PENDING';
+  if (purchase.billStatus === 'NO_TAX_INVOICE') return 'COST';
+  return 'RECOVERABLE';
+}
+
+/** The input VAT of a purchase's deliveries (less returns), in fils, priced as each was booked. */
+async function purchaseDeliveredVat(tx: Tx, organizationId: string, purchaseId: string) {
+  const movements = await tx.inventoryTransaction.findMany({
+    where: {
+      organizationId,
+      transactionType: { in: ['PURCHASE_RECEIPT', 'RETURN_TO_SUPPLIER'] },
+      purchaseItem: { purchaseId },
+    },
+    select: {
+      id: true,
+      quantity: true,
+      unitCost: true,
+      purchaseItem: {
+        select: { id: true, quantityOrdered: true, unitCost: true, taxRate: true, taxAmount: true, netAmount: true },
+      },
+    },
+  });
+  const defaultRate = await resolveDefaultVatRate(organizationId, tx);
+  let vat = 0;
+  for (const movement of movements) {
+    if (!movement.unitCost) continue;
+    const line = movement.purchaseItem;
+    const before =
+      line?.netAmount !== null && line?.netAmount !== undefined
+        ? ((await receivedBefore(tx, organizationId, [line.id])).get(movement.id) ?? 0)
+        : 0;
+    vat += movementValue({
+      line,
+      movementMilli: signedToMilli(movement.quantity),
+      receivedBeforeMilli: before,
+      unitCost: movement.unitCost.toString(),
+      taxRate: line?.taxRate?.toString() ?? defaultRate,
+    }).taxFils;
+  }
+  return vat;
+}
+
+/**
+ * The supplier's tax invoice, matched after the parts arrived: the VAT held
+ * as "awaiting tax invoice" is claimed (or, with no tax invoice after all,
+ * becomes part of the cost of sales), on the day the bill was received.
+ */
+const postPurchaseBill: Poster = async (tx, organizationId, purchaseId, accounts) => {
+  const purchase = await tx.purchase.findFirst({
+    where: { id: purchaseId, organizationId },
+    select: {
+      purchaseNumber: true,
+      supplierInvoiceNumber: true,
+      branchId: true,
+      billStatus: true,
+      billReceivedOn: true,
+      billMatchedByUserId: true,
+      supplier: { select: { name: true } },
+    },
+  });
+  if (!purchase || !purchase.billMatchedByUserId || purchase.billStatus === 'PENDING') return null;
+  if (!purchase.billReceivedOn || !(await isVatRegistered(tx, organizationId))) return null;
+  const vat = await purchaseDeliveredVat(tx, organizationId, purchaseId);
+  if (vat === 0) return null;
+  const received = purchase.billStatus === 'RECEIVED';
+  return {
+    date: purchase.billReceivedOn,
+    branchId: purchase.branchId,
+    description: received
+      ? `Tax invoice ${purchase.supplierInvoiceNumber ?? ''} received for ${purchase.purchaseNumber} — ${purchase.supplier.name}: VAT now claimable`.replace('  ', ' ')
+      : `No tax invoice for ${purchase.purchaseNumber} — ${purchase.supplier.name}: VAT becomes cost`,
+    lines: new Lines()
+      .debit(received ? accounts.VAT_INPUT : accounts.COST_OF_PARTS, vat)
+      .credit(accounts.VAT_INPUT_PENDING, vat)
+      .build(),
+  };
 };
 
 // ─── Supplier payments ──────────────────────────────────────────────────────
@@ -1081,4 +1221,5 @@ export const POSTING_RULES: Record<
   INVOICE_DISCOUNT: postInvoiceDiscount,
   PURCHASE_ROUNDING: postPurchaseRounding,
   OWNER_MONEY: postOwnerMoney,
+  PURCHASE_BILL: postPurchaseBill,
 };

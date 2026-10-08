@@ -6,18 +6,29 @@ import { formatCalendarDate, formatDateTime, formatMoney, localDateString } from
 import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { StatusPill } from '@/components/shared/status-pill';
 import { MoneyTransferForm, VoidTransferButton } from '@/components/finance/money-transfer-form';
 
 export const metadata = { title: 'Money transfers' };
 
 /** Moving money between the workshop's own accounts, and every move made. */
-export default async function MoneyTransfersPage() {
+export default async function MoneyTransfersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const user = await requireUser();
+  const params = await searchParams;
   let list;
+  let info;
   let accounts;
   try {
-    [list, accounts] = await Promise.all([listMoneyTransfers(user), getTransferAccounts(user)]);
+    [{ result: list, info }, accounts] = await Promise.all([
+      loadPage(pageFrom(params.page), (skip, take) => listMoneyTransfers(user, take, skip)),
+      getTransferAccounts(user),
+    ]);
   } catch (error) {
     if (error instanceof AuthError) return <AccessDenied what="money transfers" />;
     throw error;
@@ -121,6 +132,12 @@ export default async function MoneyTransfersPage() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              info={info}
+              basePath="/finance/money/transfers"
+              params={params}
+              noun="transfers"
+            />
           </Panel>
         )}
       </Section>

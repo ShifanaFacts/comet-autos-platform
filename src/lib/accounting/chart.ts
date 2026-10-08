@@ -52,6 +52,14 @@ export const SYSTEM_ACCOUNTS: SystemAccount[] = [
   { role: 'ACCOUNTS_RECEIVABLE', code: '1100', name: 'Trade receivables', type: 'ASSET' },
   { role: 'INVENTORY', code: '1200', name: 'Inventory — spare parts', type: 'ASSET' },
   { role: 'VAT_INPUT', code: '1300', name: 'Input VAT recoverable', type: 'ASSET' },
+  // VAT on parts received before the supplier's tax invoice: claimable only
+  // once the bill is in hand, so it waits here until the purchase is matched.
+  {
+    role: 'VAT_INPUT_PENDING',
+    code: '1305',
+    name: 'Input VAT — awaiting tax invoice',
+    type: 'ASSET',
+  },
   { role: 'ACCOUNTS_PAYABLE', code: '2000', name: 'Trade payables', type: 'LIABILITY' },
   {
     role: 'CUSTOMER_ADVANCES',

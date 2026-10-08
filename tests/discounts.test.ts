@@ -51,7 +51,12 @@ const inDays = (days: number) => localDateString(new Date(Date.now() + days * 86
 let a: TestOrg;
 
 before(async () => {
-  a = await createTestOrg('Discounts');
+  a = await createTestOrg('Discounts', [
+    { sku: 'DS-FILTER', name: 'Oil filter', cost: '30', price: '50', stock: '10' },
+    { sku: 'DS-BULB', name: 'Bulb', cost: '8', price: '15', stock: '10' },
+    { sku: 'DS-WIPER', name: 'Wiper', cost: '25', price: '40', stock: '10' },
+    { sku: 'DS-PADS', name: 'Pads', cost: '90', price: '150', stock: '10' },
+  ]);
 });
 
 after(async () => {
@@ -88,7 +93,7 @@ async function customerWithVehicle(suffix: string) {
  *   VAT 5% on 342.00 and 76.00                      20.90 (17.10 + 3.80)
  *   Total                                          438.90
  */
-const LINES = [
+const lines = () => [
   {
     itemType: 'LABOUR',
     description: 'Service',
@@ -104,6 +109,7 @@ const LINES = [
     unitPrice: '50',
     discountType: 'AMOUNT',
     discount: '20',
+    partId: a.parts['DS-FILTER'].id,
   },
 ];
 
@@ -114,7 +120,7 @@ describe('an invoice typed on screen', () => {
     const { invoiceId } = await createDirectInvoice(a.owner, {
       customerId: customer.id,
       vehicleId: vehicle.id,
-      items: LINES,
+      items: lines(),
       discountType: 'PERCENT',
       discount: '5',
       dueDate,
@@ -178,7 +184,15 @@ describe('an invoice typed on screen', () => {
     const { customer } = await customerWithVehicle('11');
     const { invoiceId } = await createDirectInvoice(a.owner, {
       customerId: customer.id,
-      items: [{ itemType: 'PART', description: 'Bulb', quantity: '2', unitPrice: '15' }],
+      items: [
+        {
+          itemType: 'PART',
+          description: 'Bulb',
+          quantity: '2',
+          unitPrice: '15',
+          partId: a.parts['DS-BULB'].id,
+        },
+      ],
     });
     const invoice = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
     assert.equal(invoice.discountType, null);
@@ -196,7 +210,15 @@ describe('an invoice typed on screen', () => {
     const { customer } = await customerWithVehicle('12');
     const base = {
       customerId: customer.id,
-      items: [{ itemType: 'PART', description: 'Wiper', quantity: '1', unitPrice: '40' }],
+      items: [
+        {
+          itemType: 'PART',
+          description: 'Wiper',
+          quantity: '1',
+          unitPrice: '40',
+          partId: a.parts['DS-WIPER'].id,
+        },
+      ],
     };
     await expectDomainError(
       createDirectInvoice(a.owner, { ...base, dueDate: inDays(-1) }),
@@ -221,7 +243,7 @@ describe('correcting an invoice', () => {
     const { customer } = await customerWithVehicle('20');
     const { invoiceId } = await createDirectInvoice(a.owner, {
       customerId: customer.id,
-      items: LINES,
+      items: lines(),
       discountType: 'PERCENT',
       discount: '5',
     });
@@ -229,7 +251,7 @@ describe('correcting an invoice', () => {
     // No bill discount now, AED 50 off the service, and 15 days to pay.
     const dueDate = inDays(15);
     await updateInvoice(a.owner, invoiceId, {
-      items: [{ ...LINES[0], discountType: 'AMOUNT', discount: '50' }, LINES[1]],
+      items: [{ ...lines()[0], discountType: 'AMOUNT', discount: '50' }, lines()[1]],
       discountType: 'PERCENT',
       discount: '',
       dueDate,
@@ -292,6 +314,8 @@ describe('a quotation', () => {
           unitPrice: '150',
           discountType: 'AMOUNT',
           discount: '15',
+          // Named on the quotation, so the invoice takes it out of stock.
+          partId: a.parts['DS-PADS'].id,
         },
       ],
       discountType: 'AMOUNT',

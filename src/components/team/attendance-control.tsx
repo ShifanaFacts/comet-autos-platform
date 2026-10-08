@@ -16,7 +16,7 @@ import { CONTROL } from '@/components/forms/control';
 import { formatTime } from '@/lib/format';
 import { reportLeftAtAction, selfClockAction } from '@/app/(app)/my-work/actions';
 import { cn } from '@/lib/utils';
-import { announce } from '@/lib/notifications/sound';
+import { announce, cancelAnnouncement } from '@/lib/notifications/sound';
 
 /*
  * Attendance, wherever the employee is in the app.
@@ -210,6 +210,7 @@ export function AttendanceControl({ status }: { status: AttendanceStatus }) {
         <CheckInDialog
           status={status}
           onClose={() => {
+            cancelAnnouncement('CHECK_IN_REMINDER');
             write(LATER_KEY, status.date);
             setOpen(null);
           }}
@@ -219,6 +220,7 @@ export function AttendanceControl({ status }: { status: AttendanceStatus }) {
         <CheckOutDialog
           status={status}
           onClose={(snooze) => {
+            cancelAnnouncement('CHECK_OUT_REMINDER');
             if (snooze) write(SNOOZE_KEY, String(Date.now() + SNOOZE_MS));
             setOpen(null);
           }}
@@ -236,6 +238,8 @@ export function CheckInDialog({ status, onClose }: { status: AttendanceStatus; o
 
   async function checkIn() {
     if (needsLeftAt && !leftAt) return;
+    // Answering the popup: its reminder, if still waiting for a first tap, would only be late.
+    cancelAnnouncement('CHECK_IN_REMINDER');
     if (await clock('IN', needsLeftAt ? leftAt : undefined)) onClose();
   }
 
@@ -366,7 +370,10 @@ function CheckOutDialog({
             </div>
           ) : null}
           <div className="flex flex-col gap-2 sm:flex-row-reverse">
-            <Button className="h-12 text-base sm:h-11 sm:text-sm" onClick={async () => (await clock('OUT')) && onClose(false)} disabled={busy}>
+            <Button className="h-12 text-base sm:h-11 sm:text-sm" onClick={async () => {
+                cancelAnnouncement('CHECK_OUT_REMINDER');
+                if (await clock('OUT')) onClose(false);
+              }} disabled={busy}>
               {busy ? <Loader2 className="animate-spin" /> : <LogOut />}
               {state === 'locating' ? 'Finding your location…' : state === 'sending' ? 'Saving…' : 'Check out'}
             </Button>

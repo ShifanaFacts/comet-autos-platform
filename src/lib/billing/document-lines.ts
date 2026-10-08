@@ -55,6 +55,17 @@ export const lineSchema = z.object({
   ...discountFields,
   /** The income account it books to; blank for the default of its type. */
   accountId: z.union([z.literal(''), z.uuid()]).optional(),
+  /** Parts lines: the catalogue part sold (lib/billing/part-lines.ts). */
+  partId: z.union([z.literal(''), z.uuid()]).optional(),
+  /** What one of it cost, before VAT; blank for the part's current cost. */
+  unitCost: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || (/^\d+(\.\d{1,2})?$/.test(value) && Number(value) <= 1_000_000),
+      'Enter the cost like 45 or 45.50.',
+    ),
 });
 
 export type TypedLine = z.infer<typeof lineSchema>;
@@ -68,6 +79,10 @@ export interface PricedLine {
   amounts: LineAmounts;
   /** Invoices only: the income account chosen, or null for the default. */
   accountId?: string | null;
+  /** Parts lines: the catalogue part, or null for a line typed without one. */
+  partId?: string | null;
+  /** What one of it cost, as decided on the line ("" or null: the part's current cost). */
+  unitCost?: string | null;
 }
 
 /**
@@ -131,6 +146,8 @@ export function priceDocument(
         vatTreatment,
         taxCodeId: code ? item.taxCodeId! : null,
         accountId: item.accountId || null,
+        partId: item.itemType === 'PART' ? item.partId || null : null,
+        unitCost: item.itemType === 'PART' ? item.unitCost || null : null,
         amounts: calculateLine({
           quantity: item.quantity,
           unitPrice: item.unitPrice,

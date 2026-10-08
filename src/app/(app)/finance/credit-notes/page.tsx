@@ -4,9 +4,11 @@ import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { listCreditNotes } from '@/lib/billing/credit-notes';
 import { formatCalendarDate, formatMoney } from '@/lib/format';
-import { filsToString, toFils } from '@/lib/money';
+import { toFils } from '@/lib/money';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { StatusPill } from '@/components/shared/status-pill';
 import { SearchField } from '@/components/shared/search-field';
 import {
@@ -30,7 +32,7 @@ const VIEWS = [
 export default async function CreditNotesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; show?: string }>;
+  searchParams: Promise<{ q?: string; show?: string; page?: string }>;
 }) {
   const user = await requireUser();
   if (
@@ -45,13 +47,25 @@ export default async function CreditNotesPage({
   const params = await searchParams;
   const query = (params.q ?? '').trim();
   const view = VIEWS.some((v) => v.value === params.show) ? (params.show ?? '') : '';
-  const notes = await listCreditNotes(user, {
-    q: query,
-    status: view === 'void' ? 'VOID' : view === 'refund' ? 'REFUND_DUE' : 'ISSUED',
-  });
-  const total = notes.reduce((sum, note) => sum + toFils(note.totalAmount.toString()), 0);
+  const {
+    result: { notes, total, totalAmount },
+    info,
+  } = await loadPage(pageFrom(params.page), (skip, take) =>
+    listCreditNotes(
+      user,
+      {
+        q: query,
+        status: view === 'void' ? 'VOID' : view === 'refund' ? 'REFUND_DUE' : 'ISSUED',
+      },
+      take,
+      skip,
+    ),
+  );
   const href = (show: string) => {
-    const search = new URLSearchParams({ ...(query ? { q: query } : {}), ...(show ? { show } : {}) });
+    const search = new URLSearchParams({
+      ...(query ? { q: query } : {}),
+      ...(show ? { show } : {}),
+    });
     const text = search.toString();
     return `/finance/credit-notes${text ? `?${text}` : ''}`;
   };
@@ -99,9 +113,9 @@ export default async function CreditNotesPage({
         ) : (
           <>
             <p className="text-sm text-muted-foreground">
-              {notes.length} credit note{notes.length === 1 ? '' : 's'} ·{' '}
+              {total} credit note{total === 1 ? '' : 's'} ·{' '}
               <span className="font-semibold text-foreground tabular-nums">
-                {formatMoney(filsToString(total))}
+                {formatMoney(totalAmount)}
               </span>{' '}
               {view === 'void' ? 'withdrawn — none of it counts' : 'credited, VAT included'}
             </p>
@@ -176,6 +190,12 @@ export default async function CreditNotesPage({
                   </TableBody>
                 </Table>
               </div>
+              <Pagination
+                info={info}
+                basePath="/finance/credit-notes"
+                params={params}
+                noun="credit notes"
+              />
             </Panel>
           </>
         )}

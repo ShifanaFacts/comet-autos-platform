@@ -12,6 +12,9 @@ import {
   DocumentLinesEditor,
   billDiscountPayload,
   linesPayload,
+  partIssueMessage,
+  partLineIssues,
+  useCatalogParts,
   useLineTotals,
   withRoundOff,
   type BillDiscount,
@@ -35,6 +38,8 @@ export function EditInvoiceForm({
   taxCodes,
   catalog,
   rounding: initialRounding = '',
+  held = {},
+  partsFitted = false,
 }: {
   invoiceId: string;
   /** The round-off after VAT, as stored ("-0.50"); blank for none. */
@@ -53,6 +58,10 @@ export function EditInvoiceForm({
   taxCodes?: TaxCodeOption[];
   /** The inventory, for picking a part on a Parts line. */
   catalog?: PartCatalog;
+  /** What this invoice already took out of stock, per part (thousandths) — available to it again. */
+  held?: Record<string, number>;
+  /** Its job card's parts were fitted through the repair records: Parts lines need not name one. */
+  partsFitted?: boolean;
 }) {
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(
     (prev, formData) => updateInvoiceAction(invoiceId, prev, formData),
@@ -62,6 +71,11 @@ export function EditInvoiceForm({
   const [bill, setBill] = useState<BillDiscount>(initialBill);
   const [rounding, setRounding] = useState(initialRounding);
   const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate, bill);
+  const catalogParts = useCatalogParts(catalog);
+  const partIssue =
+    catalog && !partsFitted
+      ? partIssueMessage(partLineIssues(lines, catalogParts.parts, held))
+      : null;
   const errors = state.fieldErrors ?? {};
   const payload = JSON.stringify(linesPayload(lines));
   const discount = billDiscountPayload(bill);
@@ -82,9 +96,15 @@ export function EditInvoiceForm({
           incomeAccounts={incomeAccounts}
           taxCodes={taxCodes}
           catalog={catalog}
+          requireParts={!partsFitted}
+          heldByDocument={held}
+          onPartAdded={catalogParts.add}
           rounding={rounding}
           onRoundingChange={setRounding}
         />
+        {partIssue && count > 0 ? (
+          <p className="text-sm font-medium text-warning">{partIssue}</p>
+        ) : null}
         <input type="hidden" name="roundingAdjustment" value={rounding} />
       </section>
 
@@ -125,7 +145,7 @@ export function EditInvoiceForm({
         <SubmitButton
           pending={isPending}
           size="lg"
-          disabled={count === 0 || incomplete}
+          disabled={count === 0 || incomplete || Boolean(partIssue)}
           className="h-12 w-full sm:h-11 sm:w-auto"
           pendingLabel="Saving…"
         >

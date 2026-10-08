@@ -350,6 +350,19 @@ export default async function VatPage({
         </Panel>
       ) : (
         <>
+          {data.awaitingTaxInvoice.purchases > 0 ? (
+            <p className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm sm:px-5">
+              <span>
+                {formatMoney(data.awaitingTaxInvoice.vat)} of input VAT on{' '}
+                {data.awaitingTaxInvoice.purchases} purchase
+                {data.awaitingTaxInvoice.purchases === 1 ? '' : 's'} is not in this return — the
+                shop&apos;s tax invoice hasn&apos;t been matched yet.
+              </span>
+              <Link href="/inventory/purchases/bills" className="font-medium text-primary hover:underline">
+                Bills to match
+              </Link>
+            </p>
+          ) : null}
           <Panel className="grid gap-6 sm:grid-cols-3">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-medium text-muted-foreground">Output VAT</span>

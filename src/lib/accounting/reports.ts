@@ -1,3 +1,4 @@
+import type { Prisma } from '@/generated/prisma/client';
 import type { AccountRole, AccountType, JournalSource } from '@/generated/prisma/enums';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
@@ -293,7 +294,7 @@ export async function sourceLinks(
               ? '/finance/payables'
               : source === 'STOCK_MOVEMENT'
                 ? '/inventory/movements'
-                : source === 'PURCHASE_ROUNDING'
+                : source === 'PURCHASE_ROUNDING' || source === 'PURCHASE_BILL'
                   ? `/inventory/purchases/${id}`
                   : source === 'CREDIT_NOTE' || source === 'CREDIT_NOTE_REFUND'
                     ? `/finance/credit-notes/${id}`
@@ -420,6 +421,8 @@ export async function listJournal(
   user: AuthenticatedUser,
   input: PeriodInput & { source?: string; q?: string } = {},
   limit = 200,
+  /** Rows to skip: the pages before the one shown. */
+  offset = 0,
 ) {
   requirePermission(user, 'accounting.view');
   const period = resolvePeriod(input);
@@ -427,49 +430,56 @@ export async function listJournal(
   const source = (
     ['INVOICE', 'PAYMENT', 'EXPENSE', 'STOCK_MOVEMENT', 'SUPPLIER_PAYMENT', 'MANUAL'] as const
   ).find((value) => value === input.source);
-  const entries = await prisma.journalEntry.findMany({
-    where: {
-      organizationId: user.organizationId,
-      entryDate: { gte: day(period.from), lte: day(period.to) },
-      ...(source ? { sourceType: source } : {}),
-      ...(q
-        ? {
-            OR: [
-              { entryNumber: { contains: q, mode: 'insensitive' } },
-              { description: { contains: q, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
-    },
-    orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
-    take: limit,
-    select: {
-      id: true,
-      entryNumber: true,
-      entryDate: true,
-      description: true,
-      sourceType: true,
-      sourceId: true,
-      reversalOfJournalEntryId: true,
-      reversalOf: { select: { entryNumber: true } },
-      reversals: { select: { entryNumber: true } },
-      createdBy: { select: { fullName: true } },
-      lines: {
-        orderBy: [{ debitAmount: 'desc' }],
-        select: {
-          id: true,
-          debitAmount: true,
-          creditAmount: true,
-          description: true,
-          customer: { select: { name: true } },
-          supplier: { select: { name: true } },
-          chartOfAccount: { select: { id: true, accountCode: true, accountName: true } },
+  const where: Prisma.JournalEntryWhereInput = {
+    organizationId: user.organizationId,
+    entryDate: { gte: day(period.from), lte: day(period.to) },
+    ...(source ? { sourceType: source } : {}),
+    ...(q
+      ? {
+          OR: [
+            { entryNumber: { contains: q, mode: 'insensitive' } },
+            { description: { contains: q, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  };
+  const [entries, total] = await Promise.all([
+    prisma.journalEntry.findMany({
+      where,
+      orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
+      skip: offset,
+      take: limit,
+      select: {
+        id: true,
+        entryNumber: true,
+        entryDate: true,
+        description: true,
+        sourceType: true,
+        sourceId: true,
+        reversalOfJournalEntryId: true,
+        reversalOf: { select: { entryNumber: true } },
+        reversals: { select: { entryNumber: true } },
+        createdBy: { select: { fullName: true } },
+        lines: {
+          orderBy: [{ debitAmount: 'desc' }],
+          select: {
+            id: true,
+            debitAmount: true,
+            creditAmount: true,
+            description: true,
+            customer: { select: { name: true } },
+            supplier: { select: { name: true } },
+            chartOfAccount: { select: { id: true, accountCode: true, accountName: true } },
+          },
         },
       },
-    },
-  });
+    }),
+    prisma.journalEntry.count({ where }),
+  ]);
   const link = await sourceLinks(user.organizationId, entries);
   return {
+    /** Every row the search and filters match, not only the page shown. */
+    total,
     period,
     entries: entries.map((entry) => ({
       ...entry,

@@ -75,7 +75,12 @@ async function jobParty(jobCardId: string) {
 }
 
 before(async () => {
-  a = await createTestOrg('Fix');
+  a = await createTestOrg('Fix', [
+    { sku: 'FX-FILTER', name: 'Oil filter', cost: '12', price: '20', stock: '10' },
+    { sku: 'FX-OIL', name: 'Engine oil 4L', cost: '55', price: '80', stock: '10' },
+    { sku: 'FX-WASHER', name: 'Washer', cost: '1', price: '5', stock: '10' },
+    { sku: 'FX-KIT', name: 'Parts kit', cost: '1800', price: '2477', stock: '5' },
+  ]);
 });
 
 after(async () => {
@@ -120,6 +125,7 @@ describe('invoices', () => {
           quantity: '2',
           unitPrice: '20',
           taxRate: '5',
+          partId: a.parts['FX-FILTER'].id,
         },
         {
           itemType: 'PART',
@@ -127,8 +133,16 @@ describe('invoices', () => {
           quantity: '1',
           unitPrice: '80',
           taxRate: '5',
+          partId: a.parts['FX-OIL'].id,
         },
-        { itemType: 'PART', description: 'Washer', quantity: '1', unitPrice: '5', taxRate: '5' },
+        {
+          itemType: 'PART',
+          description: 'Washer',
+          quantity: '1',
+          unitPrice: '5',
+          taxRate: '5',
+          partId: a.parts['FX-WASHER'].id,
+        },
       ],
       notes: 'Corrected',
     });
@@ -155,7 +169,14 @@ describe('invoices', () => {
       ...party,
       jobCardId,
       items: [
-        { itemType: 'PART', description: 'Parts', quantity: '1', unitPrice: '2477', taxRate: '5' },
+        {
+          itemType: 'PART',
+          description: 'Parts',
+          quantity: '1',
+          unitPrice: '2477',
+          taxRate: '5',
+          partId: a.parts['FX-KIT'].id,
+        },
       ],
     });
     // Not paid yet: nothing to correct.
@@ -238,6 +259,7 @@ describe('invoices', () => {
           quantity: '1',
           unitPrice: '40',
           taxRate: '5',
+          partId: a.parts['FX-FILTER'].id,
         },
       ],
     });

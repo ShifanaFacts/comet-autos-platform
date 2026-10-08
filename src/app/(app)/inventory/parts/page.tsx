@@ -7,6 +7,8 @@ import { formatMoney } from '@/lib/format';
 import { formatMilli, signedToMilli } from '@/lib/money';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { pageFrom, slicePage } from '@/lib/pagination';
 import { LinkButton } from '@/components/shared/link-button';
 import { ListDataActions } from '@/components/shared/list-data-actions';
 import { importColumns } from '@/lib/data-transfer/imports';
@@ -31,7 +33,14 @@ import {
 } from '@/components/shared/record-selection';
 import { REMOVAL } from '@/lib/records/removal';
 
-type Search = { q?: string; category?: string; supplier?: string; stock?: string; status?: string };
+type Search = {
+  q?: string;
+  category?: string;
+  supplier?: string;
+  stock?: string;
+  status?: string;
+  page?: string;
+};
 
 export default async function PartsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const user = await requireUser();
@@ -42,13 +51,21 @@ export default async function PartsPage({ searchParams }: { searchParams: Promis
   const status = (
     ['inactive', 'all'].includes(params.status ?? '') ? params.status : 'active'
   ) as ActiveFilter;
-  const { branch, parts, summary, categories, suppliers } = await listParts(user, {
+  const {
+    branch,
+    parts: allParts,
+    summary,
+    categories,
+    suppliers,
+  } = await listParts(user, {
     q: params.q,
     category: params.category,
     supplierId: params.supplier,
     stock,
     status,
   });
+  // The stock summary counts every part; the table shows a page of them.
+  const { rows: parts, info } = slicePage(allParts, pageFrom(params.page));
   const canManage = hasPermission(user, 'inventory.create');
   const canRemove = hasPermission(user, REMOVAL.parts.permission);
   // Stock on hand would vanish from the count, so only an active part with
@@ -271,6 +288,7 @@ export default async function PartsPage({ searchParams }: { searchParams: Promis
                   </TableBody>
                 </Table>
               </div>
+              <Pagination info={info} basePath="/inventory/parts" params={params} noun="parts" />
             </Panel>
           </RecordSelection>
         )}

@@ -5,11 +5,12 @@ import { canExport } from '@/lib/data-transfer/exports';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { listInvoices } from '@/lib/billing/lists';
 import { formatCalendarDate, formatMoney } from '@/lib/format';
-import { filsToString, toFils } from '@/lib/money';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { ListDataActions } from '@/components/shared/list-data-actions';
 import { canImport, importColumns, importNote } from '@/lib/data-transfer/imports';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { LinkButton } from '@/components/shared/link-button';
 import { StatusPill } from '@/components/shared/status-pill';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
@@ -46,7 +47,7 @@ export const metadata = { title: 'Invoices' };
 export default async function InvoicesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; page?: string }>;
 }) {
   const user = await requireUser();
   const scope = user.primaryBranchId ? { branchId: user.primaryBranchId } : undefined;
@@ -56,7 +57,10 @@ export default async function InvoicesPage({
   const canCreate = hasPermission(user, 'invoice.create', scope);
   const canRemove = hasPermission(user, REMOVAL.invoices.permission, scope);
   const params = await searchParams;
-  const { invoices, status } = await listInvoices(user, params);
+  const {
+    result: { invoices, status, total, owed },
+    info,
+  } = await loadPage(pageFrom(params.page), (skip, take) => listInvoices(user, params, take, skip));
   // Only an issued invoice with nothing paid can be voided — the same rule
   // as invoiceVoidBlocker; the server checks it again.
   const removable = (invoice: (typeof invoices)[number]) =>
@@ -64,9 +68,6 @@ export default async function InvoicesPage({
   const removableRows = invoices
     .filter(removable)
     .map((invoice) => ({ id: invoice.id, label: invoice.invoiceNumber }));
-  const owed = filsToString(
-    invoices.reduce((sum, invoice) => sum + toFils(invoice.balance.balance), 0),
-  );
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -127,8 +128,8 @@ export default async function InvoicesPage({
           <p className="text-sm text-muted-foreground">
             Customers owe{' '}
             <span className="font-semibold text-warning tabular-nums">{formatMoney(owed)}</span> on{' '}
-            {invoices.length} invoice
-            {invoices.length === 1 ? '' : 's'}.
+            {total} invoice
+            {total === 1 ? '' : 's'}.
           </p>
         ) : null}
         {invoices.length === 0 ? (
@@ -171,10 +172,7 @@ export default async function InvoicesPage({
                       }
                       className="relative"
                       title={
-                        <Link
-                          href={`/finance/invoices/${invoice.id}`}
-                          className="row-link"
-                        >
+                        <Link href={`/finance/invoices/${invoice.id}`} className="row-link">
                           {invoice.invoiceNumber}
                         </Link>
                       }
@@ -284,6 +282,12 @@ export default async function InvoicesPage({
                   </TableBody>
                 </Table>
               </TableWrap>
+              <Pagination
+                info={info}
+                basePath="/finance/invoices"
+                params={params}
+                noun="invoices"
+              />
             </Panel>
           </RecordSelection>
         )}

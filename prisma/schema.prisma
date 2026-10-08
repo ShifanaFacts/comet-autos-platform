@@ -205,6 +205,9 @@ enum AccountRole {
   OWNER_CAPITAL
   /// "Owner's drawings": money an owner took out of the business for themselves.
   OWNER_DRAWINGS
+  /// Input VAT on parts received before the supplier's tax invoice: held
+  /// here, and moved to VAT_INPUT once the bill is matched.
+  VAT_INPUT_PENDING
 }
 
 /// The kind of record a journal entry books.
@@ -255,6 +258,9 @@ enum JournalSource {
   PURCHASE_ROUNDING
   /// An owner putting money into the business, or taking it out.
   OWNER_MONEY
+  /// The supplier's tax invoice arrived after the parts: the input VAT moves
+  /// from "awaiting tax invoice" to recoverable, on the bill's date.
+  PURCHASE_BILL
 }
 
 enum ApprovalStatus {
@@ -357,6 +363,8 @@ enum InventoryTransactionType {
   JOB_RETURN
   /// Cancels one earlier row exactly (reversalOfTransactionId).
   REVERSAL
+  /// A part sold on an invoice line (invoiceItemId). Costed on the invoice.
+  SALE
 }
 
 /// V1 supports quotations (Estimate) and two invoice concepts only.
@@ -528,6 +536,24 @@ model Organization {
   openingBalanceDate DateTime? @map("opening_balance_date") @db.Date
   /// Where its supplies are made; VAT201 reports Box 1 by emirate.
   emirate            Emirate   @default(DUBAI)
+  /// The company's dates (lib/compliance). Null until the workshop enters them
+  /// from its licence, Memorandum of Association and FTA certificates.
+  /// The month its financial year ends (12 = 31 December); the year ends on
+  /// the last day of that month.
+  financialYearEndMonth Int?    @map("financial_year_end_month") @db.SmallInt
+  /// The end of its first financial year, which may be shorter or longer than
+  /// twelve months; every later year ends on financialYearEndMonth.
+  firstFinancialYearEnd DateTime? @map("first_financial_year_end") @db.Date
+  /// The first VAT return period on the FTA's VAT registration certificate.
+  /// Later periods follow it back to back, vatPeriodMonths long each.
+  vatFirstPeriodStart   DateTime? @map("vat_first_period_start") @db.Date
+  vatFirstPeriodEnd     DateTime? @map("vat_first_period_end") @db.Date
+  /// 3 for quarterly returns, 1 for monthly.
+  vatPeriodMonths       Int?      @map("vat_period_months") @db.SmallInt
+  /// The corporate tax registration number from EmaraTax.
+  corporateTaxNumber    String?   @map("corporate_tax_number")
+  tradeLicenceNumber    String?   @map("trade_licence_number")
+  tradeLicenceExpiry    DateTime? @map("trade_licence_expiry") @db.Date
   isActive           Boolean   @default(true) @map("is_active")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
@@ -739,6 +765,7 @@ model User {
   notifications       Notification[]
   pushSubscriptions   PushSubscription[]
   createdTasks        Task[]             @relation("TaskCreatedBy")
+  billsMatched        Purchase[]         @relation("PurchaseBillMatchedBy")
   completedTasks      Task[]             @relation("TaskCompletedBy")
   taskUpdates         TaskUpdate[]
   reviewedAttendances Attendance[]       @relation("AttendanceReviewedBy")
@@ -1503,6 +1530,7 @@ model Part {
   purchaseItems         PurchaseItem[]
   partUsages            PartUsage[]
   inventoryTransactions InventoryTransaction[]
+  invoiceItems          InvoiceItem[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, sku])
@@ -1539,50 +1567,63 @@ model Supplier {
 }
 
 model Purchase {
-  id                    String         @id @default(uuid(7)) @db.Uuid
-  organizationId        String         @map("organization_id") @db.Uuid
-  branchId              String         @map("branch_id") @db.Uuid
-  supplierId            String         @map("supplier_id") @db.Uuid
-  purchaseNumber        String         @map("purchase_number")
-  status                PurchaseStatus @default(DRAFT)
+  id                    String             @id @default(uuid(7)) @db.Uuid
+  organizationId        String             @map("organization_id") @db.Uuid
+  branchId              String             @map("branch_id") @db.Uuid
+  supplierId            String             @map("supplier_id") @db.Uuid
+  purchaseNumber        String             @map("purchase_number")
+  status                PurchaseStatus     @default(DRAFT)
   /// The supplier's own invoice / delivery note number and date.
-  supplierInvoiceNumber String?        @map("supplier_invoice_number")
-  supplierInvoiceDate   DateTime?      @map("supplier_invoice_date") @db.Date
+  supplierInvoiceNumber String?            @map("supplier_invoice_number")
+  supplierInvoiceDate   DateTime?          @map("supplier_invoice_date") @db.Date
+  /// The supplier's tax invoice: still to come (parts bought for cash, the
+  /// bill follows), matched, or never coming (a shop not registered for
+  /// VAT). Input VAT is claimed only once it is RECEIVED, on its date.
+  billStatus            PurchaseBillStatus @default(PENDING) @map("bill_status")
+  billReceivedOn        DateTime?          @map("bill_received_on") @db.Date
+  /// The bill's own figures, as typed from it when matched — kept beside
+  /// what was recorded, so a difference stays visible.
+  billSubtotal          Decimal?           @map("bill_subtotal") @db.Decimal(14, 2)
+  billTaxAmount         Decimal?           @map("bill_tax_amount") @db.Decimal(14, 2)
+  billTotalAmount       Decimal?           @map("bill_total_amount") @db.Decimal(14, 2)
+  billMatchedByUserId   String?            @map("bill_matched_by_user_id") @db.Uuid
+  billNote              String?            @map("bill_note")
   notes                 String?
   /// The taxable amount: the lines after their own discounts, less the bill discount.
-  subtotal              Decimal?       @db.Decimal(14, 2)
-  taxAmount             Decimal?       @default(0) @map("tax_amount") @db.Decimal(14, 2)
-  totalAmount           Decimal?       @map("total_amount") @db.Decimal(14, 2)
+  subtotal              Decimal?           @db.Decimal(14, 2)
+  taxAmount             Decimal?           @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  totalAmount           Decimal?           @map("total_amount") @db.Decimal(14, 2)
   /// A trade discount on the whole bill, taken after the lines' own
   /// discounts and shared across the lines to the fil (each line's
   /// `netAmount`). It lowers what the stock cost and the input VAT; it is
   /// never booked as income.
-  billDiscountType      DiscountType?  @map("bill_discount_type")
-  billDiscountValue     Decimal?       @map("bill_discount_value") @db.Decimal(14, 2)
-  billDiscountAmount    Decimal        @default(0) @map("bill_discount_amount") @db.Decimal(14, 2)
+  billDiscountType      DiscountType?      @map("bill_discount_type")
+  billDiscountValue     Decimal?           @map("bill_discount_value") @db.Decimal(14, 2)
+  billDiscountAmount    Decimal            @default(0) @map("bill_discount_amount") @db.Decimal(14, 2)
   /// The supplier's round-off after VAT ("adjusted amount" on the bill), plus
   /// or minus, at most 5.00 either way — outside VAT. total = subtotal + VAT +
   /// this. Owed, and booked to Rounding adjustments, once the whole purchase
   /// is received.
-  roundingAdjustment    Decimal        @default(0) @map("rounding_adjustment") @db.Decimal(14, 2)
+  roundingAdjustment    Decimal            @default(0) @map("rounding_adjustment") @db.Decimal(14, 2)
   /// When the supplier expects to be paid ("pay later"). Suppliers owed ages
   /// the bill from it; without one, from the bill's date as before.
-  dueDate               DateTime?      @map("due_date") @db.Date
-  orderedAt             DateTime       @default(now()) @map("ordered_at") @db.Timestamptz
-  expectedAt            DateTime?      @map("expected_at") @db.Timestamptz
-  receivedAt            DateTime?      @map("received_at") @db.Timestamptz
-  receivedByUserId      String?        @map("received_by_user_id") @db.Uuid
-  journalEntryId        String?        @map("journal_entry_id") @db.Uuid
-  createdByUserId       String         @map("created_by_user_id") @db.Uuid
-  createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt             DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  dueDate               DateTime?          @map("due_date") @db.Date
+  orderedAt             DateTime           @default(now()) @map("ordered_at") @db.Timestamptz
+  expectedAt            DateTime?          @map("expected_at") @db.Timestamptz
+  receivedAt            DateTime?          @map("received_at") @db.Timestamptz
+  receivedByUserId      String?            @map("received_by_user_id") @db.Uuid
+  journalEntryId        String?            @map("journal_entry_id") @db.Uuid
+  createdByUserId       String             @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz
 
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  branch       Branch        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
-  supplier     Supplier      @relation(fields: [organizationId, supplierId], references: [organizationId, id], onDelete: Restrict)
-  journalEntry JournalEntry? @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
-  createdBy    User          @relation("PurchaseCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
-  receivedBy   User?         @relation("PurchaseReceivedBy", fields: [organizationId, receivedByUserId], references: [organizationId, id], onDelete: Restrict)
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch        Branch        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  supplier      Supplier      @relation(fields: [organizationId, supplierId], references: [organizationId, id], onDelete: Restrict)
+  journalEntry  JournalEntry? @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
+  createdBy     User          @relation("PurchaseCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+  receivedBy    User?         @relation("PurchaseReceivedBy", fields: [organizationId, receivedByUserId], references: [organizationId, id], onDelete: Restrict)
+  billMatchedBy User?         @relation("PurchaseBillMatchedBy", fields: [organizationId, billMatchedByUserId], references: [organizationId, id], onDelete: Restrict)
 
   items            PurchaseItem[]
   supplierPayments SupplierPayment[]
@@ -1591,6 +1632,7 @@ model Purchase {
   @@unique([organizationId, purchaseNumber])
   /// The same supplier invoice can't be entered twice (cancelled entries excepted).
   @@unique([organizationId, supplierId, supplierInvoiceNumber], map: "one_live_purchase_per_supplier_invoice", where: raw("supplier_invoice_number IS NOT NULL AND status <> 'CANCELLED'"))
+  @@index([organizationId, billStatus])
   @@index([organizationId])
   @@index([organizationId, branchId])
   @@index([organizationId, supplierId])
@@ -1660,6 +1702,9 @@ model InventoryTransaction {
   unitCost                Decimal?                 @map("unit_cost") @db.Decimal(14, 2)
   purchaseItemId          String?                  @map("purchase_item_id") @db.Uuid
   partUsageId             String?                  @map("part_usage_id") @db.Uuid
+  /// SALE: the invoice whose part lines took it out of stock (or, positive,
+  /// put it back when the invoice was changed or voided).
+  invoiceId               String?                  @map("invoice_id") @db.Uuid
   performedByUserId       String?                  @map("performed_by_user_id") @db.Uuid
   /// For REVERSAL rows: the row this one cancels. A row is reversed at most once.
   reversalOfTransactionId String?                  @map("reversal_of_transaction_id") @db.Uuid
@@ -1671,6 +1716,7 @@ model InventoryTransaction {
   part         Part                  @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
   purchaseItem PurchaseItem?         @relation(fields: [organizationId, purchaseItemId], references: [organizationId, id], onDelete: Restrict)
   partUsage    PartUsage?            @relation(fields: [organizationId, partUsageId], references: [organizationId, id], onDelete: Restrict)
+  invoice      Invoice?              @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Restrict)
   performedBy  User?                 @relation(fields: [organizationId, performedByUserId], references: [organizationId, id], onDelete: Restrict)
   reversalOf   InventoryTransaction? @relation("InventoryReversal", fields: [organizationId, reversalOfTransactionId], references: [organizationId, id], onDelete: Restrict)
   reversedBy   InventoryTransaction? @relation("InventoryReversal")
@@ -1681,6 +1727,7 @@ model InventoryTransaction {
   @@index([organizationId, branchId, partId])
   @@index([organizationId, partUsageId])
   @@index([organizationId, purchaseItemId])
+  @@index([organizationId, invoiceId])
   @@index([organizationId, partId])
   @@index([createdAt])
   @@map("inventory_transactions")
@@ -1786,6 +1833,8 @@ model Invoice {
   creditNotes        CreditNote[]
   advanceAllocations CustomerAdvanceAllocation[]
 
+  stockMovements InventoryTransaction[]
+
   @@unique([organizationId, id])
   @@unique([organizationId, invoiceNumber])
   /// A job card has at most one live invoice; a VOID/CANCELLED one can be replaced.
@@ -1833,6 +1882,12 @@ model InvoiceItem {
   /// (parts sales, labour sales) — lib/accounting/postings.ts.
   accountId      String?           @map("account_id") @db.Uuid
   partUsageId    String?           @map("part_usage_id") @db.Uuid
+  /// The catalogue part a PART line sells (invoices written directly or
+  /// from a quotation). Its stock leaves on issue, as a SALE movement.
+  partId         String?           @map("part_id") @db.Uuid
+  /// What the part cost the workshop, decided on the invoice line: the cost
+  /// of sales booked for it. Never printed.
+  unitCost       Decimal?          @map("unit_cost") @db.Decimal(14, 2)
   labourId       String?           @map("labour_id") @db.Uuid
   createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz
@@ -1841,12 +1896,14 @@ model InvoiceItem {
   invoice      Invoice          @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Cascade)
   partUsage    PartUsage?       @relation(fields: [organizationId, partUsageId], references: [organizationId, id], onDelete: Restrict)
   labour       Labour?          @relation(fields: [organizationId, labourId], references: [organizationId, id], onDelete: Restrict)
+  part         Part?            @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
   account      ChartOfAccount?  @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
   taxCode      TaxCode?         @relation(fields: [organizationId, taxCodeId], references: [organizationId, id], onDelete: Restrict)
   credits      CreditNoteItem[]
 
   @@index([organizationId])
   @@index([organizationId, invoiceId])
+  @@index([organizationId, partId])
   @@map("invoice_items")
 }
 
@@ -3366,4 +3423,14 @@ model PushSubscription {
 
   @@index([organizationId, userId])
   @@map("push_subscriptions")
+}
+
+/// The supplier's tax invoice for a purchase.
+enum PurchaseBillStatus {
+  /// Parts received (often bought for cash); the tax invoice is still to come.
+  PENDING
+  /// The tax invoice is in hand and matched to what was recorded.
+  RECEIVED
+  /// The supplier gives no tax invoice (not VAT-registered): no VAT claimed.
+  NO_TAX_INVOICE
 }

@@ -7,6 +7,8 @@ import { MOVEMENT_LABEL } from '@/lib/inventory/labels';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { ListDataActions } from '@/components/shared/list-data-actions';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { ListFilters } from '@/components/inventory/list-filters';
 import { MovementTable } from '@/components/inventory/movement-table';
 import { RecordSelection } from '@/components/shared/record-selection';
@@ -24,11 +26,16 @@ const TYPES = [
 export default async function MovementsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; type?: string }>;
+  searchParams: Promise<{ q?: string; type?: string; page?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const { branch, movements } = await listMovements(user, { q: params.q, type: params.type });
+  const {
+    result: { branch, movements },
+    info,
+  } = await loadPage(pageFrom(params.page), (skip, take) =>
+    listMovements(user, { q: params.q, type: params.type }, take, skip),
+  );
   const canReverse = hasPermission(user, REMOVAL.movements.permission, { branchId: branch.id });
 
   return (
@@ -82,6 +89,12 @@ export default async function MovementsPage({
                 showPart
                 canReverse={canReverse}
                 selectable={canReverse}
+              />
+              <Pagination
+                info={info}
+                basePath="/inventory/movements"
+                params={params}
+                noun="movements"
               />
             </Panel>
           </RecordSelection>

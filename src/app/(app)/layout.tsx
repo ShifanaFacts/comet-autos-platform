@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { prisma } from '@/lib/prisma';
 import { NAV_GROUPS, isMenuShown } from '@/lib/nav';
-import { getMyDay } from '@/lib/hr/self-attendance';
+import { getMyDay, SELF_CHECK_IN } from '@/lib/hr/self-attendance';
 import { countUnread } from '@/lib/notifications/service';
 import { vapidPublicKey } from '@/lib/notifications/push';
 import { getWorkshopPreferences } from '@/lib/organization/settings';
@@ -30,7 +30,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     countUnread(user),
   ]);
   const employee = myDay?.employee ?? null;
-  const attendance = myDay
+  const attendance = SELF_CHECK_IN && myDay
     ? {
         date: myDay.date,
         firstName: myDay.employee.firstName,

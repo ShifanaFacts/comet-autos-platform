@@ -174,6 +174,73 @@ export async function listCustomers(
   });
 }
 
+/** The most matches a search pages through; past that the search wants narrowing. */
+const SEARCH_LIMIT = 500;
+
+/**
+ * One page of the Customers list, and how many there are in all. The plain
+ * and Deleted lists page in the database; a search pages through its matches.
+ */
+export async function pageCustomers(
+  user: AuthenticatedUser,
+  filters: { query: string; deleted: boolean },
+  take: number,
+  skip: number,
+) {
+  requirePermission(user, 'customer.view');
+  const trimmed = filters.query.trim();
+  const select = {
+    id: true,
+    name: true,
+    phone: true,
+    email: true,
+    createdAt: true,
+    vehicles: {
+      ...(filters.deleted ? {} : { where: { isActive: true } }),
+      select: { id: true, plateNumber: true, make: true, model: true },
+      orderBy: { createdAt: 'asc' },
+    },
+  } satisfies Prisma.CustomerSelect;
+
+  if (!filters.deleted && trimmed.length >= 2) {
+    // Matches come back in name order; the page is a slice of them.
+    const { customerIds } = await findMatchingIds(user.organizationId, trimmed, SEARCH_LIMIT);
+    const pageIds = customerIds.slice(skip, skip + take);
+    const customers = pageIds.length
+      ? await prisma.customer.findMany({
+          where: { organizationId: user.organizationId, id: { in: pageIds } },
+          orderBy: { name: 'asc' },
+          select,
+        })
+      : [];
+    return { customers, total: customerIds.length };
+  }
+
+  const where: Prisma.CustomerWhereInput = {
+    organizationId: user.organizationId,
+    isActive: !filters.deleted,
+    ...(filters.deleted && trimmed
+      ? {
+          OR: [
+            { name: { contains: trimmed, mode: 'insensitive' } },
+            { phone: { contains: trimmed } },
+          ],
+        }
+      : {}),
+  };
+  const [customers, total] = await Promise.all([
+    prisma.customer.findMany({
+      where,
+      orderBy: filters.deleted ? { updatedAt: 'desc' } : { createdAt: 'desc' },
+      skip,
+      take,
+      select,
+    }),
+    prisma.customer.count({ where }),
+  ]);
+  return { customers, total };
+}
+
 export async function getCustomerDetail(user: AuthenticatedUser, customerId: string) {
   requirePermission(user, 'customer.view');
   const customer = await prisma.customer.findFirst({

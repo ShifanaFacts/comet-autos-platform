@@ -3,9 +3,11 @@ import { ReceiptText } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { getExpenseFormOptions, listExpenses, toExpenseDraft } from '@/lib/finance/expenses';
 import { formatDate, formatMoney } from '@/lib/format';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
 import { RecordCard, RecordList, TableWrap } from '@/components/shared/record-card';
 import { SearchField } from '@/components/shared/search-field';
 import { StatusPill } from '@/components/shared/status-pill';
@@ -34,6 +36,7 @@ export default async function ExpensesPage({
     from?: string;
     to?: string;
     show?: string;
+    page?: string;
   }>;
 }) {
   const user = await requireUser();
@@ -47,7 +50,12 @@ export default async function ExpensesPage({
     to: params.to || undefined,
     show: params.show === 'all' ? ('all' as const) : ('recorded' as const),
   };
-  const { expenses, totals } = await listExpenses(user, filters);
+  const {
+    result: { expenses, totals },
+    info,
+  } = await loadPage(pageFrom(params.page), (skip, take) =>
+    listExpenses(user, filters, take, skip),
+  );
   const canRecord = hasPermission(user, 'expense.create');
   const canEdit = hasPermission(user, 'expense.edit');
   const canVoid = hasPermission(user, 'expense.delete');
@@ -297,6 +305,12 @@ export default async function ExpensesPage({
                   </tbody>
                 </table>
               </TableWrap>
+              <Pagination
+                info={info}
+                basePath="/finance/expenses"
+                params={params}
+                noun="expenses"
+              />
             </Panel>
           )}
         </Stack>
