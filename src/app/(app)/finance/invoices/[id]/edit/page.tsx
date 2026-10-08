@@ -12,6 +12,7 @@ import { editableBill, editableLine } from '@/lib/billing/editable-lines';
 import { resolveDefaultVatRate } from '@/lib/tax';
 import { formatCalendarDate, formatMoney } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
+import { jobHasFittedParts, stockHeldByInvoice } from '@/lib/billing/part-lines';
 import { EditInvoiceForm } from './edit-invoice-form';
 
 /**
@@ -65,7 +66,9 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
             invoiceId={invoice.id}
             defaultVatRate={defaultVatRate}
             taxCodes={await getTaxCodeOptions(user.organizationId, 'sales')}
-            catalog={await getPartCatalog(user)}
+            catalog={await getPartCatalog(user, { forSale: true })}
+            held={await stockHeldByInvoice(user.organizationId, invoice.id)}
+            partsFitted={await jobHasFittedParts(user.organizationId, invoice.jobCardId)}
             notes={invoice.notes ?? ''}
             issueDate={invoice.issueDate.toISOString().slice(0, 10)}
             dueDate={(invoice.dueDate ?? invoice.issueDate).toISOString().slice(0, 10)}

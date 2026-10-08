@@ -28,6 +28,8 @@ import { booksClosedThrough } from '@/lib/accounting/periods';
 import { prisma } from '@/lib/prisma';
 import { formatCalendarDate, formatDate, localDateString } from '@/lib/format';
 import { LinkButton } from '@/components/shared/link-button';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import {
   AccountLedgerView,
   BalanceSheetView,
@@ -249,6 +251,7 @@ export default async function AccountingPage({
     account?: string;
     source?: string;
     q?: string;
+    page?: string;
   }>;
 }) {
   const user = await requireUser();
@@ -288,8 +291,13 @@ export default async function AccountingPage({
   const balance = view === 'balance' ? await getBalanceSheet(user, { asOf: params.asOf }) : null;
   const trial = view === 'trial' ? await getTrialBalance(user, { asOf: params.asOf }) : null;
   const ledger = accountId ? await getAccountLedger(user, accountId, periodInput) : null;
-  const journal =
-    view === 'journal' ? await listJournal(user, { ...periodInput, source: params.source }) : null;
+  const journalPage =
+    view === 'journal'
+      ? await loadPage(pageFrom(params.page), (skip, take) =>
+          listJournal(user, { ...periodInput, source: params.source }, take, skip),
+        )
+      : null;
+  const journal = journalPage?.result ?? null;
   const cash = view === 'cash' ? await getCashFlowStatement(user, periodInput) : null;
   const accountQuery = (params.q ?? '').trim();
   const accounts = view === 'accounts' ? await listAccounts(user, { q: accountQuery }) : null;
@@ -359,6 +367,15 @@ export default async function AccountingPage({
       {journal ? (
         <Stack gap="xl">
           <JournalView data={journal} canEdit={canReverse} />
+          {journalPage ? (
+            <Pagination
+              info={journalPage.info}
+              basePath="/finance/accounting"
+              params={params}
+              noun="entries"
+              className="rounded-xl border border-border bg-card"
+            />
+          ) : null}
           <Section
             title="Closing the books"
             description={

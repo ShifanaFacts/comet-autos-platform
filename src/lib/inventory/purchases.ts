@@ -302,7 +302,7 @@ export function pricePurchase(
   };
 }
 
-async function assertSupplierInvoiceFree(
+export async function assertSupplierInvoiceFree(
   tx: Prisma.TransactionClient,
   organizationId: string,
   supplierId: string,
@@ -387,9 +387,17 @@ function headerData(input: z.infer<typeof purchaseSchema>, priced: PricedPurchas
   const supplierInvoiceDate = input.supplierInvoiceDate
     ? parseCalendarDate(input.supplierInvoiceDate)
     : null;
+  const supplierInvoiceNumber = emptyToNull(input.supplierInvoiceNumber);
   return {
-    supplierInvoiceNumber: emptyToNull(input.supplierInvoiceNumber),
+    supplierInvoiceNumber,
     supplierInvoiceDate,
+    // The supplier's tax invoice is in hand when its number is entered with
+    // the purchase; without one it is awaited, and so is its input VAT
+    // (lib/inventory/bills.ts matches it when it comes).
+    billStatus: supplierInvoiceNumber ? ('RECEIVED' as const) : ('PENDING' as const),
+    billReceivedOn: supplierInvoiceNumber
+      ? (supplierInvoiceDate ?? parseCalendarDate(localDateString())!)
+      : null,
     notes: emptyToNull(input.notes),
     subtotal: totals.subtotal,
     taxAmount: totals.taxAmount,
@@ -944,6 +952,10 @@ async function receiveInTransaction(
   });
   // Received in full: the bill's round-off is owed now, and booked.
   await syncPosting(tx, user.organizationId, 'PURCHASE_ROUNDING', purchase.id, user.id);
+  // A tax invoice matched before this delivery: its VAT is claimed with the rest.
+  if (purchase.billMatchedByUserId) {
+    await syncPosting(tx, user.organizationId, 'PURCHASE_BILL', purchase.id, user.id);
+  }
   return { status, received, itemIds };
 }
 
@@ -981,6 +993,8 @@ export async function listPurchases(
   filters: { q?: string; status?: string; supplierId?: string },
   /** Rows to return. The screen shows a page; an export asks for everything. */
   limit = 200,
+  /** Rows to skip: the pages before the one shown. */
+  offset = 0,
 ) {
   requirePermission(user, 'purchase.view');
   const q = filters.q?.trim();
@@ -988,48 +1002,51 @@ export async function listPurchases(
     filters.status && PURCHASE_STATUS_LABEL[filters.status as PurchaseStatus]
       ? (filters.status as PurchaseStatus)
       : undefined;
-  const [purchases, suppliers] = await Promise.all([
-    prisma.purchase.findMany({
-      where: {
-        organizationId: user.organizationId,
-        ...(status ? { status } : {}),
-        ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
-        ...(q
-          ? {
-              OR: [
-                { purchaseNumber: { contains: q, mode: 'insensitive' } },
-                { supplierInvoiceNumber: { contains: q, mode: 'insensitive' } },
-                { supplier: { name: { contains: q, mode: 'insensitive' } } },
-                {
-                  items: {
-                    some: {
-                      part: {
-                        OR: [
-                          { sku: { contains: q, mode: 'insensitive' } },
-                          { name: { contains: q, mode: 'insensitive' } },
-                        ],
-                      },
-                    },
+  const where: Prisma.PurchaseWhereInput = {
+    organizationId: user.organizationId,
+    ...(status ? { status } : {}),
+    ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
+    ...(q
+      ? {
+          OR: [
+            { purchaseNumber: { contains: q, mode: 'insensitive' } },
+            { supplierInvoiceNumber: { contains: q, mode: 'insensitive' } },
+            { supplier: { name: { contains: q, mode: 'insensitive' } } },
+            {
+              items: {
+                some: {
+                  part: {
+                    OR: [
+                      { sku: { contains: q, mode: 'insensitive' } },
+                      { name: { contains: q, mode: 'insensitive' } },
+                    ],
                   },
                 },
-              ],
-            }
-          : {}),
-      },
+              },
+            },
+          ],
+        }
+      : {}),
+  };
+  const [purchases, total, suppliers] = await Promise.all([
+    prisma.purchase.findMany({
+      where,
       orderBy: [{ createdAt: 'desc' }],
+      skip: offset,
       take: limit,
       include: {
         supplier: { select: { id: true, name: true } },
         _count: { select: { items: true } },
       },
     }),
+    prisma.purchase.count({ where }),
     prisma.supplier.findMany({
       where: { organizationId: user.organizationId },
       orderBy: { name: 'asc' },
       select: { id: true, name: true },
     }),
   ]);
-  return { purchases, suppliers };
+  return { purchases, total, suppliers };
 }
 
 export async function getPurchaseDetail(user: AuthenticatedUser, purchaseId: string) {

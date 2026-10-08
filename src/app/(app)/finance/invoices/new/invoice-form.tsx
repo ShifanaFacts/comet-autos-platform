@@ -27,6 +27,9 @@ import {
   billDiscountPayload,
   linesPayload,
   newEditableLine,
+  partIssueMessage,
+  partLineIssues,
+  useCatalogParts,
   useLineTotals,
   withRoundOff,
   type BillDiscount,
@@ -81,6 +84,7 @@ export function NewInvoiceForm({
   catalog,
   modes = [],
   initialAdvances = null,
+  partsFitted = false,
 }: {
   initialCustomer: CustomerOption | null;
   /** Set when arriving from a job card: it is billed, and moves to Invoiced. */
@@ -104,6 +108,11 @@ export function NewInvoiceForm({
   modes?: PaymentModeOption[];
   /** The first customer's advances with money left (null: none, or not allowed). */
   initialAdvances?: HeldAdvances | null;
+  /**
+   * Billing a job card whose parts were fitted through its repair records:
+   * they left stock then, so its Parts lines need not name a part.
+   */
+  partsFitted?: boolean;
 }) {
   const [state, onSubmit, isPending] = useFormAction<ActionResult>(createDirectInvoiceAction, {
     ok: false,
@@ -144,7 +153,11 @@ export function NewInvoiceForm({
   const [payNow, setPayNow] = useState(initialPayNow && canTakePayment);
   const errors = state.fieldErrors ?? {};
   const { totals, incomplete, count } = useLineTotals(lines, defaultVatRate, bill);
-  const ready = Boolean(picked) && count > 0 && !incomplete;
+  // Every Parts line names a part that is in stock (lib/billing/part-lines.ts).
+  const catalogParts = useCatalogParts(catalog);
+  const partIssue =
+    catalog && !partsFitted ? partIssueMessage(partLineIssues(lines, catalogParts.parts)) : null;
+  const ready = Boolean(picked) && count > 0 && !incomplete && !partIssue;
   const asQuoted = quotation !== null && !edited;
   const payload = JSON.stringify(asQuoted ? [] : linesPayload(lines));
   const discount = asQuoted ? null : billDiscountPayload(bill);
@@ -239,9 +252,14 @@ export function NewInvoiceForm({
           incomeAccounts={incomeAccounts}
           taxCodes={taxCodes}
           catalog={catalog}
+          requireParts={!partsFitted}
+          onPartAdded={catalogParts.add}
           rounding={rounding}
           onRoundingChange={setRounding}
         />
+        {partIssue && count > 0 ? (
+          <p className="text-sm font-medium text-warning">{partIssue}</p>
+        ) : null}
         <input type="hidden" name="roundingAdjustment" value={rounding} />
       </section>
 

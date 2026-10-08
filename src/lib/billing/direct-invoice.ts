@@ -31,6 +31,8 @@ import { syncPosting } from '@/lib/accounting/journal';
 import { applyJobStatusChange, normalizeStatus } from '@/lib/workshop/job-status';
 import { CLOSED_JOB_STATUSES } from '@/lib/workshop/stages';
 import { resolveTaxCodes } from '@/lib/accounting/tax-codes';
+import { assertNotFitted, partsFittedOnJob, resolvePartLines } from '@/lib/billing/part-lines';
+import { syncInvoiceStock } from '@/lib/inventory/invoice-stock';
 
 /*
  * Invoicing without the full repair workflow.
@@ -164,6 +166,9 @@ async function linesFromEstimate(
       accountId: null,
       vatTreatment: item.vatTreatment,
       taxCodeId: item.taxCodeId,
+      // The part quoted, at its current cost (lib/billing/part-lines.ts).
+      partId: item.partId,
+      unitCost: null,
       amounts: storedLineAmounts(item),
     })),
     totals: storedTotals(estimate),
@@ -319,7 +324,7 @@ export async function createDirectInvoice(
 
     // A quotation changed on the form is billed as changed.
     const edited = Boolean(source) && (input.items ?? []).length > 0;
-    const { lines, totals } =
+    const priced =
       source && !edited
         ? source
         : priceDocument(
@@ -328,6 +333,14 @@ export async function createDirectInvoice(
             input,
             await resolveTaxCodes(tx, user.organizationId, input.items ?? []),
           );
+    const { totals } = priced;
+    // Every Parts line names its part and cost — except, billing a job card
+    // whose parts were fitted through its repair records, those parts.
+    const fitted = await partsFittedOnJob(tx, user.organizationId, jobCard?.id ?? null);
+    const lines = await resolvePartLines(tx, user.organizationId, priced.lines, {
+      required: () => fitted.size === 0,
+    });
+    assertNotFitted(lines, fitted);
     await assertIncomeAccounts(tx, user.organizationId, lines);
     const rounded = withRounding(totals, input.roundingAdjustment);
 
@@ -382,10 +395,18 @@ export async function createDirectInvoice(
           accountId: line.accountId ?? null,
           vatTreatment: line.vatTreatment,
           taxCodeId: line.taxCodeId ?? null,
+          partId: line.partId ?? null,
+          unitCost: line.unitCost ?? null,
           ...lineData(line.amounts),
         },
       });
     }
+    // Its parts leave stock; their cost is booked on the invoice's entry.
+    await syncInvoiceStock(tx, {
+      organizationId: user.organizationId,
+      invoiceId: invoice.id,
+      userId: user.id,
+    });
     await syncPosting(tx, user.organizationId, 'INVOICE', invoice.id, user.id);
 
     if (jobCard) {

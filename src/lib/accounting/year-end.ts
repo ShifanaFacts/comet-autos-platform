@@ -10,6 +10,7 @@ import { filsToString, toFils } from '@/lib/money';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { ensureChart } from '@/lib/accounting/chart';
 import { bookEntry, reverseEntry } from '@/lib/accounting/journal';
+import { lastEndedYear } from '@/lib/compliance/rules';
 
 /*
  * Year-end closing.
@@ -104,9 +105,26 @@ async function incomeStatementBalances(
     .filter((account) => account.net !== 0);
 }
 
-/** 31 December of the last calendar year that has ended. Any other year end can be chosen. */
-function suggestYearEnd() {
-  return `${Number(localDateString().slice(0, 4)) - 1}-12-31`;
+/**
+ * The end of the company's last financial year that has ended, from its
+ * financial year on the tax & accounting calendar; until that is set, 31
+ * December of last year. Any other year end can be chosen.
+ */
+function suggestYearEnd(organization: {
+  financialYearEndMonth: number | null;
+  firstFinancialYearEnd: Date | null;
+  openingBalanceDate: Date | null;
+}) {
+  const today = localDateString();
+  if (organization.financialYearEndMonth) {
+    const ended = lastEndedYear(today, {
+      endMonth: organization.financialYearEndMonth,
+      firstYearEnd: organization.firstFinancialYearEnd?.toISOString().slice(0, 10) ?? null,
+      booksStart: organization.openingBalanceDate?.toISOString().slice(0, 10) ?? null,
+    });
+    if (ended) return ended.end;
+  }
+  return `${Number(today.slice(0, 4)) - 1}-12-31`;
 }
 
 // ─── Reading ────────────────────────────────────────────────────────────────
@@ -119,12 +137,19 @@ export async function getYearEnd(user: AuthenticatedUser, input: { yearEnd?: str
     standingClosings(prisma, organizationId),
     prisma.organization.findUniqueOrThrow({
       where: { id: organizationId },
-      select: { booksClosedThrough: true },
+      select: {
+        booksClosedThrough: true,
+        financialYearEndMonth: true,
+        firstFinancialYearEnd: true,
+        openingBalanceDate: true,
+      },
     }),
   ]);
   const lastClosed = closings[0]?.entryDate ?? null;
   const yearEnd =
-    input.yearEnd && parseCalendarDate(input.yearEnd) ? input.yearEnd : suggestYearEnd();
+    input.yearEnd && parseCalendarDate(input.yearEnd)
+      ? input.yearEnd
+      : suggestYearEnd(organization);
   const balances = await incomeStatementBalances(
     prisma,
     organizationId,

@@ -341,30 +341,41 @@ export async function voidMoneyTransfer(
   });
 }
 
-/** Every transfer, newest first. */
-export async function listMoneyTransfers(user: AuthenticatedUser) {
+/** One page of transfers, newest first, and how many there are in all. */
+export async function listMoneyTransfers(
+  user: AuthenticatedUser,
+  limit = 300,
+  /** Rows to skip: the pages before the one shown. */
+  offset = 0,
+) {
   requirePermission(user, 'money.view');
-  const transfers = await prisma.moneyTransfer.findMany({
-    where: { organizationId: user.organizationId },
-    orderBy: [{ transferredOn: 'desc' }, { createdAt: 'desc' }],
-    take: 300,
-    select: {
-      id: true,
-      transferNumber: true,
-      amount: true,
-      transferredOn: true,
-      reference: true,
-      notes: true,
-      status: true,
-      voidReason: true,
-      fromAccount: { select: { id: true, accountName: true } },
-      toAccount: { select: { id: true, accountName: true } },
-      createdBy: { select: { fullName: true } },
-      createdAt: true,
-    },
-  });
+  const where = { organizationId: user.organizationId };
+  const [transfers, total] = await Promise.all([
+    prisma.moneyTransfer.findMany({
+      where,
+      orderBy: [{ transferredOn: 'desc' }, { createdAt: 'desc' }],
+      skip: offset,
+      take: limit,
+      select: {
+        id: true,
+        transferNumber: true,
+        amount: true,
+        transferredOn: true,
+        reference: true,
+        notes: true,
+        status: true,
+        voidReason: true,
+        fromAccount: { select: { id: true, accountName: true } },
+        toAccount: { select: { id: true, accountName: true } },
+        createdBy: { select: { fullName: true } },
+        createdAt: true,
+      },
+    }),
+    prisma.moneyTransfer.count({ where }),
+  ]);
   return {
     transfers,
+    total,
     canTransfer: hasPermission(user, 'money.create'),
     canVoid: hasPermission(user, 'money.delete'),
   };

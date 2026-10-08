@@ -36,6 +36,15 @@ import { formatWorked, minutesWorked, splitWorked } from '@/lib/hr/attendance';
  * attendance.create (lib/hr/attendance.ts).
  */
 
+/**
+ * Checking in from the phone, and its morning/evening reminders — off while
+ * the workshop has a single employee. Set to true to bring back the top-bar
+ * pill and popups, the card on My work, the dashboard tile and the
+ * scheduled reminders. Attendance recorded by a manager (HR → Attendance)
+ * is not affected.
+ */
+export const SELF_CHECK_IN = false;
+
 const positionSchema = z.object({
   latitude: z.coerce.number().min(-90).max(90),
   longitude: z.coerce.number().min(-180).max(180),

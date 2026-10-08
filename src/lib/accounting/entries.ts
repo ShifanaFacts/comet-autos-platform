@@ -311,6 +311,7 @@ const LATER_SOURCES = [
   'INVOICE_DISCOUNT',
   'PURCHASE_ROUNDING',
   'OWNER_MONEY',
+  'PURCHASE_BILL',
 ] as const;
 
 /** What is waiting to be booked, oldest first, by kind of record. */
@@ -338,6 +339,7 @@ async function unbooked(organizationId: string) {
     discountedInvoices,
     roundedPurchases,
     ownerMoney,
+    billedLater,
   ] = await Promise.all([
     prisma.invoice.findMany({
       where: {
@@ -458,6 +460,17 @@ async function unbooked(organizationId: string) {
       orderBy: [{ movedOn: 'asc' }, { createdAt: 'asc' }],
       select: { id: true },
     }),
+    // Tax invoices matched after the parts, with VAT to move off "awaiting".
+    prisma.purchase.findMany({
+      where: {
+        organizationId,
+        billMatchedByUserId: { not: null },
+        billStatus: { in: ['RECEIVED', 'NO_TAX_INVOICE'] },
+        taxAmount: { gt: 0 },
+      },
+      orderBy: [{ billReceivedOn: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true },
+    }),
   ]);
   const booked = new Set(bookedMovements.map((entry) => entry.sourceId));
   const paidBooked = new Set(bookedPayrollPayments.map((entry) => entry.sourceId));
@@ -504,6 +517,7 @@ async function unbooked(organizationId: string) {
     INVOICE_DISCOUNT: notBooked(discountedInvoices, 'INVOICE_DISCOUNT'),
     PURCHASE_ROUNDING: notBooked(roundedPurchases, 'PURCHASE_ROUNDING'),
     OWNER_MONEY: notBooked(ownerMoney, 'OWNER_MONEY'),
+    PURCHASE_BILL: notBooked(billedLater, 'PURCHASE_BILL'),
   } satisfies Record<PostedSource, string[]>;
 }
 
@@ -546,6 +560,7 @@ export async function bookExistingRecords(user: AuthenticatedUser) {
     'INVOICE_DISCOUNT',
     'PURCHASE_ROUNDING',
     'OWNER_MONEY',
+    'PURCHASE_BILL',
   ];
   let booked = 0;
   const failed: string[] = [];

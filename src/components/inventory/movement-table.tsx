@@ -27,6 +27,7 @@ const TONE: Record<InventoryTransactionType, PillTone> = {
   TRANSFER_OUT: 'neutral',
   RETURN_TO_SUPPLIER: 'neutral',
   CUSTOMER_RETURN: 'neutral',
+  SALE: 'primary',
 };
 
 export interface MovementRow {

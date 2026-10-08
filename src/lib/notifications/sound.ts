@@ -3,8 +3,10 @@
  * here with Web Audio (no sound files to download), then the message read
  * out in a man's voice by the browser's own speech.
  *
- * Browsers only allow sound after the person has touched the page once;
- * `primeSound` is called on the first tap so later notifications can play.
+ * Browsers only allow sound after the person has touched the page once.
+ * An announcement made before that (the check-in popup opening as the app
+ * loads) waits and plays on the first tap — unless that tap was the popup's
+ * own answer, which cancels it (`cancelAnnouncement`).
  * When the app is closed, the phone plays its own notification sound — a
  * web app can't choose that one.
  */
@@ -42,6 +44,9 @@ const CHIMES: Record<string, [number, number, number][]> = {
 
 let context: AudioContext | null = null;
 const lastPlayed = new Map<string, number>();
+/** Announcements made before the first tap, played on it. */
+const waiting = new Map<string, string | undefined>();
+let listening = false;
 
 export function soundEnabled(): boolean {
   try {
@@ -63,6 +68,12 @@ function audio(): AudioContext | null {
   if (!Ctor) return null;
   context ??= new Ctor();
   return context;
+}
+
+/** Whether the page has had its first tap, so sound can start now. */
+function unlocked(): boolean {
+  if (typeof navigator !== 'undefined' && navigator.userActivation) return navigator.userActivation.hasBeenActive;
+  return audio()?.state === 'running';
 }
 
 /** Called on the first tap: browsers start sound only after one. */
@@ -117,13 +128,48 @@ function speak(text: string) {
   speechSynthesis.speak(utterance);
 }
 
+/** Plays what waited for the first tap — after the tap's own click has run, so a popup answered by it can cancel first. */
+function playWaiting() {
+  primeSound();
+  setTimeout(() => {
+    const pending = [...waiting];
+    waiting.clear();
+    for (const [kind, text] of pending) play(kind, text);
+  }, 300);
+}
+
+function waitForTap(kind: Kind, text?: string) {
+  waiting.set(kind, text);
+  if (listening) return;
+  listening = true;
+  const onTap = () => {
+    listening = false;
+    window.removeEventListener('pointerdown', onTap, true);
+    window.removeEventListener('keydown', onTap, true);
+    playWaiting();
+  };
+  window.addEventListener('pointerdown', onTap, true);
+  window.addEventListener('keydown', onTap, true);
+}
+
+/** The popup was answered (or closed) before any sound could play: don't play it late. */
+export function cancelAnnouncement(kind: Kind) {
+  waiting.delete(kind);
+}
+
 /**
  * Chime, then say it. The same kind is not repeated within two minutes, so
  * a reminder that arrives both as a push and as the page's own popup is
- * heard once.
+ * heard once. Before the page's first tap it waits for that tap.
  */
 export function announce(kind: Kind, text?: string) {
   if (typeof window === 'undefined' || !soundEnabled()) return;
+  if (!unlocked()) return waitForTap(kind, text);
+  play(kind, text);
+}
+
+function play(kind: Kind, text?: string) {
+  if (!soundEnabled()) return;
   const now = Date.now();
   if (now - (lastPlayed.get(kind) ?? 0) < 120_000) return;
   lastPlayed.set(kind, now);

@@ -16,6 +16,7 @@ export const MOVEMENT_LABEL: Record<InventoryTransactionType, string> = {
   TRANSFER_OUT: 'Transfer out',
   RETURN_TO_SUPPLIER: 'Returned to supplier',
   CUSTOMER_RETURN: 'Customer return',
+  SALE: 'Sold on invoice',
 };
 
 export const ADJUSTMENT_REASONS = {

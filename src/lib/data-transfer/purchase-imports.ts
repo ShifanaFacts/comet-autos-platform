@@ -1,5 +1,6 @@
 import { DomainError } from '@/lib/errors';
 import { createPart } from '@/lib/inventory/parts';
+import { LIKELY_SAME, similarParts } from '@/lib/inventory/part-match';
 import { createSupplier } from '@/lib/inventory/suppliers';
 import { createPurchaseInTransaction } from '@/lib/inventory/purchases';
 import { field } from '@/lib/data-transfer/csv';
@@ -146,6 +147,7 @@ export const PURCHASE_IMPORTS: Record<string, ImportDefinition> = {
         const key = part.name.trim().toLowerCase();
         partByName.set(key, partByName.has(key) ? null : part.id);
       }
+      const known = parts.map((part) => ({ id: part.id, name: part.name, sku: part.sku }));
       const accountByCode = new Map(
         accounts.flatMap((a) => [
           [a.accountCode.trim().toLowerCase(), a.id],
@@ -212,6 +214,12 @@ export const PURCHASE_IMPORTS: Record<string, ImportDefinition> = {
               (code && partByCode.get(code.toUpperCase())) ||
               (!code && name ? partByName.get(name.toLowerCase()) : undefined) ||
               undefined;
+            // The same part under another spelling ("Brake pads" for "Brake pad")
+            // is used, not added twice — when exactly one part is that close.
+            if (!partId && name && !code) {
+              const close = similarParts({ name }, known, { threshold: LIKELY_SAME, limit: 2 });
+              if (close.length === 1) partId = close[0].part.id;
+            }
             if (!partId) {
               const created = await createPart(
                 user,
@@ -227,6 +235,7 @@ export const PURCHASE_IMPORTS: Record<string, ImportDefinition> = {
               partId = created.id;
               partByCode.set(created.sku.trim().toUpperCase(), partId);
               if (name) partByName.set(name.toLowerCase(), partId);
+              known.push({ id: created.id, name: created.name, sku: created.sku });
             }
             const lineDiscount = amount(field(record, 'Line discount', 'Discount'));
             items.push({

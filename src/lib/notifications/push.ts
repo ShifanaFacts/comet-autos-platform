@@ -35,13 +35,21 @@ export function pushConfigured(): boolean {
     configured = false;
     return false;
   }
-  webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT || 'mailto:notifications@comet-autos.app',
-    VAPID_PUBLIC_KEY,
-    VAPID_PRIVATE_KEY,
-  );
-  configured = true;
-  return true;
+  // The subject must be a mailto: or https: address; a bare email is taken as mailto:.
+  const subject = process.env.VAPID_SUBJECT?.trim() || 'mailto:notifications@comet-autos.app';
+  try {
+    webpush.setVapidDetails(
+      /^(mailto:|https?:)/i.test(subject) ? subject : `mailto:${subject}`,
+      VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY,
+    );
+    configured = true;
+  } catch (error) {
+    // A mistyped key turns push off; it must never take a page down with it.
+    console.error('Push notifications are off: the VAPID settings are not valid.', (error as Error).message);
+    configured = false;
+  }
+  return configured;
 }
 
 /** The public half of the key pair, which a browser needs to subscribe. */

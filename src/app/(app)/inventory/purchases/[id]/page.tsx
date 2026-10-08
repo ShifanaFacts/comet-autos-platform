@@ -142,6 +142,29 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
           </>
         }
       />
+      {purchase.billStatus === 'PENDING' && purchase.status !== 'CANCELLED' ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm sm:px-5">
+          <span>
+            <span className="font-medium">The shop&apos;s tax invoice is awaited.</span>{' '}
+            <span className="text-muted-foreground">
+              Its VAT ({formatMoney(purchase.taxAmount?.toString() ?? '0')}) can&apos;t be claimed until
+              the bill is matched.
+            </span>
+          </span>
+          <LinkButton href={`/inventory/purchases/${purchase.id}/match`} variant="outline">
+            Match tax invoice
+          </LinkButton>
+        </div>
+      ) : purchase.billStatus === 'NO_TAX_INVOICE' ? (
+        <p className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground sm:px-5">
+          No tax invoice from the shop{purchase.billNote ? ` — ${purchase.billNote}` : ''}. Its VAT is part of the cost.
+        </p>
+      ) : purchase.billMatchedByUserId && purchase.billReceivedOn ? (
+        <p className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground sm:px-5">
+          Tax invoice matched after the parts arrived; its VAT is claimed from{' '}
+          {formatCalendarDate(purchase.billReceivedOn)}.
+        </p>
+      ) : null}
 
       <Grid className="sm:grid-cols-3">
         <Panel>

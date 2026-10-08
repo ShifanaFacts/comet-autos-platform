@@ -1,3 +1,4 @@
+import type { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
@@ -12,10 +13,7 @@ import { localDateString } from '@/lib/format';
  */
 
 /** A quotation is out of time when it was sent and its validity date has passed. */
-export function quotationExpired(estimate: {
-  status: string;
-  validUntil: Date | null;
-}): boolean {
+export function quotationExpired(estimate: { status: string; validUntil: Date | null }): boolean {
   return (
     estimate.status === 'SENT' &&
     estimate.validUntil !== null &&
@@ -144,6 +142,8 @@ export async function listQuotations(
   filters: { q?: string; status?: string } = {},
   /** Rows to return. The screen shows a page; an export asks for everything. */
   limit = 200,
+  /** Rows to skip: the pages before the one shown. */
+  offset = 0,
 ) {
   requirePermission(user, 'quotation.view');
   const q = filters.q?.trim();
@@ -151,50 +151,57 @@ export async function listQuotations(
     ['draft', 'awaiting', 'approved'].includes(filters.status ?? '') ? filters.status : ''
   ) as QuotationFilter;
 
-  const estimates = await prisma.estimate.findMany({
-    where: {
-      organizationId: user.organizationId,
-      kind: 'ORIGINAL',
-      nextVersions: { none: {} },
-      ...(status === 'draft'
-        ? { status: 'DRAFT' }
-        : status === 'awaiting'
-          ? { status: 'SENT' }
-          : status === 'approved'
-            ? { status: { in: ['APPROVED', 'PARTIALLY_APPROVED'] } }
-            : {}),
-      ...(q
-        ? {
-            OR: [
-              { estimateNumber: { contains: q, mode: 'insensitive' } },
-              { customer: { name: { contains: q, mode: 'insensitive' } } },
-              { customer: { phone: { contains: q, mode: 'insensitive' } } },
-              { vehicle: { plateNumber: { contains: q, mode: 'insensitive' } } },
-              { jobCard: { jobNumber: { contains: q, mode: 'insensitive' } } },
-            ],
-          }
-        : {}),
-    },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: limit,
-    select: {
-      id: true,
-      estimateNumber: true,
-      version: true,
-      status: true,
-      kind: true,
-      totalAmount: true,
-      validUntil: true,
-      sentAt: true,
-      createdAt: true,
-      updatedAt: true,
-      customer: { select: { name: true, phone: true } },
-      vehicle: { select: { plateNumber: true, make: true, model: true } },
-      jobCard: { select: { id: true, jobNumber: true } },
-    },
-  });
+  const where: Prisma.EstimateWhereInput = {
+    organizationId: user.organizationId,
+    kind: 'ORIGINAL',
+    nextVersions: { none: {} },
+    ...(status === 'draft'
+      ? { status: 'DRAFT' }
+      : status === 'awaiting'
+        ? { status: 'SENT' }
+        : status === 'approved'
+          ? { status: { in: ['APPROVED', 'PARTIALLY_APPROVED'] } }
+          : {}),
+    ...(q
+      ? {
+          OR: [
+            { estimateNumber: { contains: q, mode: 'insensitive' } },
+            { customer: { name: { contains: q, mode: 'insensitive' } } },
+            { customer: { phone: { contains: q, mode: 'insensitive' } } },
+            { vehicle: { plateNumber: { contains: q, mode: 'insensitive' } } },
+            { jobCard: { jobNumber: { contains: q, mode: 'insensitive' } } },
+          ],
+        }
+      : {}),
+  };
+  const [estimates, total] = await Promise.all([
+    prisma.estimate.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: offset,
+      take: limit,
+      select: {
+        id: true,
+        estimateNumber: true,
+        version: true,
+        status: true,
+        kind: true,
+        totalAmount: true,
+        validUntil: true,
+        sentAt: true,
+        createdAt: true,
+        updatedAt: true,
+        customer: { select: { name: true, phone: true } },
+        vehicle: { select: { plateNumber: true, make: true, model: true } },
+        jobCard: { select: { id: true, jobNumber: true } },
+      },
+    }),
+    prisma.estimate.count({ where }),
+  ]);
 
   return {
+    /** Every row the search and filters match, not only the page shown. */
+    total,
     status,
     quotations: estimates.map((estimate) => ({
       ...estimate,

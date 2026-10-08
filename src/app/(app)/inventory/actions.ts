@@ -20,6 +20,8 @@ import {
 } from '@/lib/inventory/purchases';
 
 import { removeAttachment } from '@/lib/documents/attachments';
+import { buyPartForJob, refuseLikelyDuplicate } from '@/lib/inventory/quick-purchase';
+import { matchBill } from '@/lib/inventory/bills';
 
 function refreshInventory() {
   revalidatePath('/inventory', 'layout');
@@ -47,7 +49,17 @@ export async function quickCreatePartAction(
   formData: FormData,
 ): Promise<ActionResult<PartOption>> {
   const user = await requireUser();
-  const result = await runAction(() => createPart(user, formDataToObject(formData)));
+  const input = formDataToObject(formData);
+  const result = await runAction(async () => {
+    // Not a second copy of a part already there under another spelling.
+    if (input.confirmNew !== '1') {
+      await refuseLikelyDuplicate(prisma, user.organizationId, {
+        name: input.name ?? '',
+        sku: input.sku,
+      });
+    }
+    return createPart(user, input);
+  });
   const id = result.data?.id ?? (result.duplicate ? result.duplicateOf : null);
   if (!result.ok || !id) return { ...toClientResult(result), data: undefined };
   refreshInventory();
@@ -261,4 +273,53 @@ export async function mergeSupplierAction(
   refreshInventory();
   revalidatePath('/finance', 'layout');
   redirect(`/inventory/suppliers/${targetId}?merged=1`);
+}
+
+/**
+ * A part bought for a job, recorded from an invoice line: the part (picked
+ * or added), its purchase received into stock, and the payment. The line
+ * gets the part back with its new stock and the cost paid.
+ */
+export async function buyPartForJobAction(
+  _prev: ActionResult<BoughtPart>,
+  formData: FormData,
+): Promise<ActionResult<BoughtPart>> {
+  const user = await requireUser();
+  const input = formDataToObject(formData);
+  const result = await runAction(() => buyPartForJob(user, input));
+  if (!result.ok || !result.data) return { ...toClientResult(result), data: undefined };
+  refreshInventory();
+  revalidatePath('/finance/payables', 'layout');
+  revalidatePath('/finance/money', 'layout');
+  return {
+    ok: true,
+    data: {
+      part: await getPartOption(user, result.data.partId),
+      unitCost: input.unitCost ?? '',
+      purchaseNumber: result.data.purchaseNumber,
+      billAwaited: result.data.billAwaited,
+    },
+  };
+}
+
+export interface BoughtPart {
+  part: PartOption;
+  /** What one cost, as paid — the invoice line's cost. */
+  unitCost: string;
+  purchaseNumber: string;
+  billAwaited: boolean;
+}
+
+/** The supplier's tax invoice matched to a purchase — or recorded as never coming. */
+export async function matchBillAction(
+  purchaseId: string,
+  _prev: ActionResult,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const result = await runAction(() => matchBill(user, purchaseId, formDataToObject(formData)));
+  if (!result.ok) return toClientResult(result);
+  refreshInventory();
+  revalidatePath('/finance', 'layout');
+  redirect('/inventory/purchases/bills?matched=1');
 }

@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { Plus, ShoppingCart } from 'lucide-react';
+import { FileCheck2, Plus, ShoppingCart } from 'lucide-react';
+import { prisma } from '@/lib/prisma';
 import type { PurchaseStatus } from '@/generated/prisma/enums';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { canExport } from '@/lib/data-transfer/exports';
@@ -10,6 +11,8 @@ import { formatCalendarDate, formatDate, formatMoney } from '@/lib/format';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { ListDataActions } from '@/components/shared/list-data-actions';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { LinkButton } from '@/components/shared/link-button';
 import { ListFilters } from '@/components/inventory/list-filters';
 import { PurchaseStatusPill } from '@/components/inventory/purchase-status';
@@ -35,16 +38,26 @@ const STATUSES: PurchaseStatus[] = ['DRAFT', 'PARTIALLY_RECEIVED', 'RECEIVED', '
 export default async function PurchasesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; supplier?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; supplier?: string; page?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const { purchases, suppliers } = await listPurchases(user, {
-    q: params.q,
-    status: params.status,
-    supplierId: params.supplier,
-  });
+  const {
+    result: { purchases, suppliers },
+    info,
+  } = await loadPage(pageFrom(params.page), (skip, take) =>
+    listPurchases(
+      user,
+      { q: params.q, status: params.status, supplierId: params.supplier },
+      take,
+      skip,
+    ),
+  );
   const canCreate = hasPermission(user, 'purchase.create');
+  // Purchases still waiting for the shop's tax invoice (lib/inventory/bills.ts).
+  const awaiting = await prisma.purchase.count({
+    where: { organizationId: user.organizationId, billStatus: 'PENDING', status: { not: 'CANCELLED' } },
+  });
   const canRemove = hasPermission(user, REMOVAL.purchases.permission);
   // Only a purchase with nothing received yet can be cancelled — the same
   // rule as cancelPurchase; the server checks it again.
@@ -74,6 +87,10 @@ export default async function PurchasesPage({
                 Object.entries(params).filter(([, value]) => Boolean(value)) as [string, string][],
               ).toString()}
             />
+            <LinkButton href="/inventory/purchases/bills" variant="outline" size="lg">
+              <FileCheck2 />
+              Bills to match{awaiting ? ` (${awaiting})` : ''}
+            </LinkButton>
             {canCreate ? (
               <LinkButton href="/inventory/purchases/new" size="lg">
                 <Plus />
@@ -186,6 +203,12 @@ export default async function PurchasesPage({
                   </TableBody>
                 </Table>
               </div>
+              <Pagination
+                info={info}
+                basePath="/inventory/purchases"
+                params={params}
+                noun="purchases"
+              />
             </Panel>
           </RecordSelection>
         )}

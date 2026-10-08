@@ -208,8 +208,8 @@ export async function listOwnerMoney(user: AuthenticatedUser) {
   requirePermission(user, 'money.view');
   const rows = await prisma.ownerMoney.findMany({
     where: { organizationId: user.organizationId },
+    // Every entry: the totals and each partner's balance are worked out over them all.
     orderBy: [{ movedOn: 'desc' }, { createdAt: 'desc' }],
-    take: 300,
     select: {
       id: true,
       entryNumber: true,

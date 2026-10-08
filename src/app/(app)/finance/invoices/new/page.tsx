@@ -9,6 +9,7 @@ import { getAccountChoices } from '@/lib/accounting/reports';
 import { getCustomerOptions, type CustomerOption } from '@/lib/customers/picker';
 import { editableBill, editableLine } from '@/lib/billing/editable-lines';
 import { getHeldAdvances } from '@/lib/billing/advances';
+import { jobHasFittedParts } from '@/lib/billing/part-lines';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { NewInvoiceForm, type QuotationChoice } from './invoice-form';
 
@@ -108,7 +109,8 @@ export default async function NewInvoicePage({
           quotation={quotation}
           defaultVatRate={await resolveDefaultVatRate(user.organizationId)}
           taxCodes={await getTaxCodeOptions(user.organizationId, 'sales')}
-          catalog={await getPartCatalog(user)}
+          catalog={await getPartCatalog(user, { forSale: true })}
+          partsFitted={await jobHasFittedParts(user.organizationId, workOrder?.id ?? quotation?.jobCardId ?? null)}
           modes={await getPaymentModeOptions(user.organizationId, 'receipts')}
           initialPayNow={params.pay === 'now'}
           canTakePayment={hasPermission(user, 'payment.create', {

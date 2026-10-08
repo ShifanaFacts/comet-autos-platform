@@ -19,6 +19,8 @@ import {
 import { EstimateStatusPill } from '@/components/workshop/status-pills';
 import { VehiclePlate } from '@/components/shared/vehicle-plate';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { LinkButton } from '@/components/shared/link-button';
 import { SearchField } from '@/components/shared/search-field';
 import { cn } from '@/lib/utils';
@@ -46,11 +48,16 @@ const FILTERS = [
 export default async function QuotationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; page?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const { quotations, status } = await listQuotations(user, params);
+  const {
+    result: { quotations, status },
+    info,
+  } = await loadPage(pageFrom(params.page), (skip, take) =>
+    listQuotations(user, params, take, skip),
+  );
   const canCreate = hasPermission(user, 'quotation.create', {
     branchId: user.primaryBranchId ?? undefined,
   });
@@ -173,10 +180,7 @@ export default async function QuotationsPage({
                     />
                   }
                   title={
-                    <Link
-                      href={`/quotations/${quotation.id}`}
-                      className="row-link"
-                    >
+                    <Link href={`/quotations/${quotation.id}`} className="row-link">
                       {quotation.estimateNumber}
                     </Link>
                   }
@@ -227,10 +231,7 @@ export default async function QuotationsPage({
                         removable={removable(quotation)}
                       />
                       <TableCell>
-                        <Link
-                          href={`/quotations/${quotation.id}`}
-                          className="font-medium row-link"
-                        >
+                        <Link href={`/quotations/${quotation.id}`} className="font-medium row-link">
                           {quotation.estimateNumber}
                         </Link>
                         {quotation.version > 1 ? (
@@ -282,6 +283,7 @@ export default async function QuotationsPage({
                 </TableBody>
               </Table>
             </TableWrap>
+            <Pagination info={info} basePath="/quotations" params={params} noun="quotations" />
           </Panel>
         </RecordSelection>
       )}

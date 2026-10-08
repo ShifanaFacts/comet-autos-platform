@@ -38,6 +38,7 @@ import {
   Tags,
   BookText,
   CalendarCheck2,
+  CalendarClock,
   FolderOpen,
   NotebookPen,
   Scale,
@@ -175,6 +176,12 @@ export const NAV_GROUPS: NavGroup[] = [
     parent: 'Finance',
     items: [
       { label: 'Financial overview', href: '/finance', icon: ChartPie, permission: 'invoice.view' },
+      {
+        label: 'Tax & accounting calendar',
+        href: '/finance/calendar',
+        icon: CalendarClock,
+        permission: 'accounting.view',
+      },
     ],
   },
   {

@@ -31,6 +31,10 @@ export interface EditableLine {
   discount: string;
   /** Invoices: the income account it books to; blank for the default of its type. */
   accountId: string;
+  /** Parts lines: the catalogue part it is; blank for none picked yet. */
+  partId: string;
+  /** What one cost, before VAT; blank for the part's current cost. */
+  unitCost: string;
 }
 
 /** A discount on the whole bill, as typed. Blank for none. */
@@ -60,6 +64,8 @@ export function editableLine(
     accountId?: string | null;
     vatTreatment?: VatTreatment | null;
     taxCodeId?: string | null;
+    partId?: string | null;
+    unitCost?: Stored | null;
   },
   key: string,
   defaultVatRate: string,
@@ -77,6 +83,8 @@ export function editableLine(
     accountId: item.accountId ?? '',
     vatTreatment: item.vatTreatment ?? treatmentFromRate(item.taxRate ?? defaultVatRate),
     taxCodeId: item.taxCodeId ?? '',
+    partId: item.partId ?? '',
+    unitCost: item.unitCost?.toString() ?? '',
   };
 }
 

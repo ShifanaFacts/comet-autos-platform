@@ -722,6 +722,8 @@ export async function listMovements(
   filters: { type?: string; q?: string },
   /** Rows to return. The screen shows a page; an export asks for everything. */
   limit = 200,
+  /** Rows to skip: the pages before the one shown. */
+  offset = 0,
 ) {
   requirePermission(user, 'inventory.view');
   const branch = await resolveInventoryBranch(user);
@@ -730,29 +732,36 @@ export async function listMovements(
     filters.type && filters.type in MOVEMENT_LABEL
       ? (filters.type as InventoryTransactionType)
       : undefined;
-  const movements = await prisma.inventoryTransaction.findMany({
-    where: {
-      organizationId: user.organizationId,
-      branchId: branch.id,
-      ...(type ? { transactionType: type } : {}),
-      ...(q
-        ? {
-            OR: [
-              { part: { sku: { contains: q, mode: 'insensitive' } } },
-              { part: { name: { contains: q, mode: 'insensitive' } } },
-              { note: { contains: q, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
-    },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: limit,
-    include: {
-      ...movementInclude,
-      part: { select: { id: true, sku: true, name: true, unitOfMeasure: true } },
-    },
-  });
+  const where: Prisma.InventoryTransactionWhereInput = {
+    organizationId: user.organizationId,
+    branchId: branch.id,
+    ...(type ? { transactionType: type } : {}),
+    ...(q
+      ? {
+          OR: [
+            { part: { sku: { contains: q, mode: 'insensitive' } } },
+            { part: { name: { contains: q, mode: 'insensitive' } } },
+            { note: { contains: q, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  };
+  const [movements, total] = await Promise.all([
+    prisma.inventoryTransaction.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: offset,
+      take: limit,
+      include: {
+        ...movementInclude,
+        part: { select: { id: true, sku: true, name: true, unitOfMeasure: true } },
+      },
+    }),
+    prisma.inventoryTransaction.count({ where }),
+  ]);
   return {
+    /** Every row the search and filters match, not only the page shown. */
+    total,
     branch,
     movements: movements.map((m) => ({ ...m, quantityMilli: signedToMilli(m.quantity) })),
   };

@@ -2,11 +2,13 @@ import Link from 'next/link';
 import { Car, UserPlus } from 'lucide-react';
 import { hasPermission, requireUser } from '@/lib/auth/authorize';
 import { canExport } from '@/lib/data-transfer/exports';
-import { listVehicles } from '@/lib/vehicles/service';
+import { pageVehicles } from '@/lib/vehicles/service';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { SearchField } from '@/components/shared/search-field';
 import { ActiveDeletedTabs } from '@/components/shared/active-deleted-tabs';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { LinkButton } from '@/components/shared/link-button';
 import { ListDataActions } from '@/components/shared/list-data-actions';
 import { importColumns } from '@/lib/data-transfer/imports';
@@ -32,14 +34,19 @@ import {
 export default async function VehiclesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; show?: string }>;
+  searchParams: Promise<{ q?: string; show?: string; page?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
   const query = (params.q ?? '').trim();
   const deleted = params.show === 'deleted';
   const canImport = hasPermission(user, 'vehicle.create');
-  const vehicles = await listVehicles(user, query, 50, deleted);
+  const {
+    result: { vehicles },
+    info,
+  } = await loadPage(pageFrom(params.page), (skip, take) =>
+    pageVehicles(user, { query, deleted }, take, skip),
+  );
   // Nothing on the Deleted tab can be deleted again; it is restored from its page.
   const canRemove = !deleted && hasPermission(user, REMOVAL.vehicles.permission);
   const rows = vehicles.map((vehicle) => ({ id: vehicle.id, label: vehicle.plateNumber }));
@@ -112,10 +119,7 @@ export default async function VehiclesPage({
                     <TableRow key={vehicle.id} className="relative">
                       <SelectCell id={vehicle.id} label={vehicle.plateNumber} />
                       <TableCell>
-                        <Link
-                          href={`/vehicles/${vehicle.id}`}
-                          className="row-link"
-                        >
+                        <Link href={`/vehicles/${vehicle.id}`} className="row-link">
                           <VehiclePlate
                             plateNumber={vehicle.plateNumber}
                             className="px-2 py-0.5 text-xs"
@@ -135,15 +139,14 @@ export default async function VehiclesPage({
                         {vehicle.vin ?? '—'}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground tabular-nums">
-                        {vehicle.lastMileage !== null
-                          ? `${formatKm(vehicle.lastMileage)}`
-                          : '—'}
+                        {vehicle.lastMileage !== null ? `${formatKm(vehicle.lastMileage)}` : '—'}
                       </TableCell>
                       <RemoveCell id={vehicle.id} label={vehicle.plateNumber} />
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
+              <Pagination info={info} basePath="/vehicles" params={params} noun="vehicles" />
             </Panel>
           </RecordSelection>
         )}

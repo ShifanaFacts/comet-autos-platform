@@ -197,6 +197,52 @@ export async function listVehicles(
   });
 }
 
+/** The most matches a search pages through; past that the search wants narrowing. */
+const SEARCH_LIMIT = 500;
+
+/**
+ * One page of the Vehicles list, and how many there are in all. The plain
+ * and Deleted lists page in the database; a search pages through its matches.
+ */
+export async function pageVehicles(
+  user: AuthenticatedUser,
+  filters: { query: string; deleted: boolean },
+  take: number,
+  skip: number,
+) {
+  requirePermission(user, 'vehicle.view');
+  const trimmed = filters.query.trim();
+  if (!filters.deleted && trimmed.length >= 2) {
+    const matches = await searchVehicles(user.organizationId, trimmed, SEARCH_LIMIT);
+    return { vehicles: matches.slice(skip, skip + take), total: matches.length };
+  }
+  const where: Prisma.VehicleWhereInput = {
+    organizationId: user.organizationId,
+    isActive: !filters.deleted,
+    ...(filters.deleted && trimmed
+      ? {
+          OR: [
+            { plateNumber: { contains: trimmed, mode: 'insensitive' } },
+            { make: { contains: trimmed, mode: 'insensitive' } },
+            { model: { contains: trimmed, mode: 'insensitive' } },
+            { vin: { contains: trimmed, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  };
+  const [vehicles, total] = await Promise.all([
+    prisma.vehicle.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      skip,
+      take,
+      include: { customer: { select: { id: true, name: true, phone: true } } },
+    }),
+    prisma.vehicle.count({ where }),
+  ]);
+  return { vehicles, total };
+}
+
 export async function getVehicleDetail(user: AuthenticatedUser, vehicleId: string) {
   requirePermission(user, 'vehicle.view');
   const vehicle = await prisma.vehicle.findFirst({

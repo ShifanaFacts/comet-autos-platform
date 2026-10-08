@@ -337,7 +337,7 @@ function PurchaseFormBody({
               name="supplierInvoiceNumber"
               defaultValue={initial?.supplierInvoiceNumber}
               error={errors.supplierInvoiceNumber}
-              hint="Their invoice or delivery note."
+              hint="Their tax invoice number. Blank: the bill is awaited, and its VAT waits under Bills to match."
               className="[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm"
             />
             <TextField

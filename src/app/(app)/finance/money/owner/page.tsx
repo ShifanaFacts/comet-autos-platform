@@ -6,6 +6,8 @@ import { formatCalendarDate, formatMoney } from '@/lib/format';
 import { Grid, PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { pageFrom, slicePage } from '@/lib/pagination';
 import { StatusPill } from '@/components/shared/status-pill';
 import {
   AddPartnerForm,
@@ -16,8 +18,13 @@ import {
 export const metadata = { title: "Owner's money" };
 
 /** An owner putting money into the business or taking it out, and every one recorded. */
-export default async function OwnerMoneyPage() {
+export default async function OwnerMoneyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const user = await requireUser();
+  const params = await searchParams;
   let list;
   let options;
   try {
@@ -26,6 +33,7 @@ export default async function OwnerMoneyPage() {
     if (error instanceof AuthError) return <AccessDenied what="owner's money" />;
     throw error;
   }
+  const { rows, info } = slicePage(list.rows, pageFrom(params.page));
 
   return (
     <Stack gap="2xl" className="animate-in fade-in duration-300">
@@ -132,7 +140,7 @@ export default async function OwnerMoneyPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {list.rows.map((row) => {
+                  {rows.map((row) => {
                     const isVoid = row.status === 'VOID';
                     return (
                       <tr key={row.id} className={isVoid ? 'text-muted-foreground' : undefined}>
@@ -190,6 +198,12 @@ export default async function OwnerMoneyPage() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              info={info}
+              basePath="/finance/money/owner"
+              params={params}
+              noun="entries"
+            />
           </Panel>
         )}
       </Section>

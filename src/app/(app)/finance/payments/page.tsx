@@ -9,6 +9,8 @@ import { filsToString } from '@/lib/money';
 import { PageHeader, Panel, Stack } from '@/components/layout/primitives';
 import { ListDataActions } from '@/components/shared/list-data-actions';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Pagination } from '@/components/shared/pagination';
+import { loadPage, pageFrom } from '@/lib/pagination';
 import { StatusPill } from '@/components/shared/status-pill';
 import { ActiveDeletedTabs } from '@/components/shared/active-deleted-tabs';
 import { SearchField } from '@/components/shared/search-field';
@@ -34,7 +36,7 @@ export const metadata = { title: 'Payments' };
 export default async function PaymentsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; show?: string }>;
+  searchParams: Promise<{ q?: string; show?: string; page?: string }>;
 }) {
   const user = await requireUser();
   if (
@@ -51,10 +53,12 @@ export default async function PaymentsPage({
   // Received: the money that stands. Reversed: payments taken back, each
   // with its reversal — the original is never edited or deleted.
   const reversedView = params.show === 'reversed';
-  const { payments, totalShown, totalReversed } = await listPayments(user, {
-    q: query,
-    view: reversedView ? 'reversed' : 'received',
-  });
+  const {
+    result: { payments, total, totalShown, totalReversed },
+    info,
+  } = await loadPage(pageFrom(params.page), (skip, take) =>
+    listPayments(user, { q: query, view: reversedView ? 'reversed' : 'received' }, take, skip),
+  );
   const canRemove = hasPermission(
     user,
     REMOVAL.payments.permission,
@@ -123,7 +127,7 @@ export default async function PaymentsPage({
         ) : (
           <>
             <p className="text-sm text-muted-foreground">
-              {payments.length} payment{payments.length === 1 ? '' : 's'} shown ·{' '}
+              {total} payment{total === 1 ? '' : 's'} ·{' '}
               <span className="font-semibold text-foreground tabular-nums">
                 {formatMoney(filsToString(reversedView ? totalReversed : totalShown))}
               </span>{' '}
@@ -220,6 +224,12 @@ export default async function PaymentsPage({
                     </TableBody>
                   </Table>
                 </div>
+                <Pagination
+                  info={info}
+                  basePath="/finance/payments"
+                  params={params}
+                  noun="payments"
+                />
               </Panel>
             </RecordSelection>
           </>

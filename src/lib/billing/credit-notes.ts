@@ -1029,10 +1029,13 @@ export async function listInvoiceCreditNotes(user: AuthenticatedUser, invoiceId:
   });
 }
 
-/** Every credit note, newest first, for the finance list. */
+/** One page of credit notes, newest first, for the finance list — with the count and total of every match. */
 export async function listCreditNotes(
   user: AuthenticatedUser,
   filters: { q?: string; status?: 'ISSUED' | 'VOID' | 'REFUND_DUE' } = {},
+  limit = 200,
+  /** Rows to skip: the pages before the one shown. */
+  offset = 0,
 ) {
   requirePermission(user, 'credit_note.view');
   const q = filters.q?.trim();
@@ -1056,23 +1059,34 @@ export async function listCreditNotes(
         }
       : {}),
   };
-  return prisma.creditNote.findMany({
-    where,
-    orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
-    take: 200,
-    select: {
-      id: true,
-      creditNoteNumber: true,
-      status: true,
-      issueDate: true,
-      reason: true,
-      subtotal: true,
-      taxAmount: true,
-      totalAmount: true,
-      refundAmount: true,
-      refundedOn: true,
-      invoice: { select: { id: true, invoiceNumber: true, customerName: true } },
-      customer: { select: { name: true } },
-    },
-  });
+  const [notes, total, sum] = await Promise.all([
+    prisma.creditNote.findMany({
+      where,
+      orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
+      skip: offset,
+      take: limit,
+      select: {
+        id: true,
+        creditNoteNumber: true,
+        status: true,
+        issueDate: true,
+        reason: true,
+        subtotal: true,
+        taxAmount: true,
+        totalAmount: true,
+        refundAmount: true,
+        refundedOn: true,
+        invoice: { select: { id: true, invoiceNumber: true, customerName: true } },
+        customer: { select: { name: true } },
+      },
+    }),
+    prisma.creditNote.count({ where }),
+    prisma.creditNote.aggregate({ where, _sum: { totalAmount: true } }),
+  ]);
+  return {
+    notes,
+    /** Every credit note the search and view match, not only the page shown. */
+    total,
+    totalAmount: sum._sum.totalAmount?.toString() ?? '0',
+  };
 }
