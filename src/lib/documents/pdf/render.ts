@@ -167,7 +167,9 @@ function parties(page: PdfPage, doc: CustomerDocumentModel, top: number) {
           ? 'Prepared for'
           : doc.kind === 'JOB_CARD'
             ? 'Customer'
-            : 'Billed to',
+            : doc.kind === 'PAYMENT_VOUCHER'
+              ? 'Paid to'
+              : 'Billed to',
       lines: [
         { text: doc.customer.name, bold: true },
         ...(doc.customer.phone ? [{ text: doc.customer.phone }] : []),
@@ -776,15 +778,23 @@ function jobCardBody(layout: Layout, doc: CustomerDocumentModel) {
   writingBox(layout, 'Workshop supervisor comments', '', 4);
 }
 
-/** Two signature boxes: the customer handing the vehicle over, and the workshop taking it in. */
-function signatures(layout: Layout) {
+/** A job card: the customer hands the vehicle over, the workshop takes it in. */
+const JOB_CARD_SIGNATURES = [
+  { title: 'Customer', caption: 'I hand over the vehicle in the condition marked above.' },
+  { title: 'For the workshop', caption: 'Vehicle received by' },
+];
+
+/** A payment voucher: the payee received the money, the workshop paid it. */
+const VOUCHER_SIGNATURES = [
+  { title: 'Received by', caption: 'I received the amount above in full.' },
+  { title: 'For the workshop', caption: 'Paid and approved by' },
+];
+
+/** Two signature boxes side by side. */
+function signatures(layout: Layout, boxes = JOB_CARD_SIGNATURES) {
   const height = 64;
   layout.ensure(height);
   const half = (CONTENT - 12) / 2;
-  const boxes = [
-    { title: 'Customer', caption: 'I hand over the vehicle in the condition marked above.' },
-    { title: 'For the workshop', caption: 'Vehicle received by' },
-  ];
   boxes.forEach((box, index) => {
     const x = MARGIN + index * (half + 12);
     const { page } = layout;
@@ -957,13 +967,16 @@ export function renderDocumentPdf(doc: CustomerDocumentModel): Buffer {
     notes(layout, doc);
     signatures(layout);
   } else {
+    // A receipt or voucher is about one payment: its details come first.
+    const paymentFirst = doc.kind === 'RECEIPT' || doc.kind === 'PAYMENT_VOUCHER';
     highlight(layout, doc);
     narrative(layout, doc);
-    if (doc.kind === 'RECEIPT') fields(layout, doc.detailsTitle, doc.details);
+    if (paymentFirst) fields(layout, doc.detailsTitle, doc.details);
     sections(layout, doc);
     totals(layout, doc);
-    if (doc.kind !== 'RECEIPT') fields(layout, doc.detailsTitle, doc.details);
+    if (!paymentFirst) fields(layout, doc.detailsTitle, doc.details);
     notes(layout, doc);
+    if (doc.kind === 'PAYMENT_VOUCHER') signatures(layout, VOUCHER_SIGNATURES);
   }
   footers(pdf, doc);
   return pdf.toBuffer();

@@ -17,6 +17,7 @@ import { ExpenseForm, type ExpenseDraft } from '@/components/finance/expense-for
 import { recordScannedExpenseAction } from '@/app/(app)/finance/actions';
 import type { AccountChoice } from '@/lib/accounting/reports';
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
+import type { JobChoice } from '@/lib/finance/job-costing';
 import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
 import type { BillDraft } from '@/lib/bill-reader/read';
 import type { ActionResult } from '@/lib/errors';
@@ -77,6 +78,7 @@ export function ScanExpense({
   taxCodes,
   modes,
   people = [],
+  jobs,
 }: {
   categories: { id: string; accountCode: string; accountName: string }[];
   defaultVatRate: string;
@@ -84,13 +86,14 @@ export function ScanExpense({
   taxCodes: TaxCodeOption[];
   modes: PaymentModeOption[];
   people?: { id: string; name: string }[];
+  jobs?: JobChoice[];
 }) {
   const router = useRouter();
   const { phase, scan, reset } = useBillScan('expense');
   // Each expense recorded by hand clears the form for the next one.
   const [saved, setSaved] = useState(0);
   const scanned = phase.name === 'ready' ? phase : null;
-  const form = { categories, defaultVatRate, moneyAccounts, taxCodes, modes, people };
+  const form = { categories, defaultVatRate, moneyAccounts, taxCodes, modes, people, jobs };
 
   async function save(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
     const result = await recordScannedExpenseAction({ ok: false }, formData);

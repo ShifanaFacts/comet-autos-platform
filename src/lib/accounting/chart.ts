@@ -12,9 +12,8 @@ import { DomainError } from '@/lib/errors';
  * account, and add its own, without breaking the books.
  *
  * The rest of the standard chart has no role: it is there for the
- * accountant's own entries (fixed assets and depreciation, the owner's
- * capital and drawings, the end-of-service gratuity provision, corporate
- * tax) and for filing expenses in the usual categories.
+ * accountant's own entries (fixed assets and depreciation, corporate tax)
+ * and for filing expenses in the usual categories.
  *
  * Numbering (the usual UAE layout; cost of sales is 5000–5099):
  *   1000 assets · 2000 liabilities · 3000 equity · 4000 income
@@ -67,9 +66,23 @@ export const SYSTEM_ACCOUNTS: SystemAccount[] = [
     name: 'Customer advances (unearned revenue)',
     type: 'LIABILITY',
   },
+  // Card money taken on the workshop's machine for someone else, until paid
+  // over to them on a payment voucher.
+  {
+    role: 'MONEY_HELD_FOR_OTHERS',
+    code: '2040',
+    name: 'Money collected for others',
+    type: 'LIABILITY',
+  },
   { role: 'VAT_OUTPUT', code: '2100', name: 'Output VAT payable', type: 'LIABILITY' },
   { role: 'VAT_SETTLEMENT', code: '2105', name: 'VAT due to FTA', type: 'LIABILITY' },
   { role: 'SALARIES_PAYABLE', code: '2200', name: 'Salaries & wages payable', type: 'LIABILITY' },
+  {
+    role: 'GRATUITY_PROVISION',
+    code: '2500',
+    name: 'Provision for end-of-service benefits',
+    type: 'LIABILITY',
+  },
   {
     role: 'OWNER_ADVANCES',
     code: '2520',
@@ -95,6 +108,14 @@ export const SYSTEM_ACCOUNTS: SystemAccount[] = [
   { role: 'COST_OF_PARTS', code: '5000', name: 'Cost of sales — spare parts', type: 'EXPENSE' },
   { role: 'STOCK_ADJUSTMENTS', code: '5010', name: 'Inventory adjustments', type: 'EXPENSE' },
   { role: 'SALARIES_EXPENSE', code: '5160', name: 'Salaries & wages', type: 'EXPENSE' },
+  {
+    role: 'GRATUITY_EXPENSE',
+    code: '5165',
+    name: 'End-of-service benefits expense',
+    type: 'EXPENSE',
+  },
+  // What the bank keeps: the card machine's fee on a settlement.
+  { role: 'BANK_CHARGES', code: '5190', name: 'Bank charges', type: 'EXPENSE' },
   { role: 'OTHER_EXPENSES', code: '5900', name: 'Miscellaneous expenses', type: 'EXPENSE' },
 ];
 
@@ -116,7 +137,6 @@ export const STANDARD_ACCOUNTS: ChartAccount[] = [
   { code: '2010', name: 'Accrued expenses', type: 'LIABILITY' },
   { code: '2020', name: 'Post-dated cheques issued (PDC payable)', type: 'LIABILITY' },
   { code: '2110', name: 'Corporate tax payable', type: 'LIABILITY' },
-  { code: '2500', name: 'Provision for end-of-service benefits', type: 'LIABILITY' },
   { code: '2510', name: 'Bank loans', type: 'LIABILITY' },
   // Equity: Owner's capital (3000) and drawings (3100) are system accounts above.
   // Income
@@ -131,11 +151,10 @@ export const STANDARD_ACCOUNTS: ChartAccount[] = [
   { code: '5130', name: 'Tools & equipment (expensed)', type: 'EXPENSE' },
   { code: '5140', name: 'Vehicle running & transport', type: 'EXPENSE' },
   { code: '5150', name: 'Repairs & maintenance', type: 'EXPENSE' },
-  { code: '5165', name: 'End-of-service benefits expense', type: 'EXPENSE' },
   { code: '5170', name: 'Marketing & advertising', type: 'EXPENSE' },
   { code: '5180', name: 'Trade licence & government fees', type: 'EXPENSE' },
   { code: '5185', name: 'Visa, Emirates ID & staff medical insurance', type: 'EXPENSE' },
-  { code: '5190', name: 'Bank charges', type: 'EXPENSE' },
+  // Bank charges (5190) is a system account above.
   { code: '5200', name: 'Insurance', type: 'EXPENSE' },
   { code: '5210', name: 'Telephone & internet', type: 'EXPENSE' },
   { code: '5220', name: 'Professional fees — audit & legal', type: 'EXPENSE' },

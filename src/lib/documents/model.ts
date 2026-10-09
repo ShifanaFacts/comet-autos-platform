@@ -10,7 +10,13 @@ import { filsToString, formatMilli, signedToMilli, toFils } from '@/lib/money';
  * business numbers (QT-, INV-, RCT-, CN-, JC-) the customer can read.
  */
 
-export type DocumentKind = 'QUOTATION' | 'INVOICE' | 'RECEIPT' | 'CREDIT_NOTE' | 'JOB_CARD';
+export type DocumentKind =
+  | 'QUOTATION'
+  | 'INVOICE'
+  | 'RECEIPT'
+  | 'CREDIT_NOTE'
+  | 'JOB_CARD'
+  | 'PAYMENT_VOUCHER';
 export type DocumentTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 
 /** The TYPE column, as the workshop's own sheet prints it. */

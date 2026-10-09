@@ -208,6 +208,19 @@ enum AccountRole {
   /// Input VAT on parts received before the supplier's tax invoice: held
   /// here, and moved to VAT_INPUT once the bill is matched.
   VAT_INPUT_PENDING
+  /// "End-of-service benefits expense": each month's increase in what the
+  /// team would be owed in gratuity, booked with the payroll.
+  GRATUITY_EXPENSE
+  /// "Provision for end-of-service benefits": the gratuity the team has
+  /// earned so far, owed when each person leaves.
+  GRATUITY_PROVISION
+  /// "Bank charges": what the bank keeps — the card machine's fee on a
+  /// settlement — and the fee recovered from someone it was really for.
+  BANK_CHARGES
+  /// "Money collected for others": card payments taken on the workshop's
+  /// machine for someone else (an outside upholsterer…), owed to them until
+  /// paid over on a payment voucher.
+  MONEY_HELD_FOR_OTHERS
 }
 
 /// The kind of record a journal entry books.
@@ -261,6 +274,10 @@ enum JournalSource {
   /// The supplier's tax invoice arrived after the parts: the input VAT moves
   /// from "awaiting tax invoice" to recoverable, on the bill's date.
   PURCHASE_BILL
+  /// Card money taken on the workshop's machine for someone else: owed to them.
+  CARD_COLLECTION
+  /// A payment voucher paying that money over, less the bank's fee.
+  PAYMENT_VOUCHER
 }
 
 enum ApprovalStatus {
@@ -353,6 +370,8 @@ enum InventoryTransactionType {
   TRANSFER_IN
   TRANSFER_OUT
   RETURN_TO_SUPPLIER
+  /// A part a customer brought back, credited on a credit note
+  /// (creditNoteId). Its cost comes off cost of sales on the credit note.
   CUSTOMER_RETURN
   /// First stock of a part at a branch. (Rows written before this value
   /// existed are ADJUSTMENTs noted "Opening stock" — history is not rewritten.)
@@ -363,7 +382,7 @@ enum InventoryTransactionType {
   JOB_RETURN
   /// Cancels one earlier row exactly (reversalOfTransactionId).
   REVERSAL
-  /// A part sold on an invoice line (invoiceItemId). Costed on the invoice.
+  /// A part sold on an invoice's lines (invoiceId). Costed on the invoice.
   SALE
 }
 
@@ -464,6 +483,7 @@ enum DocumentType {
   MONEY_TRANSFER
   CUSTOMER_ADVANCE
   OWNER_MONEY
+  PAYMENT_VOUCHER
 }
 
 enum DocumentCategory {
@@ -507,40 +527,40 @@ enum SignerType {
 // =============================================================================
 
 model Organization {
-  id                 String    @id @default(uuid(7)) @db.Uuid
-  name               String
-  legalName          String?   @map("legal_name")
-  taxNumber          String?   @map("tax_number")
+  id                    String    @id @default(uuid(7)) @db.Uuid
+  name                  String
+  legalName             String?   @map("legal_name")
+  taxNumber             String?   @map("tax_number")
   /// Whether the business charges VAT. When false, new lines default to 0%.
   /// Existing documents keep the rate they were priced at either way.
-  isVatRegistered    Boolean   @default(true) @map("is_vat_registered")
+  isVatRegistered       Boolean   @default(true) @map("is_vat_registered")
   /// Standard VAT rate as a percentage, e.g. 5.00. Read through lib/tax —
   /// never hard-coded elsewhere.
-  vatRate            Decimal   @default(5.00) @map("vat_rate") @db.Decimal(5, 2)
-  address            String?
-  phone              String?
-  email              String?
-  baseCurrency       String    @default("AED") @map("base_currency")
+  vatRate               Decimal   @default(5.00) @map("vat_rate") @db.Decimal(5, 2)
+  address               String?
+  phone                 String?
+  email                 String?
+  baseCurrency          String    @default("AED") @map("base_currency")
   /// Whether work orders open as the full step-by-step job card (inspection,
   /// diagnosis, approval, repair, quality check). Off: the simple job card —
   /// one person takes the vehicle in, bills it and hands it back.
-  detailedJobCards   Boolean   @default(false) @map("detailed_job_cards")
+  detailedJobCards      Boolean   @default(false) @map("detailed_job_cards")
   /// Menu items (their hrefs, from lib/nav.ts) the workshop chose not to show.
   /// Display only — permissions still decide what each user may open.
-  hiddenMenus        String[]  @default([]) @map("hidden_menus")
+  hiddenMenus           String[]  @default([]) @map("hidden_menus")
   /// The books are closed up to and including this date: nothing may be
   /// booked, changed or voided on or before it (lib/accounting/periods.ts).
-  booksClosedThrough DateTime? @map("books_closed_through") @db.Date
+  booksClosedThrough    DateTime? @map("books_closed_through") @db.Date
   /// The date the books begin: every opening balance (accounts, customers)
   /// is booked on it (lib/accounting/opening-balances.ts).
-  openingBalanceDate DateTime? @map("opening_balance_date") @db.Date
+  openingBalanceDate    DateTime? @map("opening_balance_date") @db.Date
   /// Where its supplies are made; VAT201 reports Box 1 by emirate.
-  emirate            Emirate   @default(DUBAI)
+  emirate               Emirate   @default(DUBAI)
   /// The company's dates (lib/compliance). Null until the workshop enters them
   /// from its licence, Memorandum of Association and FTA certificates.
   /// The month its financial year ends (12 = 31 December); the year ends on
   /// the last day of that month.
-  financialYearEndMonth Int?    @map("financial_year_end_month") @db.SmallInt
+  financialYearEndMonth Int?      @map("financial_year_end_month") @db.SmallInt
   /// The end of its first financial year, which may be shorter or longer than
   /// twelve months; every later year ends on financialYearEndMonth.
   firstFinancialYearEnd DateTime? @map("first_financial_year_end") @db.Date
@@ -554,9 +574,13 @@ model Organization {
   corporateTaxNumber    String?   @map("corporate_tax_number")
   tradeLicenceNumber    String?   @map("trade_licence_number")
   tradeLicenceExpiry    DateTime? @map("trade_licence_expiry") @db.Date
-  isActive           Boolean   @default(true) @map("is_active")
-  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  /// For the WPS salary file: the MOHRE establishment number (13 digits) and
+  /// the routing code of the bank the salaries are paid from (9 digits).
+  mohreEstablishmentId  String?   @map("mohre_establishment_id")
+  wpsRoutingCode        String?   @map("wps_routing_code")
+  isActive              Boolean   @default(true) @map("is_active")
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   branches                Branch[]
   users                   User[]
@@ -611,9 +635,11 @@ model Organization {
 
   creditNotes         CreditNote[]
   creditNoteItems     CreditNoteItem[]
+  stockCounts         StockCount[]
   bankReconciliations BankReconciliation[]
   moneyTransfers      MoneyTransfer[]
   ownerMoney          OwnerMoney[]
+  paymentVouchers     PaymentVoucher[]
   partners            Partner[]
   customerAdvances    CustomerAdvance[]
   advanceAllocations  CustomerAdvanceAllocation[]
@@ -677,8 +703,10 @@ model Branch {
   auditLogs               AuditLog[]
   documents               Document[]
 
-  creditNotes CreditNote[]
-  advances    CustomerAdvance[]
+  creditNotes     CreditNote[]
+  stockCounts     StockCount[]
+  advances        CustomerAdvance[]
+  paymentVouchers PaymentVoucher[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, code])
@@ -749,6 +777,7 @@ model User {
   moneyTransfersCreated    MoneyTransfer[]             @relation("MoneyTransferCreatedBy")
   ownerMoneyCreated        OwnerMoney[]                @relation("OwnerMoneyCreatedBy")
   ownerMoneyOwned          OwnerMoney[]                @relation("OwnerMoneyOwner")
+  paymentVouchersCreated   PaymentVoucher[]            @relation("PaymentVoucherCreatedBy")
   advancesReceived         CustomerAdvance[]           @relation("CustomerAdvanceReceivedBy")
   advancesCancelled        CustomerAdvance[]           @relation("CustomerAdvanceCancelledBy")
   advanceAllocationsMade   CustomerAdvanceAllocation[] @relation("AdvanceAllocationCreatedBy")
@@ -766,6 +795,7 @@ model User {
   pushSubscriptions   PushSubscription[]
   createdTasks        Task[]             @relation("TaskCreatedBy")
   billsMatched        Purchase[]         @relation("PurchaseBillMatchedBy")
+  stockCounts         StockCount[]
   completedTasks      Task[]             @relation("TaskCompletedBy")
   taskUpdates         TaskUpdate[]
   reviewedAttendances Attendance[]       @relation("AttendanceReviewedBy")
@@ -1075,6 +1105,7 @@ model JobCard {
   documents     Document[]
   signatures    Signature[]
   tasks         Task[]
+  expenses      Expense[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, jobNumber])
@@ -1531,6 +1562,7 @@ model Part {
   partUsages            PartUsage[]
   inventoryTransactions InventoryTransaction[]
   invoiceItems          InvoiceItem[]
+  creditNoteItems       CreditNoteItem[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, sku])
@@ -1705,6 +1737,11 @@ model InventoryTransaction {
   /// SALE: the invoice whose part lines took it out of stock (or, positive,
   /// put it back when the invoice was changed or voided).
   invoiceId               String?                  @map("invoice_id") @db.Uuid
+  /// CUSTOMER_RETURN: the credit note the part came back on (negative when
+  /// the credit note was voided).
+  creditNoteId            String?                  @map("credit_note_id") @db.Uuid
+  /// ADJUSTMENT: the stock count that found the difference.
+  stockCountId            String?                  @map("stock_count_id") @db.Uuid
   performedByUserId       String?                  @map("performed_by_user_id") @db.Uuid
   /// For REVERSAL rows: the row this one cancels. A row is reversed at most once.
   reversalOfTransactionId String?                  @map("reversal_of_transaction_id") @db.Uuid
@@ -1717,6 +1754,8 @@ model InventoryTransaction {
   purchaseItem PurchaseItem?         @relation(fields: [organizationId, purchaseItemId], references: [organizationId, id], onDelete: Restrict)
   partUsage    PartUsage?            @relation(fields: [organizationId, partUsageId], references: [organizationId, id], onDelete: Restrict)
   invoice      Invoice?              @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Restrict)
+  creditNote   CreditNote?           @relation(fields: [organizationId, creditNoteId], references: [organizationId, id], onDelete: Restrict)
+  stockCount   StockCount?           @relation(fields: [organizationId, stockCountId], references: [organizationId, id], onDelete: Restrict)
   performedBy  User?                 @relation(fields: [organizationId, performedByUserId], references: [organizationId, id], onDelete: Restrict)
   reversalOf   InventoryTransaction? @relation("InventoryReversal", fields: [organizationId, reversalOfTransactionId], references: [organizationId, id], onDelete: Restrict)
   reversedBy   InventoryTransaction? @relation("InventoryReversal")
@@ -1728,9 +1767,37 @@ model InventoryTransaction {
   @@index([organizationId, partUsageId])
   @@index([organizationId, purchaseItemId])
   @@index([organizationId, invoiceId])
+  @@index([organizationId, creditNoteId])
+  @@index([organizationId, stockCountId])
   @@index([organizationId, partId])
   @@index([createdAt])
   @@map("inventory_transactions")
+}
+
+/// A stock count: the shelves counted, part by part, and each difference
+/// from the system posted as an ADJUSTMENT linked here — so the count is one
+/// record, with who counted and when, rather than loose adjustments.
+model StockCount {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  branchId        String   @map("branch_id") @db.Uuid
+  countNumber     String   @map("count_number")
+  countedOn       DateTime @map("counted_on") @db.Date
+  note            String?
+  /// Parts counted (including those that matched the system).
+  partsCounted    Int      @map("parts_counted")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch                 @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  createdBy    User                   @relation(fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+  movements    InventoryTransaction[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, countNumber])
+  @@index([organizationId, countedOn])
+  @@map("stock_counts")
 }
 
 // =============================================================================
@@ -1834,6 +1901,7 @@ model Invoice {
   advanceAllocations CustomerAdvanceAllocation[]
 
   stockMovements InventoryTransaction[]
+  expenses       Expense[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, invoiceNumber])
@@ -2034,6 +2102,11 @@ model Expense {
   /// Paid with an owner's or partner's own money: the business owes them it
   /// (Cr Due to owner). Never set together with paymentMethod.
   paidByUserId      String?        @map("paid_by_user_id") @db.Uuid
+  /// A cost of one job — outside work, towing, materials bought for it —
+  /// counted in that job's cost and profit. A job card, or an invoice
+  /// billed without one.
+  jobCardId         String?        @map("job_card_id") @db.Uuid
+  invoiceId         String?        @map("invoice_id") @db.Uuid
   recordedByUserId  String         @map("recorded_by_user_id") @db.Uuid
   journalEntryId    String?        @map("journal_entry_id") @db.Uuid
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz
@@ -2047,10 +2120,17 @@ model Expense {
   journalEntry   JournalEntry?   @relation(fields: [organizationId, journalEntryId], references: [organizationId, id], onDelete: Restrict)
   taxCode        TaxCode?        @relation(fields: [organizationId, taxCodeId], references: [organizationId, id], onDelete: Restrict)
 
-  paidByUser User? @relation("ExpensePaidPersonallyBy", fields: [organizationId, paidByUserId], references: [organizationId, id], onDelete: Restrict)
+  paidByUser User?    @relation("ExpensePaidPersonallyBy", fields: [organizationId, paidByUserId], references: [organizationId, id], onDelete: Restrict)
+  jobCard    JobCard? @relation(fields: [organizationId, jobCardId], references: [organizationId, id], onDelete: Restrict)
+  invoice    Invoice? @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Restrict)
+
+  /// Paid on a payment voucher (outside work): the voucher handed over for it.
+  paymentVoucher PaymentVoucher?
 
   @@unique([organizationId, id])
   @@unique([organizationId, expenseNumber])
+  @@index([organizationId, jobCardId])
+  @@index([organizationId, invoiceId])
   @@index([organizationId])
   @@index([organizationId, branchId])
   @@index([expenseDate])
@@ -2094,6 +2174,8 @@ model ChartOfAccount {
   transfersOut           MoneyTransfer[]         @relation("MoneyTransferFrom")
   transfersIn            MoneyTransfer[]         @relation("MoneyTransferTo")
   ownerMoney             OwnerMoney[]
+  cardCollectionsIn      PaymentVoucher[]        @relation("PaymentVoucherCardAccount")
+  paymentVouchersPaid    PaymentVoucher[]        @relation("PaymentVoucherPaidFrom")
   advancesReceivedInto   CustomerAdvance[]       @relation("CustomerAdvanceAccount")
   advanceRefundsPaidFrom CustomerAdvanceRefund[] @relation("AdvanceRefundAccount")
   fixedAssets            FixedAsset[]            @relation("FixedAssetAccount")
@@ -2280,6 +2362,7 @@ model CreditNote {
   refundAccount  ChartOfAccount?             @relation("CreditNoteRefundAccount", fields: [organizationId, refundAccountId], references: [organizationId, id], onDelete: Restrict)
   createdBy      User                        @relation("CreditNoteCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
   items          CreditNoteItem[]
+  stockMovements InventoryTransaction[]
   advanceReturns CustomerAdvanceAllocation[] @relation("AdvanceAllocationReturnedBy")
 
   @@unique([organizationId, id])
@@ -2290,30 +2373,38 @@ model CreditNote {
 }
 
 model CreditNoteItem {
-  id             String            @id @default(uuid(7)) @db.Uuid
-  organizationId String            @map("organization_id") @db.Uuid
-  creditNoteId   String            @map("credit_note_id") @db.Uuid
+  id               String            @id @default(uuid(7)) @db.Uuid
+  organizationId   String            @map("organization_id") @db.Uuid
+  creditNoteId     String            @map("credit_note_id") @db.Uuid
   /// The invoice line it credits, so no line is credited beyond its value.
-  invoiceItemId  String?           @map("invoice_item_id") @db.Uuid
-  itemType       EstimateItemType? @map("item_type")
-  description    String
-  quantity       Decimal           @db.Decimal(12, 3)
-  unitPrice      Decimal           @map("unit_price") @db.Decimal(14, 2)
+  invoiceItemId    String?           @map("invoice_item_id") @db.Uuid
+  itemType         EstimateItemType? @map("item_type")
+  description      String
+  quantity         Decimal           @db.Decimal(12, 3)
+  unitPrice        Decimal           @map("unit_price") @db.Decimal(14, 2)
   /// Before the bill discount, as on the invoice line; `discountAmount` is
   /// its share of the invoice's bill discount, taken back with it.
-  lineTotal      Decimal           @map("line_total") @db.Decimal(14, 2)
-  discountAmount Decimal           @default(0) @map("discount_amount") @db.Decimal(14, 2)
-  vatTreatment   VatTreatment      @default(STANDARD) @map("vat_treatment")
-  taxRate        Decimal           @map("tax_rate") @db.Decimal(5, 2)
-  taxAmount      Decimal           @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal        Decimal           @map("line_total") @db.Decimal(14, 2)
+  discountAmount   Decimal           @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  vatTreatment     VatTreatment      @default(STANDARD) @map("vat_treatment")
+  taxRate          Decimal           @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount        Decimal           @map("tax_amount") @db.Decimal(14, 2)
   /// The income account the credit comes off; null for the default of its type.
-  accountId      String?           @map("account_id") @db.Uuid
-  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  accountId        String?           @map("account_id") @db.Uuid
+  /// The catalogue part the credited line sold (copied from the invoice line).
+  partId           String?           @map("part_id") @db.Uuid
+  /// How many of it came back into stock — null or 0 when the credit is only
+  /// money (a price reduction), not goods returned.
+  returnedQuantity Decimal?          @map("returned_quantity") @db.Decimal(12, 3)
+  /// What one cost, as on the invoice line: taken off cost of sales.
+  unitCost         Decimal?          @map("unit_cost") @db.Decimal(14, 2)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
 
   organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   creditNote   CreditNote      @relation(fields: [organizationId, creditNoteId], references: [organizationId, id], onDelete: Cascade)
   invoiceItem  InvoiceItem?    @relation(fields: [invoiceItemId], references: [id], onDelete: Restrict)
   account      ChartOfAccount? @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
+  part         Part?           @relation(fields: [organizationId, partId], references: [organizationId, id], onDelete: Restrict)
 
   @@index([organizationId, creditNoteId])
   @@index([organizationId, invoiceItemId])
@@ -2455,6 +2546,12 @@ model Employee {
   phone           String?
   email           String?
   department      String?
+  /// How their salary is paid through WPS: their MOHRE person code (14
+  /// digits), the routing code of their bank or exchange house (9 digits)
+  /// and their account's IBAN. Seen only by those who see pay.
+  wpsPersonCode   String?   @map("wps_person_code")
+  wpsAgentCode    String?   @map("wps_agent_code")
+  salaryIban      String?   @map("salary_iban")
   hireDate        DateTime  @map("hire_date") @db.Date
   terminationDate DateTime? @map("termination_date") @db.Date
   isActive        Boolean   @default(true) @map("is_active")
@@ -2615,16 +2712,20 @@ model Payroll {
 /// (historical accuracy) — payroll must reflect what was actually paid even
 /// if the employee's Salary record changes afterward.
 model PayrollItem {
-  id             String   @id @default(uuid(7)) @db.Uuid
-  organizationId String   @map("organization_id") @db.Uuid
-  payrollId      String   @map("payroll_id") @db.Uuid
-  employeeId     String   @map("employee_id") @db.Uuid
-  basicSalary    Decimal  @map("basic_salary") @db.Decimal(14, 2)
-  allowances     Decimal  @default(0) @db.Decimal(14, 2)
-  deductions     Decimal  @default(0) @db.Decimal(14, 2)
-  netPay         Decimal  @map("net_pay") @db.Decimal(14, 2)
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id                String   @id @default(uuid(7)) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  payrollId         String   @map("payroll_id") @db.Uuid
+  employeeId        String   @map("employee_id") @db.Uuid
+  basicSalary       Decimal  @map("basic_salary") @db.Decimal(14, 2)
+  allowances        Decimal  @default(0) @db.Decimal(14, 2)
+  deductions        Decimal  @default(0) @db.Decimal(14, 2)
+  netPay            Decimal  @map("net_pay") @db.Decimal(14, 2)
+  /// End-of-service gratuity earned to the period end, and the increase over
+  /// the last payroll (negative if the basic salary fell) — booked with the run.
+  gratuityLiability Decimal  @default(0) @map("gratuity_liability") @db.Decimal(14, 2)
+  gratuityAccrual   Decimal  @default(0) @map("gratuity_accrual") @db.Decimal(14, 2)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   payroll      Payroll      @relation(fields: [organizationId, payrollId], references: [organizationId, id], onDelete: Cascade)
@@ -3052,23 +3153,35 @@ enum MoneyTransferStatus {
 /// Neither income nor expense: the books show Dr the account it went to,
 /// Cr the account it came from (source MONEY_TRANSFER). Numbered TRF-.
 /// Never edited: a mistake is voided, which reverses its entry.
+///
+/// What the bank kept on the way — the card machine's fee when card money
+/// is paid into the bank — is a bank charge, with the bank's VAT on it:
+///   Dr the account it went to       amount (what arrived)
+///   Dr Bank charges                 chargesAmount
+///   Dr Input VAT recoverable        chargesVatAmount
+///   Cr the account it came from     the three together
 model MoneyTransfer {
-  id              String              @id @default(uuid(7)) @db.Uuid
-  organizationId  String              @map("organization_id") @db.Uuid
-  transferNumber  String              @map("transfer_number")
-  fromAccountId   String              @map("from_account_id") @db.Uuid
-  toAccountId     String              @map("to_account_id") @db.Uuid
-  amount          Decimal             @db.Decimal(14, 2)
-  transferredOn   DateTime            @map("transferred_on") @db.Date
+  id               String              @id @default(uuid(7)) @db.Uuid
+  organizationId   String              @map("organization_id") @db.Uuid
+  transferNumber   String              @map("transfer_number")
+  fromAccountId    String              @map("from_account_id") @db.Uuid
+  toAccountId      String              @map("to_account_id") @db.Uuid
+  /// What arrived in the account it went to.
+  amount           Decimal             @db.Decimal(14, 2)
+  /// What the bank kept as its fee, before VAT. 0: nothing kept.
+  chargesAmount    Decimal             @default(0) @map("charges_amount") @db.Decimal(14, 2)
+  /// The bank's VAT on that fee (on its tax invoice or statement).
+  chargesVatAmount Decimal             @default(0) @map("charges_vat_amount") @db.Decimal(14, 2)
+  transferredOn    DateTime            @map("transferred_on") @db.Date
   /// A deposit slip, transfer or cheque number.
-  reference       String?
-  notes           String?
-  status          MoneyTransferStatus @default(POSTED)
-  voidedAt        DateTime?           @map("voided_at") @db.Timestamptz
-  voidReason      String?             @map("void_reason")
-  createdByUserId String              @map("created_by_user_id") @db.Uuid
-  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz
+  reference        String?
+  notes            String?
+  status           MoneyTransferStatus @default(POSTED)
+  voidedAt         DateTime?           @map("voided_at") @db.Timestamptz
+  voidReason       String?             @map("void_reason")
+  createdByUserId  String              @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz
 
   organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   fromAccount  ChartOfAccount @relation("MoneyTransferFrom", fields: [organizationId, fromAccountId], references: [organizationId, id], onDelete: Restrict)
@@ -3079,6 +3192,92 @@ model MoneyTransfer {
   @@unique([organizationId, transferNumber])
   @@index([organizationId, transferredOn])
   @@map("money_transfers")
+}
+
+enum PaymentVoucherKind {
+  /// Someone else's customer paid on the workshop's card machine (an outside
+  /// upholsterer without one). The money is theirs: owed to them, and paid
+  /// over less what the bank kept for it.
+  CARD_COLLECTION
+  /// Outside work or a service paid for — an outside mechanic called in, a
+  /// sublet repair. Recorded as an expense (expenseId), so it counts in the
+  /// job's cost when it was for one.
+  WORK
+}
+
+enum PaymentVoucherStatus {
+  /// Card money collected for them, not paid over yet.
+  OWED
+  PAID
+  /// Withdrawn — entered in error. Kept on record; its entries are reversed.
+  VOID
+}
+
+/// A payment voucher (PV-): money paid out to someone, on paper they sign
+/// for it. Never edited: a mistake is voided, which reverses its entries.
+///
+/// CARD_COLLECTION — two entries:
+///   collected (CARD_COLLECTION, on collectedOn)
+///     Dr the card account (Card settlements receivable)   collectedAmount
+///     Cr Money collected for others                       collectedAmount
+///   paid over (PAYMENT_VOUCHER, on paidOn)
+///     Dr Money collected for others                       collectedAmount
+///     Cr the account paid from                            amount
+///     Cr Bank charges                                     feeAmount
+///     Cr Input VAT recoverable                            feeVatAmount
+///   The bank's fee on their money was theirs: recovered from them, it
+///   comes off Bank charges, and its VAT off what the workshop reclaims.
+///
+/// WORK — the expense (expenseId) books it (source EXPENSE).
+model PaymentVoucher {
+  id                String               @id @default(uuid(7)) @db.Uuid
+  organizationId    String               @map("organization_id") @db.Uuid
+  branchId          String               @map("branch_id") @db.Uuid
+  voucherNumber     String               @map("voucher_number")
+  kind              PaymentVoucherKind
+  status            PaymentVoucherStatus @default(PAID)
+  /// Who is paid: the person or business that signs for the money.
+  payeeName         String               @map("payee_name")
+  payeePhone        String?              @map("payee_phone")
+  /// What it is for, as printed on the voucher.
+  description       String
+  /// CARD_COLLECTION: the day the card was swiped, how much, into which card account, and the slip.
+  collectedOn       DateTime?            @map("collected_on") @db.Date
+  collectedAmount   Decimal?             @map("collected_amount") @db.Decimal(14, 2)
+  cardAccountId     String?              @map("card_account_id") @db.Uuid
+  cardReference     String?              @map("card_reference")
+  /// The bank's fee: its rate (e.g. 2.00 %), the fee, and the VAT on the fee.
+  feeRate           Decimal?             @map("fee_rate") @db.Decimal(5, 2)
+  feeAmount         Decimal              @default(0) @map("fee_amount") @db.Decimal(14, 2)
+  feeVatAmount      Decimal              @default(0) @map("fee_vat_amount") @db.Decimal(14, 2)
+  /// What was handed over. Null while OWED.
+  amount            Decimal?             @db.Decimal(14, 2)
+  paidOn            DateTime?            @map("paid_on") @db.Date
+  paymentMethod     PaymentMethod?       @map("payment_method")
+  paidFromAccountId String?              @map("paid_from_account_id") @db.Uuid
+  paymentReference  String?              @map("payment_reference")
+  /// WORK: the expense that books it.
+  expenseId         String?              @map("expense_id") @db.Uuid
+  notes             String?
+  voidedAt          DateTime?            @map("voided_at") @db.Timestamptz
+  voidReason        String?              @map("void_reason")
+  createdByUserId   String               @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branch       Branch          @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict)
+  cardAccount  ChartOfAccount? @relation("PaymentVoucherCardAccount", fields: [organizationId, cardAccountId], references: [organizationId, id], onDelete: Restrict)
+  paidFrom     ChartOfAccount? @relation("PaymentVoucherPaidFrom", fields: [organizationId, paidFromAccountId], references: [organizationId, id], onDelete: Restrict)
+  expense      Expense?        @relation(fields: [organizationId, expenseId], references: [organizationId, id], onDelete: Restrict)
+  createdBy    User            @relation("PaymentVoucherCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, voucherNumber])
+  @@unique([organizationId, expenseId])
+  @@index([organizationId, status])
+  @@index([organizationId, paidOn])
+  @@map("payment_vouchers")
 }
 
 enum CustomerAdvanceStatus {

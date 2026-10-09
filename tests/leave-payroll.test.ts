@@ -36,6 +36,8 @@ import {
   runPayroll,
   setSalary,
 } from '@/lib/hr/payroll';
+import { gratuityEarnedFils } from '@/lib/hr/gratuity';
+import { toFils } from '@/lib/money';
 import { createTestOrg, expectDomainError, RUN, type TestOrg } from './support';
 
 let a: TestOrg;
@@ -51,6 +53,7 @@ function monthsAgo(n: number) {
   return new Date(Date.UTC(year, month - 1 - n, 1)).toISOString().slice(0, 7);
 }
 
+const thisMonth = monthsAgo(0);
 const lastMonth = monthsAgo(1);
 const twoMonthsAgo = monthsAgo(2);
 const daysIn = (month: string) => leaveDays(monthPeriod(month).start, monthPeriod(month).end);
@@ -72,8 +75,14 @@ describe('counting days', () => {
   });
 
   test('overlap is clipped to the window, and zero when they do not meet', () => {
-    assert.equal(overlapDays(d('2026-02-27'), d('2026-03-02'), d('2026-03-01'), d('2026-03-31')), 2);
-    assert.equal(overlapDays(d('2026-02-01'), d('2026-02-10'), d('2026-03-01'), d('2026-03-31')), 0);
+    assert.equal(
+      overlapDays(d('2026-02-27'), d('2026-03-02'), d('2026-03-01'), d('2026-03-31')),
+      2,
+    );
+    assert.equal(
+      overlapDays(d('2026-02-01'), d('2026-02-10'), d('2026-03-01'), d('2026-03-31')),
+      0,
+    );
   });
 });
 
@@ -269,7 +278,11 @@ describe('payroll run', () => {
     const run = await runPayroll(a.owner, { month: lastMonth, requestKey: `payroll-${RUN}` });
     runId = run.id;
     assert.equal(run.status, 'CALCULATED');
-    assert.deepEqual(run.missingSalary, ['Tech Two'], 'someone with no salary is reported, not paid');
+    assert.deepEqual(
+      run.missingSalary,
+      ['Tech Two'],
+      'someone with no salary is reported, not paid',
+    );
 
     const detail = await getPayrollRun(a.owner, run.id);
     assert.equal(detail.lines.length, 1);
@@ -313,19 +326,73 @@ describe('payroll run', () => {
       adjustDeduction(a.owner, runId, detail.lines[0].id, { deductions: '0', reason: 'Late' }),
       /can’t be changed/,
     );
+    // End-of-service gratuity: earned to the month end on the basic salary,
+    // booked with the salaries — Dr 5165 expense, Cr 2500 provision.
+    const employee = await prisma.employee.findUniqueOrThrow({
+      where: { id: tech },
+      select: { hireDate: true },
+    });
+    const earned = gratuityEarnedFils(
+      employee.hireDate.toISOString().slice(0, 10),
+      monthPeriod(lastMonth).end.toISOString().slice(0, 10),
+      310000,
+    );
+    assert.equal(detail.lines[0].gratuityLiability, (earned / 100).toFixed(2));
+    assert.equal(
+      detail.lines[0].gratuityAccrual,
+      (earned / 100).toFixed(2),
+      'nothing set aside before',
+    );
+    const lines = await prisma.journalEntryLine.findMany({
+      where: {
+        organizationId: a.organizationId,
+        journalEntry: { sourceType: 'PAYROLL', sourceId: runId },
+      },
+      select: { debitAmount: true, creditAmount: true, chartOfAccount: { select: { role: true } } },
+    });
+    const byRole = (role: string) =>
+      lines
+        .filter((line) => line.chartOfAccount.role === role)
+        .reduce(
+          (sum, line) =>
+            sum + toFils(line.debitAmount.toString()) - toFils(line.creditAmount.toString()),
+          0,
+        );
+    assert.equal(byRole('GRATUITY_EXPENSE'), earned);
+    assert.equal(byRole('GRATUITY_PROVISION'), -earned);
+    assert.equal(byRole('SALARIES_EXPENSE'), 360000);
+
     await markPayrollPaid(a.owner, runId);
-    await expectDomainError(cancelPayroll(a.owner, runId, { reason: 'Mistake' }), /can’t be cancelled/);
+    await expectDomainError(
+      cancelPayroll(a.owner, runId, { reason: 'Mistake' }),
+      /can’t be cancelled/,
+    );
     const paid = await getPayrollRun(a.owner, runId);
     assert.equal(paid.status, 'PAID');
     assert.equal(paid.paidBy, a.owner.fullName);
   });
 
   test('a cancelled month is reopened when it is run again', async () => {
-    const run = await runPayroll(a.owner, { month: twoMonthsAgo });
+    const run = await runPayroll(a.owner, { month: thisMonth });
     await cancelPayroll(a.owner, run.id, { reason: 'Salaries were wrong' });
-    const again = await runPayroll(a.owner, { month: twoMonthsAgo });
+    const again = await runPayroll(a.owner, { month: thisMonth });
     assert.equal(again.id, run.id, 'the same record, reopened');
     assert.equal(again.status, 'CALCULATED');
+    // Each month sets aside only what was earned since the one before.
+    const detail = await getPayrollRun(a.owner, again.id);
+    const previous = await getPayrollRun(a.owner, runId);
+    const liability = toFils(detail.lines[0].gratuityLiability);
+    assert.equal(
+      toFils(detail.lines[0].gratuityAccrual),
+      liability - toFils(previous.lines[0].gratuityLiability),
+    );
+  });
+
+  test('payroll runs month by month: an earlier month waits for the later to be cancelled', async () => {
+    await expectDomainError(
+      runPayroll(a.owner, { month: twoMonthsAgo }),
+      /cancel the later month first/,
+    );
   });
 
   test('another workshop cannot open the run', async () => {

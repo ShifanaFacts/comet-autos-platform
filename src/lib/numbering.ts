@@ -17,6 +17,7 @@ const DEFAULT_PREFIX: Record<DocumentType, string> = {
   MONEY_TRANSFER: 'TRF-',
   CUSTOMER_ADVANCE: 'ADV-',
   OWNER_MONEY: 'OWN-',
+  PAYMENT_VOUCHER: 'PV-',
 };
 
 /**

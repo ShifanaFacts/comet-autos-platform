@@ -68,6 +68,9 @@ export function MatchBillForm({
   });
   const complete = compared.every((row) => row.bill !== null);
   const agrees = complete && compared.every((row) => Math.abs(row.difference!) <= TOLERANCE);
+  /** The bill is right and the purchase was not: correct the purchase to it. */
+  const [correct, setCorrect] = useState(false);
+  const correcting = complete && !agrees && correct;
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-6">
@@ -193,14 +196,34 @@ export function MatchBillForm({
             <p className={cn('text-sm font-medium', agrees ? 'text-success' : 'text-destructive')}>
               {agrees
                 ? 'The bill agrees with the purchase.'
-                : 'The bill doesn’t agree with what was recorded. Check the quantity and price on the bill against the purchase lines below — the wrong one must be found before it is matched.'}
+                : 'The bill doesn’t agree with what was recorded. Check the quantity and price on the bill against the purchase lines above first.'}
             </p>
+          ) : null}
+          {complete && !agrees ? (
+            <label className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-sm">
+              <input
+                type="checkbox"
+                name="acceptDifference"
+                value="1"
+                checked={correct}
+                onChange={(event) => setCorrect(event.target.checked)}
+                className="mt-0.5 size-4 accent-primary"
+              />
+              <span>
+                The bill is right — correct the purchase to it
+                <span className="block text-xs text-muted-foreground">
+                  The difference is owed to (or by) the shop and goes to the cost of the parts; the
+                  bill&apos;s VAT is claimed. Say why below.
+                </span>
+              </span>
+            </label>
           ) : null}
           <TextareaField
             label="Note"
             name="note"
+            required={correcting}
             error={errors.note}
-            hint="Optional."
+            hint={correcting ? 'Why the bill differs — e.g. the price was guessed when bought.' : 'Optional.'}
             className="[&_textarea]:min-h-14"
           />
         </>
@@ -221,10 +244,14 @@ export function MatchBillForm({
           size="lg"
           pending={isPending}
           pendingLabel="Saving…"
-          disabled={outcome === 'RECEIVED' && !agrees}
+          disabled={outcome === 'RECEIVED' && !agrees && !correcting}
           className="h-12 w-full sm:h-11 sm:w-auto"
         >
-          {outcome === 'RECEIVED' ? 'Match tax invoice' : 'Close without a tax invoice'}
+          {outcome === 'RECEIVED'
+            ? correcting
+              ? 'Correct to the bill and match'
+              : 'Match tax invoice'
+            : 'Close without a tax invoice'}
         </SubmitButton>
       </div>
     </form>

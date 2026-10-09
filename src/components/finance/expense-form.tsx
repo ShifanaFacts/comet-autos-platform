@@ -21,6 +21,7 @@ import { calculateLine, filsToString, toFils } from '@/lib/money';
 import { MoneyAccountField } from '@/components/accounting/money-account-field';
 import type { AccountChoice } from '@/lib/accounting/reports';
 import type { TaxCodeOption } from '@/lib/accounting/tax-codes';
+import type { JobChoice } from '@/lib/finance/job-costing';
 import type { PaymentModeOption } from '@/lib/accounting/payment-modes';
 import { modeFor, PaymentModeField } from '@/components/accounting/payment-mode-field';
 
@@ -51,6 +52,8 @@ export interface ExpenseDraft {
   /** Paid with an owner's own money: who. */
   paidByUserId?: string;
   categoryId: string;
+  /** "card:<id>" / "invoice:<id>": the job it was a cost of; blank for none. */
+  forJob?: string;
 }
 
 const INPUT = '[&_input]:h-11 [&_input]:text-base md:[&_input]:text-sm';
@@ -104,6 +107,7 @@ export function ExpenseForm({
   taxCodes = [],
   modes = [],
   people = [],
+  jobs,
   expense,
   prefill,
   flags = {},
@@ -121,6 +125,11 @@ export function ExpenseForm({
   modes?: PaymentModeOption[];
   /** Owners who can pay a cost with their own money: "Paid personally by…". */
   people?: { id: string; name: string }[];
+  /**
+   * The jobs a cost can be filed against. Left out, the job an expense is
+   * already on is kept as it is.
+   */
+  jobs?: JobChoice[];
   /** Set to correct an existing expense instead of recording a new one. */
   expense?: ExpenseDraft;
   /** Starting values for a new expense (Scan bill). Anything left out starts empty. */
@@ -238,6 +247,30 @@ export function ExpenseForm({
             ))}
           </NativeSelect>
         </Field>
+        {jobs ? (
+          <Field
+            label="For a job"
+            htmlFor={id('forJob')}
+            error={errors.forJob}
+            hint="Outside work, towing or materials for one car: it counts in that job's cost and profit."
+          >
+            <NativeSelect
+              id={id('forJob')}
+              name="forJob"
+              defaultValue={start?.forJob ?? ''}
+              className="h-11 text-base md:text-sm"
+            >
+              <option value="">Not for a particular job</option>
+              {jobs.map((job) => (
+                <option key={job.value} value={job.value} data-hint={job.hint}>
+                  {job.label}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        ) : (
+          <input type="hidden" name="forJob" value={start?.forJob ?? ''} />
+        )}
         <TextField
           label="Date"
           id={id('expenseDate')}

@@ -110,6 +110,19 @@ export default async function ExpensePage({ params }: { params: Promise<{ id: st
                     ? `${expense.chartOfAccount.accountName} (${expense.chartOfAccount.accountCode})`
                     : 'Uncategorised'}
                 </Row>
+                {expense.jobCard || expense.invoice ? (
+                  <Row label="For job">
+                    {expense.jobCard ? (
+                      <Link href={`/job-cards/${expense.jobCard.id}`} className="text-primary hover:underline">
+                        {expense.jobCard.jobNumber}
+                      </Link>
+                    ) : (
+                      <Link href={`/finance/invoices/${expense.invoice!.id}`} className="text-primary hover:underline">
+                        {expense.invoice!.invoiceNumber}
+                      </Link>
+                    )}
+                  </Row>
+                ) : null}
                 <Row label="Supplier">{expense.vendorName ?? '—'}</Row>
                 <Row label="Supplier TRN">
                   <span className="font-mono">{expense.supplierTrn ?? '—'}</span>

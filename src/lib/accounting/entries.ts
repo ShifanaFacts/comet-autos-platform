@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { purchaseBillDifferenceFils } from '@/lib/finance/supplier-balance';
 import { prisma } from '@/lib/prisma';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/authorize';
@@ -312,6 +313,8 @@ const LATER_SOURCES = [
   'PURCHASE_ROUNDING',
   'OWNER_MONEY',
   'PURCHASE_BILL',
+  'CARD_COLLECTION',
+  'PAYMENT_VOUCHER',
 ] as const;
 
 /** What is waiting to be booked, oldest first, by kind of record. */
@@ -340,6 +343,7 @@ async function unbooked(organizationId: string) {
     roundedPurchases,
     ownerMoney,
     billedLater,
+    cardCollections,
   ] = await Promise.all([
     prisma.invoice.findMany({
       where: {
@@ -460,16 +464,37 @@ async function unbooked(organizationId: string) {
       orderBy: [{ movedOn: 'asc' }, { createdAt: 'asc' }],
       select: { id: true },
     }),
-    // Tax invoices matched after the parts, with VAT to move off "awaiting".
-    prisma.purchase.findMany({
-      where: {
-        organizationId,
-        billMatchedByUserId: { not: null },
-        billStatus: { in: ['RECEIVED', 'NO_TAX_INVOICE'] },
-        taxAmount: { gt: 0 },
-      },
-      orderBy: [{ billReceivedOn: 'asc' }, { createdAt: 'asc' }],
-      select: { id: true },
+    // Tax invoices matched after the parts, with VAT to move off "awaiting"
+    // or a difference from what was recorded to book.
+    prisma.purchase
+      .findMany({
+        where: {
+          organizationId,
+          billMatchedByUserId: { not: null },
+          billStatus: { in: ['RECEIVED', 'NO_TAX_INVOICE'] },
+        },
+        orderBy: [{ billReceivedOn: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          taxAmount: true,
+          status: true,
+          billStatus: true,
+          billMatchedByUserId: true,
+          billTotalAmount: true,
+          totalAmount: true,
+        },
+      })
+      .then((rows) =>
+        rows.filter(
+          (row) =>
+            (row.taxAmount !== null && row.taxAmount.gt(0)) || purchaseBillDifferenceFils(row) !== 0,
+        ),
+      ),
+    // Card money collected for others on payment vouchers, and paid over.
+    prisma.paymentVoucher.findMany({
+      where: { organizationId, kind: 'CARD_COLLECTION', status: { not: 'VOID' } },
+      orderBy: [{ collectedOn: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true, status: true },
     }),
   ]);
   const booked = new Set(bookedMovements.map((entry) => entry.sourceId));
@@ -518,6 +543,11 @@ async function unbooked(organizationId: string) {
     PURCHASE_ROUNDING: notBooked(roundedPurchases, 'PURCHASE_ROUNDING'),
     OWNER_MONEY: notBooked(ownerMoney, 'OWNER_MONEY'),
     PURCHASE_BILL: notBooked(billedLater, 'PURCHASE_BILL'),
+    CARD_COLLECTION: notBooked(cardCollections, 'CARD_COLLECTION'),
+    PAYMENT_VOUCHER: notBooked(
+      cardCollections.filter((voucher) => voucher.status === 'PAID'),
+      'PAYMENT_VOUCHER',
+    ),
   } satisfies Record<PostedSource, string[]>;
 }
 
@@ -561,6 +591,8 @@ export async function bookExistingRecords(user: AuthenticatedUser) {
     'PURCHASE_ROUNDING',
     'OWNER_MONEY',
     'PURCHASE_BILL',
+    'CARD_COLLECTION',
+    'PAYMENT_VOUCHER',
   ];
   let booked = 0;
   const failed: string[] = [];

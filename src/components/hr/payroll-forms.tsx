@@ -26,6 +26,7 @@ import {
   markPayrollPaidAction,
   recalculatePayrollAction,
   runPayrollAction,
+  setPayDetailsAction,
   setSalaryAction,
 } from '@/app/(app)/hr/payroll/actions';
 
@@ -354,5 +355,68 @@ export function AdjustDeductionButton({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** How the salary reaches them through WPS: MOHRE person code, bank routing code, IBAN. */
+export function PayDetailsForm({
+  employeeId,
+  current,
+}: {
+  employeeId: string;
+  current: { wpsPersonCode: string | null; wpsAgentCode: string | null; salaryIban: string | null };
+}) {
+  const router = useRouter();
+  const [state, onSubmit, isPending] = useFormAction<ActionResult>(
+    async (prev, formData) => {
+      const result = await setPayDetailsAction(employeeId, prev, formData);
+      if (result.ok) {
+        toast.success('Bank details saved');
+        router.refresh();
+      }
+      return result;
+    },
+    { ok: false },
+  );
+  const errors = state.fieldErrors ?? {};
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-6">
+      <div className="grid gap-6 sm:grid-cols-3">
+        <TextField
+          label="MOHRE person code"
+          name="wpsPersonCode"
+          inputMode="numeric"
+          defaultValue={current.wpsPersonCode ?? ''}
+          hint="14 digits, on the labour card or work permit."
+          error={errors.wpsPersonCode}
+          className={INPUT}
+        />
+        <TextField
+          label="Bank routing code"
+          name="wpsAgentCode"
+          inputMode="numeric"
+          defaultValue={current.wpsAgentCode ?? ''}
+          hint="9 digits — their bank or exchange house gives it."
+          error={errors.wpsAgentCode}
+          className={INPUT}
+        />
+        <TextField
+          label="IBAN"
+          name="salaryIban"
+          defaultValue={current.salaryIban ?? ''}
+          placeholder="AE07 0331 2345 6789 0123 456"
+          hint="Their salary account. Salary card: the card's IBAN."
+          error={errors.salaryIban}
+          className={INPUT}
+        />
+      </div>
+      <FormError message={Object.keys(errors).length ? undefined : state.error} />
+      <div className="border-t border-border pt-4">
+        <SubmitButton pending={isPending} size="lg" className="h-11" pendingLabel="Saving…">
+          <Save />
+          Save bank details
+        </SubmitButton>
+      </div>
+    </form>
   );
 }

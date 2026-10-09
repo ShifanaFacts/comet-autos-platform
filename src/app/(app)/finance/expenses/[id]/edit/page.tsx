@@ -48,6 +48,7 @@ export default async function EditExpensePage({ params }: { params: Promise<{ id
             taxCodes={options.taxCodes}
             modes={options.modes}
             people={options.people}
+            jobs={options.jobs}
           />
         )}
       </Panel>

@@ -9,7 +9,7 @@ import { isDiscountedLine, movementValue, receivedBefore } from '@/lib/inventory
 import { PAYMENT_METHOD_LABEL } from '@/lib/documents/build';
 import { dueFils, paidFils } from '@/lib/billing/invoice';
 import { customerAdvanceHeld } from '@/lib/billing/advances';
-import { purchaseRoundingFils } from '@/lib/finance/supplier-balance';
+import { purchaseBillDifferenceFils, purchaseRoundingFils } from '@/lib/finance/supplier-balance';
 import { partyJournalLines, type PartyJournalLine } from '@/lib/accounting/sub-ledger';
 
 /*
@@ -456,6 +456,28 @@ export async function getSupplierStatement(
     }),
     resolveDefaultVatRate(organizationId),
   ]);
+  // Tax invoices matched later for a different amount than recorded.
+  const billed = await prisma.purchase.findMany({
+    where: {
+      organizationId,
+      supplierId,
+      status: 'RECEIVED',
+      billStatus: 'RECEIVED',
+      billMatchedByUserId: { not: null },
+      billTotalAmount: { not: null },
+    },
+    select: {
+      id: true,
+      purchaseNumber: true,
+      supplierInvoiceNumber: true,
+      status: true,
+      billStatus: true,
+      billMatchedByUserId: true,
+      billTotalAmount: true,
+      totalAmount: true,
+      billReceivedOn: true,
+    },
+  });
   // The bills' round-offs, owed once each purchase is received in full.
   const rounded = await prisma.purchase.findMany({
     where: {
@@ -534,6 +556,21 @@ export async function getSupplierStatement(
       href: `/inventory/purchases/${purchase.id}`,
       // Signed: a round-off down is owed less.
       fils: purchaseRoundingFils(purchase),
+    });
+  }
+  for (const purchase of billed) {
+    const difference = purchaseBillDifferenceFils(purchase);
+    if (difference === 0 || !purchase.billReceivedOn) continue;
+    movements.push({
+      key: `bill-${purchase.id}`,
+      date: day(purchase.billReceivedOn),
+      order: 1,
+      kind: 'Bill difference',
+      reference: purchase.purchaseNumber,
+      description: `Tax invoice ${purchase.supplierInvoiceNumber ?? ''} ${difference > 0 ? 'more' : 'less'} than recorded`.replace('  ', ' '),
+      href: `/inventory/purchases/${purchase.id}`,
+      // Signed: a bill for more is owed more.
+      fils: difference,
     });
   }
   const numbers = new Map(payments.map((p) => [p.id, p.supplierPaymentNumber]));

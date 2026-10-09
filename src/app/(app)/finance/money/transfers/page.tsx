@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { ArrowRightLeft } from 'lucide-react';
 import { AuthError, requireUser } from '@/lib/auth/authorize';
 import { getTransferAccounts, listMoneyTransfers } from '@/lib/finance/money';
+import { getVatSettings } from '@/lib/tax';
+import { toFils } from '@/lib/money';
 import { formatCalendarDate, formatDateTime, formatMoney, localDateString } from '@/lib/format';
 import { PageHeader, Panel, Section, Stack } from '@/components/layout/primitives';
 import { AccessDenied } from '@/components/shared/access-denied';
@@ -24,10 +26,12 @@ export default async function MoneyTransfersPage({
   let list;
   let info;
   let accounts;
+  let vat;
   try {
-    [{ result: list, info }, accounts] = await Promise.all([
+    [{ result: list, info }, accounts, vat] = await Promise.all([
       loadPage(pageFrom(params.page), (skip, take) => listMoneyTransfers(user, take, skip)),
       getTransferAccounts(user),
+      getVatSettings(user.organizationId),
     ]);
   } catch (error) {
     if (error instanceof AuthError) return <AccessDenied what="money transfers" />;
@@ -55,8 +59,10 @@ export default async function MoneyTransfersPage({
                 label: account.label,
                 code: account.code,
                 balance: account.balance,
+                kind: account.kind,
               }))}
               today={localDateString()}
+              vatRate={vat.isVatRegistered ? vat.vatRate : ''}
             />
           </Panel>
         </Section>
@@ -100,6 +106,17 @@ export default async function MoneyTransfersPage({
                           <span className="block text-xs text-muted-foreground">
                             {`${transfer.transferNumber}${transfer.reference ? ` · ref ${transfer.reference}` : ''} · ${transfer.createdBy.fullName}, ${formatDateTime(transfer.createdAt)}`}
                           </span>
+                          {toFils(transfer.chargesAmount.toString()) +
+                            toFils(transfer.chargesVatAmount.toString()) >
+                          0 ? (
+                            <span className="block text-xs text-muted-foreground">
+                              {`Bank kept ${formatMoney(transfer.chargesAmount.toString())} fee${
+                                toFils(transfer.chargesVatAmount.toString()) > 0
+                                  ? ` + ${formatMoney(transfer.chargesVatAmount.toString())} VAT`
+                                  : ''
+                              }`}
+                            </span>
+                          ) : null}
                           {transfer.notes ? (
                             <span className="block text-xs text-muted-foreground">
                               {transfer.notes}

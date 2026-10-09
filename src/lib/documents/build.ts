@@ -64,7 +64,7 @@ const vehicleSelect = {
 /** The job's own customer — who the quotation was for — never the vehicle's current owner. */
 const customerSelect = { name: true, phone: true, address: true, taxNumber: true } as const;
 
-async function loadSeller(organizationId: string): Promise<DocumentSeller> {
+export async function loadSeller(organizationId: string): Promise<DocumentSeller> {
   return prisma.organization.findUniqueOrThrow({
     where: { id: organizationId },
     select: {
@@ -81,7 +81,7 @@ async function loadSeller(organizationId: string): Promise<DocumentSeller> {
 const vehicleLabel = (v: { make: string; model: string; year: number | null }) =>
   [v.make, v.model, v.year].filter(Boolean).join(' ');
 /** "Mohammed-Mowla-Auto-Garage-LLC-Tax-invoice-INV-000003": the workshop's own name, not the app's. */
-const fileName = (seller: { name: string }, title: string, number: string) => {
+export const fileName = (seller: { name: string }, title: string, number: string) => {
   const workshop = seller.name
     .trim()
     .replace(/[^A-Za-z0-9]+/g, '-')

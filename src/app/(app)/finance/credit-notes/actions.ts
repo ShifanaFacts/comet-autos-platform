@@ -18,6 +18,8 @@ async function refresh(invoiceId: string, creditNoteId?: string) {
   if (creditNoteId) revalidatePath(`/finance/credit-notes/${creditNoteId}`);
   revalidatePath('/finance/invoices');
   revalidatePath(`/finance/invoices/${invoiceId}`);
+  // Parts brought back are in stock again.
+  revalidatePath('/inventory', 'layout');
   revalidatePath('/finance');
   revalidatePath('/finance/outstanding');
   revalidatePath('/finance/vat');
@@ -36,7 +38,7 @@ export async function createCreditNoteAction(
   input: {
     issueDate: string;
     reason: string;
-    lines: { invoiceItemId: string; amount: string; quantity?: string }[];
+    lines: { invoiceItemId: string; amount: string; quantity?: string; restock?: string }[];
     requestKey: string;
   },
 ): Promise<

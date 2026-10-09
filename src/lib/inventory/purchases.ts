@@ -31,7 +31,11 @@ import { getTaxCodeOptions, resolveTaxCodes } from '@/lib/accounting/tax-codes';
 import { PURCHASE_STATUS_LABEL } from '@/lib/inventory/labels';
 import { receivedValueFils, unitCostAfterDiscount } from '@/lib/inventory/purchase-value';
 import { takeSupplierPayment } from '@/lib/finance/supplier-payments';
-import { purchaseRoundingFils, supplierPaidFils } from '@/lib/finance/supplier-balance';
+import {
+  purchaseBillDifferenceFils,
+  purchaseRoundingFils,
+  supplierPaidFils,
+} from '@/lib/finance/supplier-balance';
 import { roundingField, withRounding } from '@/lib/billing/document-lines';
 import { syncPosting } from '@/lib/accounting/journal';
 
@@ -1110,7 +1114,10 @@ export async function getPurchaseDetail(user: AuthenticatedUser, purchaseId: str
     };
   });
   const roundingFils = purchaseRoundingFils(purchase);
-  const receivedFils = receivedValueFils(purchase.items, defaultVat) + roundingFils;
+  // A tax invoice matched later for a different amount is owed as it says.
+  const billDifferenceFils = purchaseBillDifferenceFils(purchase);
+  const receivedFils =
+    receivedValueFils(purchase.items, defaultVat) + roundingFils + billDifferenceFils;
   const paidFils = supplierPaidFils(purchase.supplierPayments);
   return {
     purchase,
@@ -1119,6 +1126,9 @@ export async function getPurchaseDetail(user: AuthenticatedUser, purchaseId: str
     receivedValue: filsToString(receivedFils),
     /** The round-off counted in what is owed (nothing until fully received). */
     roundingOwed: filsToString(roundingFils),
+    /** What the matched tax invoice says beyond what was recorded (signed). */
+    billDifference: filsToString(Math.abs(billDifferenceFils)),
+    billDifferenceSign: Math.sign(billDifferenceFils),
     /** What the purchase owes the supplier now — the supplier balance's own rule. */
     paid: filsToString(paidFils),
     owed: filsToString(Math.max(receivedFils - paidFils, 0)),

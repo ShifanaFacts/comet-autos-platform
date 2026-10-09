@@ -46,7 +46,10 @@ let a: TestOrg;
 let roles: Record<AccountRole, string>;
 
 before(async () => {
-  a = await createTestOrg('Ledger');
+  a = await createTestOrg('Ledger', [
+    { sku: 'LG-FILTER', name: 'Oil filter', cost: '20', price: '50', stock: '10' },
+    { sku: 'LG-BATTERY', name: 'Scrap battery', cost: '5', price: '20', stock: '10' },
+  ]);
   roles = await prisma.$transaction((tx) => ensureChart(tx, a.organizationId));
 });
 
@@ -111,7 +114,14 @@ describe('invoices and payments book themselves', () => {
           discountType: 'PERCENT',
           discount: '10',
         },
-        { itemType: 'PART', description: 'Oil filter', quantity: '2', unitPrice: '50' },
+        {
+          itemType: 'PART',
+          description: 'Oil filter',
+          quantity: '2',
+          unitPrice: '50',
+          partId: a.parts['LG-FILTER'].id,
+          unitCost: '20',
+        },
       ],
       discountType: 'AMOUNT',
       discount: '10',
@@ -125,6 +135,9 @@ describe('invoices and payments book themselves', () => {
     assert.equal(invoiceBooked.get(roles.SALES_PARTS), -toFils('100.00'));
     assert.equal(invoiceBooked.get(roles.SALES_DISCOUNTS), toFils('10.00'));
     assert.equal(invoiceBooked.get(roles.VAT_OUTPUT), -toFils('22.50'));
+    // The filters leave stock at their cost: 2 × 20.00.
+    assert.equal(invoiceBooked.get(roles.COST_OF_PARTS), toFils('40.00'));
+    assert.equal(invoiceBooked.get(roles.INVENTORY), -toFils('40.00'));
 
     const paymentBooked = await bookedFor(paymentId!);
     assert.equal(paymentBooked.get(roles.CASH), toFils('472.50'));
@@ -148,6 +161,7 @@ describe('invoices and payments book themselves', () => {
           quantity: '1',
           unitPrice: '20',
           accountId: otherIncome.id,
+          partId: a.parts['LG-BATTERY'].id,
         },
       ],
     });
@@ -163,7 +177,14 @@ describe('invoices and payments book themselves', () => {
       createDirectInvoice(a.owner, {
         customerId,
         items: [
-          { itemType: 'PART', description: 'x', quantity: '1', unitPrice: '1', accountId: rent.id },
+          {
+            itemType: 'PART',
+            description: 'x',
+            quantity: '1',
+            unitPrice: '1',
+            accountId: rent.id,
+            partId: a.parts['LG-BATTERY'].id,
+          },
         ],
       }),
       /income account/,

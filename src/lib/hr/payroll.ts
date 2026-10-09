@@ -12,6 +12,7 @@ import { filsToString, toFils } from '@/lib/money';
 import { localDateString, parseCalendarDate } from '@/lib/format';
 import { approvedLeaveDays, leaveDays, overlapDays } from '@/lib/hr/leave';
 import { syncPosting } from '@/lib/accounting/journal';
+import { gratuityEarnedFils } from '@/lib/hr/gratuity';
 
 /*
  * Salaries and the monthly payroll run.
@@ -75,8 +76,14 @@ const divRound = (numerator: number, denominator: number) =>
 const name = (employee: { firstName: string; lastName: string }) =>
   `${employee.firstName} ${employee.lastName}`.trim();
 
-const fils = (value: { toString(): string } | null | undefined) =>
-  value ? toFils(value.toString()) : 0;
+const fils = (value: { toString(): string } | null | undefined) => {
+  if (!value) return 0;
+  const text = value.toString();
+  return text.startsWith('-') ? -toFils(text.slice(1)) : toFils(text);
+};
+
+/** Fils as a decimal string, below zero too. */
+const signed = (value: number) => (value < 0 ? `-${filsToString(-value)}` : filsToString(value));
 
 /** "2026-03" → the month's first and last calendar dates. */
 export function monthPeriod(month: string) {
@@ -218,10 +225,17 @@ export async function setSalary(user: AuthenticatedUser, employeeId: string, raw
 /** One employee's pay history, newest first, with the salary in force today. */
 export async function getSalaryHistory(user: AuthenticatedUser, employeeId: string) {
   requirePayAccess(user);
-  const rows = await prisma.salary.findMany({
-    where: { organizationId: user.organizationId, employeeId },
-    orderBy: { effectiveFrom: 'desc' },
-  });
+  const [rows, payDetails] = await Promise.all([
+    prisma.salary.findMany({
+      where: { organizationId: user.organizationId, employeeId },
+      orderBy: { effectiveFrom: 'desc' },
+    }),
+    // How the salary reaches them through WPS.
+    prisma.employee.findFirst({
+      where: { id: employeeId, organizationId: user.organizationId },
+      select: { wpsPersonCode: true, wpsAgentCode: true, salaryIban: true },
+    }),
+  ]);
   const today = parseCalendarDate(localDateString())!;
   const current =
     rows.find(
@@ -232,6 +246,7 @@ export async function getSalaryHistory(user: AuthenticatedUser, employeeId: stri
     /** A salary set to start later than today. */
     upcoming: rows.find((row) => row.effectiveFrom > today) ?? null,
     history: rows.map(withTotal),
+    payDetails: payDetails ?? { wpsPersonCode: null, wpsAgentCode: null, salaryIban: null },
   };
 }
 
@@ -249,6 +264,33 @@ interface CalculatedLine {
   allowances: string;
   deductions: string;
   netPay: string;
+  gratuityLiability: string;
+  gratuityAccrual: string;
+}
+
+const isoDay = (date: Date) => date.toISOString().slice(0, 10);
+
+/**
+ * Payroll runs month by month: each month's gratuity is what has been earned
+ * less what the month before had set aside, so a month can't be run, rerun
+ * or cancelled once a later month stands on it.
+ */
+async function assertNoLaterRun(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  end: Date,
+  verb: string,
+) {
+  const later = await tx.payroll.findFirst({
+    where: { organizationId, status: { not: 'CANCELLED' }, periodStart: { gt: end } },
+    orderBy: { periodStart: 'asc' },
+    select: { periodStart: true },
+  });
+  if (later) {
+    throw new DomainError(
+      `${monthLabel(later.periodStart)} has already been run, and its end-of-service figures follow on from this month. A month can't be ${verb} after a later one — cancel the later month first.`,
+    );
+  }
 }
 
 /**
@@ -272,13 +314,35 @@ async function calculateLines(
     select: { id: true, firstName: true, lastName: true, hireDate: true, terminationDate: true },
   });
   const ids = employees.map((employee) => employee.id);
-  const [salaries, leave] = await Promise.all([
+  const [salaries, leave, earlier, organization] = await Promise.all([
     tx.salary.findMany({
       where: { organizationId, employeeId: { in: ids }, effectiveFrom: { lte: end } },
       orderBy: { effectiveFrom: 'desc' },
     }),
     approvedLeaveDays(tx, organizationId, ids, start, end),
+    // The gratuity each person's last payroll had set aside.
+    tx.payrollItem.findMany({
+      where: {
+        organizationId,
+        employeeId: { in: ids },
+        payroll: { status: { not: 'CANCELLED' }, periodEnd: { lt: start } },
+      },
+      orderBy: { payroll: { periodEnd: 'desc' } },
+      select: { employeeId: true, gratuityLiability: true },
+    }),
+    tx.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { openingBalanceDate: true },
+    }),
   ]);
+  const setAside = new Map<string, number>();
+  for (const item of earlier) {
+    if (!setAside.has(item.employeeId)) setAside.set(item.employeeId, fils(item.gratuityLiability));
+  }
+  // Gratuity earned before the books began is part of the opening balances
+  // (Provision for end-of-service benefits), not this month's cost.
+  const booksStart = organization.openingBalanceDate;
+  const dayBeforeBooks = booksStart ? isoDay(new Date(booksStart.getTime() - DAY_MS)) : null;
 
   const salaryOf = new Map<string, (typeof salaries)[number]>();
   for (const salary of salaries) {
@@ -308,12 +372,25 @@ async function calculateLines(
       divRound((monthlyBasic + monthlyAllowances) * unpaid, days),
       basic + allowances,
     );
+    // Earned to the month end — or to the last day worked, for someone who left.
+    const hired = isoDay(employee.hireDate);
+    const asOf = isoDay(
+      employee.terminationDate && employee.terminationDate < end ? employee.terminationDate : end,
+    );
+    const liability = gratuityEarnedFils(hired, asOf, monthlyBasic);
+    const before =
+      setAside.get(employee.id) ??
+      (dayBeforeBooks && hired <= dayBeforeBooks
+        ? gratuityEarnedFils(hired, dayBeforeBooks, monthlyBasic)
+        : 0);
     lines.push({
       employeeId: employee.id,
       basicSalary: filsToString(basic),
       allowances: filsToString(allowances),
       deductions: filsToString(deductions),
       netPay: filsToString(basic + allowances - deductions),
+      gratuityLiability: filsToString(liability),
+      gratuityAccrual: signed(liability - before),
     });
   }
   return { lines, missingSalary };
@@ -325,15 +402,18 @@ function totalsOf(
     allowances: { toString(): string };
     deductions: { toString(): string };
     netPay: { toString(): string };
+    gratuityAccrual?: { toString(): string };
   }[],
 ) {
   let gross = 0;
   let deductions = 0;
   let net = 0;
+  let gratuity = 0;
   for (const item of items) {
     gross += fils(item.basicSalary) + fils(item.allowances);
     deductions += fils(item.deductions);
     net += fils(item.netPay);
+    gratuity += fils(item.gratuityAccrual);
   }
   return {
     count: items.length,
@@ -341,6 +421,8 @@ function totalsOf(
     deductions: filsToString(deductions),
     net: filsToString(net),
     netFils: net,
+    /** End-of-service gratuity set aside this month. */
+    gratuity: signed(gratuity),
   };
 }
 
@@ -375,6 +457,7 @@ export async function runPayroll(user: AuthenticatedUser, rawInput: unknown) {
         'month',
       );
     }
+    await assertNoLaterRun(tx, user.organizationId, end, 'run');
 
     const { lines, missingSalary } = await calculateLines(tx, user.organizationId, start, end);
     if (lines.length === 0) {
@@ -472,6 +555,7 @@ export async function recalculatePayroll(user: AuthenticatedUser, payrollId: str
   requirePermission(user, 'payroll.edit');
   return prisma.$transaction(async (tx) => {
     const payroll = await loadRun(tx, user, payrollId, ['DRAFT', 'CALCULATED'], 'recalculated');
+    await assertNoLaterRun(tx, user.organizationId, payroll.periodEnd, 'recalculated');
     const before = totalsOf(await tx.payrollItem.findMany({ where: { payrollId: payroll.id } }));
     const { lines, missingSalary } = await calculateLines(
       tx,
@@ -647,6 +731,7 @@ export async function cancelPayroll(user: AuthenticatedUser, payrollId: string, 
       'cancelled',
     );
     if (payroll.status === 'APPROVED') requirePermission(user, 'payroll.approve');
+    await assertNoLaterRun(tx, user.organizationId, payroll.periodEnd, 'cancelled');
     await transition(tx, payroll.id, payroll.status, { status: 'CANCELLED' });
     // An approved run had been booked as owed; cancelling it reverses that.
     await syncPosting(tx, user.organizationId, 'PAYROLL', payroll.id, user.id);
@@ -679,7 +764,15 @@ export async function getPayrollOverview(user: AuthenticatedUser) {
       orderBy: { periodStart: 'desc' },
       take: 36,
       include: {
-        items: { select: { basicSalary: true, allowances: true, deductions: true, netPay: true } },
+        items: {
+          select: {
+            basicSalary: true,
+            allowances: true,
+            deductions: true,
+            netPay: true,
+            gratuityAccrual: true,
+          },
+        },
         approvedBy: { select: { fullName: true } },
         paidBy: { select: { fullName: true } },
       },
@@ -766,6 +859,9 @@ export async function getPayrollRun(user: AuthenticatedUser, payrollId: string) 
               lastName: true,
               employeeCode: true,
               jobTitle: true,
+              hireDate: true,
+              salaryIban: true,
+              designation: { select: { name: true } },
             },
           },
         },
@@ -773,6 +869,11 @@ export async function getPayrollRun(user: AuthenticatedUser, payrollId: string) 
     },
   });
   if (!payroll) throw new NotFoundError('payroll run');
+  // Who pays: the payslip's heading.
+  const company = await prisma.organization.findUniqueOrThrow({
+    where: { id: user.organizationId },
+    select: { name: true, legalName: true, address: true },
+  });
 
   const ids = payroll.items.map((item) => item.employeeId);
   const [leave, absences] = await Promise.all([
@@ -802,6 +903,9 @@ export async function getPayrollRun(user: AuthenticatedUser, payrollId: string) 
         gross: filsToString(fils(item.basicSalary) + fils(item.allowances)),
         deductions: filsToString(fils(item.deductions)),
         netPay: filsToString(fils(item.netPay)),
+        /** End-of-service gratuity earned to the period end, and this month's part of it. */
+        gratuityLiability: filsToString(fils(item.gratuityLiability)),
+        gratuityAccrual: signed(fils(item.gratuityAccrual)),
         unpaidLeaveDays: days?.UNPAID ?? 0,
         paidLeaveDays: days ? days.ANNUAL + days.SICK + days.OTHER : 0,
         absentDays: absent.get(item.employeeId) ?? 0,
@@ -825,6 +929,11 @@ export async function getPayrollRun(user: AuthenticatedUser, payrollId: string) 
     paidAt: payroll.paidAt,
     lines,
     totals: totalsOf(payroll.items),
+    /** The gratuity the whole team had earned by the period end. */
+    gratuityOwed: filsToString(
+      payroll.items.reduce((sum, item) => sum + fils(item.gratuityLiability), 0),
+    ),
+    company,
   };
 }
 

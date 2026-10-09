@@ -313,6 +313,8 @@ describe('a return on a discounted line', () => {
       a.owner,
       {
         supplierId,
+        // The tax invoice in hand: its VAT is claimable.
+        supplierInvoiceNumber: `RET-${RUN}`,
         items: [{ partId: part('C'), quantity: '5', unitCost: '20', taxRate: '5' }],
         billDiscountType: 'PERCENT',
         billDiscountValue: '10',
@@ -353,6 +355,8 @@ describe('a purchase with no discount is exactly as before', () => {
     const { id: supplierId } = await supplier('Plain Parts');
     const purchase = await createPurchase(a.owner, {
       supplierId,
+      // The tax invoice in hand: its VAT is claimable.
+      supplierInvoiceNumber: `PLAIN-${RUN}`,
       items: [{ partId: part('D'), quantity: '3', unitCost: '33.33', taxRate: '5' }],
     });
     const [line] = await itemsOf(purchase.id);

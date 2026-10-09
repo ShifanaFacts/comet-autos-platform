@@ -93,8 +93,20 @@ async function customerWithVehicle(org: TestOrg, suffix: string) {
 let a: TestOrg;
 let b: TestOrg;
 
+/** A catalogue part, by name: an invoice's Parts line names the part it sells. */
+const partId = (name: string) => a.parts[name].id;
+
 before(async () => {
-  a = await createTestOrg('SimpleA');
+  // Every part an invoice below sells, in stock (the SKU is its name).
+  const sold = new Set([
+    'Pads',
+    'Brake pads',
+    ...OWNER_SHEET.flatMap(([type, description]) => (type === 'PART' ? [description] : [])),
+  ]);
+  a = await createTestOrg(
+    'SimpleA',
+    [...sold].map((name) => ({ sku: name, name, cost: '10', price: '20', stock: '10' })),
+  );
   b = await createTestOrg('SimpleB');
 });
 
@@ -338,8 +350,8 @@ describe('invoice without a job card', () => {
       customerId,
       vehicleId: party.vehicle.id,
       items: [
-        { itemType: 'PART', description: 'Wheel alignment', quantity: '1', unitPrice: '150' },
-        { itemType: 'PART', description: 'Tyre rotation', quantity: '4', unitPrice: '12.75' },
+        { itemType: 'LABOUR', description: 'Wheel alignment', quantity: '1', unitPrice: '150' },
+        { itemType: 'LABOUR', description: 'Tyre rotation', quantity: '4', unitPrice: '12.75' },
       ],
       notes: 'Thank you',
     });
@@ -401,7 +413,7 @@ describe('invoice without a job card', () => {
   test('without a vehicle: issued, printed, paid and shared like any other', async () => {
     const result = await createDirectInvoice(a.owner, {
       customerId,
-      items: [{ itemType: 'PART', description: 'Car wash', quantity: '1', unitPrice: '40' }],
+      items: [{ itemType: 'LABOUR', description: 'Car wash', quantity: '1', unitPrice: '40' }],
     });
     const invoice = await getInvoiceDetail(a.owner, result.invoiceId);
     assert.equal(invoice.vehicleId, null);
@@ -441,7 +453,7 @@ describe('invoice from a quotation, and from a job card', () => {
       validUntil: validUntil(),
       items: [
         { itemType: 'LABOUR', description: 'Brake service', quantity: '2.25', unitPrice: '133.33' },
-        { itemType: 'PART', description: 'Pads', quantity: '1', unitPrice: '199.99' },
+        { itemType: 'PART', description: 'Pads', quantity: '1', unitPrice: '199.99', partId: partId('Pads') },
       ],
     });
     // A draft can't be billed: the customer hasn't seen it.
@@ -538,7 +550,7 @@ describe('invoice from a quotation, and from a job card', () => {
     const { invoiceId } = await createDirectInvoice(a.owner, {
       customerId: customer.id,
       jobCardId,
-      items: [{ itemType: 'PART', description: 'Puncture repair', quantity: '1', unitPrice: '30' }],
+      items: [{ itemType: 'LABOUR', description: 'Puncture repair', quantity: '1', unitPrice: '30' }],
     });
     const invoice = await getInvoiceDetail(a.owner, invoiceId);
     assert.equal(invoice.jobCardId, jobCardId);
@@ -548,7 +560,7 @@ describe('invoice from a quotation, and from a job card', () => {
       createDirectInvoice(a.owner, {
         customerId: customer.id,
         jobCardId,
-        items: [{ itemType: 'PART', description: 'Again', quantity: '1', unitPrice: '30' }],
+        items: [{ itemType: 'LABOUR', description: 'Again', quantity: '1', unitPrice: '30' }],
       }),
       /already invoiced/,
     );
@@ -631,7 +643,7 @@ describe('isolation, permissions and duplicate protection', () => {
     const quote = await createQuotation(a.owner, { customerId: customer.id, vehicleId: vehicle.id });
     const { invoiceId } = await createDirectInvoice(a.owner, {
       customerId: customer.id,
-      items: [{ itemType: 'PART', description: 'Check', quantity: '1', unitPrice: '50' }],
+      items: [{ itemType: 'LABOUR', description: 'Check', quantity: '1', unitPrice: '50' }],
     });
 
     await expectDomainError(createQuotation(b.owner, { customerId: customer.id }), /Choose the customer/);
@@ -662,7 +674,7 @@ describe('isolation, permissions and duplicate protection', () => {
     );
     const { invoiceId } = await createDirectInvoice(a.owner, {
       customerId: customer.id,
-      items: [{ itemType: 'PART', description: 'Check', quantity: '1', unitPrice: '10' }],
+      items: [{ itemType: 'LABOUR', description: 'Check', quantity: '1', unitPrice: '10' }],
     });
     await assert.rejects(
       recordInvoicePayment(a.viewer, invoiceId, { amount: '1', method: 'CASH', receivedAt: now() }),
@@ -685,7 +697,7 @@ describe('isolation, permissions and duplicate protection', () => {
 
     const invoiceInput = {
       customerId: customer.id,
-      items: [{ itemType: 'PART', description: 'Service', quantity: '1', unitPrice: '100' }],
+      items: [{ itemType: 'LABOUR', description: 'Service', quantity: '1', unitPrice: '100' }],
       requestKey: key('invoice'),
     };
     // Two at once, as a double tap sends them.
@@ -710,7 +722,7 @@ describe('isolation, permissions and duplicate protection', () => {
     const { customer } = await customerWithVehicle(a, '73');
     const { invoiceId } = await createDirectInvoice(a.owner, {
       customerId: customer.id,
-      items: [{ itemType: 'PART', description: 'Service', quantity: '1', unitPrice: '100' }],
+      items: [{ itemType: 'LABOUR', description: 'Service', quantity: '1', unitPrice: '100' }],
     });
     const results = await Promise.allSettled(
       [1, 2, 3].map(() => recordInvoicePayment(a.owner, invoiceId, { amount: '60', method: 'CASH', receivedAt: now() })),
@@ -808,7 +820,14 @@ describe("the owner's quotation sheet", () => {
     const quote = await createQuotation(a.owner, { customerId: customer.id, vehicleId: vehicle.id });
     await saveEstimateDraft(a.owner, quote.id, {
       validUntil: validUntil(),
-      items: OWNER_SHEET.map(([itemType, description, quantity, unitPrice]) => ({ itemType, description, quantity, unitPrice })),
+      // Each part named from the list, so the invoice can take it out of stock.
+      items: OWNER_SHEET.map(([itemType, description, quantity, unitPrice]) => ({
+        itemType,
+        description,
+        quantity,
+        unitPrice,
+        ...(itemType === 'PART' ? { partId: partId(description) } : {}),
+      })),
     });
     await sendEstimate(a.owner, quote.id);
     await recordCustomerDecision(a.owner, quote.id, { decision: 'APPROVED', method: 'PHONE' });
@@ -839,7 +858,7 @@ describe("the owner's quotation sheet", () => {
     const { invoiceId } = await createDirectInvoice(a.owner, {
       customerId: customer.id,
       items: [
-        { itemType: 'PART', description: 'Brake pads', quantity: '1', unitPrice: '180' },
+        { itemType: 'PART', description: 'Brake pads', quantity: '1', unitPrice: '180', partId: partId('Brake pads') },
         { itemType: 'LABOUR', description: 'Fitting', quantity: '1', unitPrice: '100' },
       ],
     });

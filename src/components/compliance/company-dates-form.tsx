@@ -154,6 +154,34 @@ export function CompanyDatesForm({ dates }: { dates: CompanyDates }) {
         </div>
       </fieldset>
 
+      <fieldset className="flex flex-col gap-4 border-t border-border pt-6">
+        <legend className="mb-2 text-sm font-semibold">Salaries (WPS)</legend>
+        <p className="text-xs text-muted-foreground">
+          For the salary file the bank pays the team from. The establishment number is on the MOHRE
+          establishment card; the bank gives its routing code.
+        </p>
+        <div className="grid gap-6 @lg:grid-cols-2">
+          <TextField
+            label="MOHRE establishment number"
+            name="mohreEstablishmentId"
+            inputMode="numeric"
+            defaultValue={dates.mohreEstablishmentId ?? ''}
+            error={errors.mohreEstablishmentId}
+            hint="13 digits."
+            className={INPUT}
+          />
+          <TextField
+            label="Paying bank's routing code"
+            name="wpsRoutingCode"
+            inputMode="numeric"
+            defaultValue={dates.wpsRoutingCode ?? ''}
+            error={errors.wpsRoutingCode}
+            hint="9 digits."
+            className={INPUT}
+          />
+        </div>
+      </fieldset>
+
       <FormError message={Object.keys(errors).length ? undefined : state.error} />
       <div className="border-t border-border pt-6">
         <SubmitButton pending={isPending} size="lg" className="h-11" pendingLabel="Saving…">

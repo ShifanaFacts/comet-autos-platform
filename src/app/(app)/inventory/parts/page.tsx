@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { AlertTriangle, Cog, History, PackageX, Plus } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, Cog, History, PackageX, Plus } from 'lucide-react';
 import { requireUser, hasPermission } from '@/lib/auth/authorize';
 import { canExport } from '@/lib/data-transfer/exports';
 import { listParts, type ActiveFilter, type StockFilter } from '@/lib/inventory/parts';
@@ -129,6 +129,10 @@ export default async function PartsPage({ searchParams }: { searchParams: Promis
             <LinkButton href="/inventory/movements" variant="outline" size="lg">
               <History />
               Stock movements
+            </LinkButton>
+            <LinkButton href="/inventory/stock-count" variant="outline" size="lg">
+              <ClipboardCheck />
+              Stock count
             </LinkButton>
             {canManage ? (
               <LinkButton href="/inventory/parts/new" size="lg">

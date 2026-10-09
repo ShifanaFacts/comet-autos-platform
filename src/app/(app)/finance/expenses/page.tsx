@@ -137,6 +137,7 @@ export default async function ExpensesPage({
           taxCodes={formOptions.taxCodes}
           modes={formOptions.modes}
           people={formOptions.people}
+          jobs={formOptions.jobs}
           moneyAccounts={formOptions.moneyAccounts}
         />
       ) : null}
@@ -201,6 +202,7 @@ export default async function ExpensesPage({
                             taxCodes={formOptions.taxCodes}
                             modes={formOptions.modes}
                             people={formOptions.people}
+                            jobs={formOptions.jobs}
                             moneyAccounts={formOptions.moneyAccounts}
                           />
                         ) : null}
@@ -287,6 +289,7 @@ export default async function ExpensesPage({
                                     taxCodes={formOptions.taxCodes}
                                     modes={formOptions.modes}
                                     people={formOptions.people}
+                                    jobs={formOptions.jobs}
                                     moneyAccounts={formOptions.moneyAccounts}
                                   />
                                 ) : null}
