@@ -716,6 +716,7 @@ model Organization {
   advanceAllocations  CustomerAdvanceAllocation[]
   advanceRefunds      CustomerAdvanceRefund[]
   reconciledLines     ReconciledLine[]
+  bankStatementLines  BankStatementLine[]
   fixedAssets         FixedAsset[]
   assetDepreciations  AssetDepreciation[]
 
@@ -2246,6 +2247,9 @@ model ChartOfAccount {
   /// and it counts in that party's balance and statement. Trade receivables
   /// and trade payables are always kept this way (see lib/accounting/sub-ledger.ts).
   subLedger        PartyType?   @map("sub_ledger")
+  /// How this account's uploaded statements are read: which heading holds
+  /// the date, the amounts and the balance (lib/accounting/statement-file.ts).
+  statementColumns Json?        @map("statement_columns")
   createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -2553,6 +2557,9 @@ model BankReconciliation {
   accountId         String               @map("account_id") @db.Uuid
   statementDate     DateTime             @map("statement_date") @db.Date
   statementBalance  Decimal              @map("statement_balance") @db.Decimal(14, 2)
+  /// From an uploaded statement: its balance before its first line, and the file.
+  statementOpening  Decimal?             @map("statement_opening") @db.Decimal(14, 2)
+  statementFileName String?              @map("statement_file_name")
   status            ReconciliationStatus @default(IN_PROGRESS)
   completedAt       DateTime?            @map("completed_at") @db.Timestamptz
   completedByUserId String?              @map("completed_by_user_id") @db.Uuid
@@ -2564,7 +2571,8 @@ model BankReconciliation {
   account      ChartOfAccount   @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Restrict)
   createdBy    User             @relation("ReconciliationCreatedBy", fields: [organizationId, createdByUserId], references: [organizationId, id], onDelete: Restrict)
   completedBy  User?            @relation("ReconciliationCompletedBy", fields: [organizationId, completedByUserId], references: [organizationId, id], onDelete: Restrict)
-  lines        ReconciledLine[]
+  lines          ReconciledLine[]
+  statementLines BankStatementLine[]
 
   @@unique([organizationId, id])
   @@index([organizationId, accountId, statementDate])
@@ -2572,19 +2580,54 @@ model BankReconciliation {
 }
 
 /// A journal line ticked as cleared on a bank statement. A line clears once.
+/// Ticked from an uploaded statement, it names the statement line it is.
 model ReconciledLine {
   id                 String   @id @default(uuid(7)) @db.Uuid
   organizationId     String   @map("organization_id") @db.Uuid
   reconciliationId   String   @map("reconciliation_id") @db.Uuid
   journalEntryLineId String   @unique @map("journal_entry_line_id") @db.Uuid
+  statementLineId    String?  @map("statement_line_id") @db.Uuid
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   reconciliation BankReconciliation @relation(fields: [organizationId, reconciliationId], references: [organizationId, id], onDelete: Cascade)
   line           JournalEntryLine   @relation(fields: [journalEntryLineId], references: [id], onDelete: Restrict)
+  // NO ACTION: checked after a discard's cascade has removed both sides.
+  statementLine  BankStatementLine? @relation(fields: [organizationId, statementLineId], references: [organizationId, id], onDelete: NoAction)
 
   @@index([organizationId, reconciliationId])
+  @@index([organizationId, statementLineId])
   @@map("reconciled_lines")
+}
+
+/// One line of a bank or card statement uploaded to a reconciliation, kept as
+/// the bank wrote it. It is matched to the book lines it clears; one that
+/// matches nothing is missing from the books.
+model BankStatementLine {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  reconciliationId String   @map("reconciliation_id") @db.Uuid
+  /// Its place on the statement, oldest first.
+  position         Int
+  lineDate         DateTime @map("line_date") @db.Date
+  description      String
+  reference        String?
+  /// Money in positive, money out negative.
+  amount           Decimal  @db.Decimal(14, 2)
+  /// The statement's running balance after it, when the statement shows one.
+  balance          Decimal? @db.Decimal(14, 2)
+  /// The first upload of an account only: the statement's opening balance,
+  /// which clears the book lines dated before its first line.
+  broughtForward   Boolean  @default(false) @map("brought_forward")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  reconciliation BankReconciliation @relation(fields: [organizationId, reconciliationId], references: [organizationId, id], onDelete: Cascade)
+  matches        ReconciledLine[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, reconciliationId, position])
+  @@map("bank_statement_lines")
 }
 
 /// Equipment, vehicles, fittings the workshop owns and uses for years. Its
