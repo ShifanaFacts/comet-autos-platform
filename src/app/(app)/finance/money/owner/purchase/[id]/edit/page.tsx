@@ -18,7 +18,7 @@ export default async function EditBusinessPurchasePage({
 }) {
   const user = await requireUser();
   const { id } = await params;
-  if (!hasPermission(user, 'money.create') || !hasPermission(user, 'money.delete')) {
+  if (!hasPermission(user, 'money.create')) {
     return <AccessDenied what="correcting payments to buy the business" />;
   }
   let entry;
