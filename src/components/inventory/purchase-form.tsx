@@ -45,7 +45,8 @@ import {
   type ReceiptOptions,
 } from '@/components/inventory/receipt-settlement';
 import { PriceBasisToggle } from '@/components/forms/price-basis-toggle';
-import { fitInclusivePrice, inclusiveOf, type PriceBasis } from '@/lib/vat-entry';
+import { fitInclusivePrice, inclusiveOf, splitInclusive, type PriceBasis } from '@/lib/vat-entry';
+import { packToLine } from '@/lib/inventory/pack';
 
 /** A part a purchase line can be for — with its stock, as the part picker shows it. */
 export type PurchasePart = PartOption;
@@ -100,6 +101,92 @@ export interface PurchaseFormInitial {
     discountType?: DiscountType | null;
     discountValue?: string;
   }[];
+}
+
+/**
+ * Bought by the can, kept by the litre or kg: type what is on the bill and the
+ * line is worked out to match it exactly. Only fills the line above; it is
+ * saved with the rest of the form.
+ */
+function PackHelper({
+  unit,
+  withVat,
+  apply,
+}: {
+  unit: string;
+  withVat: boolean;
+  apply: (packs: string, size: string, price: string) => boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [packs, setPacks] = useState('1');
+  const [size, setSize] = useState('');
+  const [price, setPrice] = useState('');
+  const [failed, setFailed] = useState(false);
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="self-start text-xs font-medium text-primary hover:underline"
+      >
+        Bought in cans or packs? Work it out from the bill
+      </button>
+    );
+  }
+  // Enter here must not save the whole purchase.
+  const keepEnter = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter') event.preventDefault();
+  };
+  return (
+    <div
+      onKeyDown={keepEnter}
+      className="grid grid-cols-2 items-end gap-2 rounded-lg bg-muted/50 p-3 @xl:grid-cols-[1fr_1fr_1fr_auto]"
+    >
+      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+        How many packs
+        <NumberInput
+          kind="quantity"
+          value={packs}
+          onChange={(event) => setPacks(event.target.value)}
+          className="h-10 text-right text-base tabular-nums md:text-sm"
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+        {`${unit} in each`}
+        <NumberInput
+          kind="quantity"
+          value={size}
+          onChange={(event) => setSize(event.target.value)}
+          className="h-10 text-right text-base tabular-nums md:text-sm"
+        />
+      </label>
+      <label className="col-span-2 flex flex-col gap-1 text-xs text-muted-foreground @xl:col-span-1">
+        {withVat ? 'Price per pack incl. VAT' : 'Price per pack'}
+        <NumberInput
+          value={price}
+          onChange={(event) => setPrice(event.target.value)}
+          className="h-10 text-right text-base tabular-nums md:text-sm"
+        />
+      </label>
+      <Button
+        type="button"
+        variant="outline"
+        className="col-span-2 h-10 @xl:col-span-1"
+        onClick={() => {
+          const ok = apply(packs, size, price);
+          setFailed(!ok);
+          if (ok) setOpen(false);
+        }}
+      >
+        Fill the line
+      </Button>
+      {failed ? (
+        <p className="col-span-full text-xs text-destructive">
+          Enter how many packs, the size and the price.
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 /** Preview only — the server recalculates every amount when the purchase is saved. */
@@ -273,6 +360,31 @@ function PurchaseFormBody({
           : entry,
       ),
     );
+  };
+  /** A line worked out from packs: it replaces the line's quantity, cost and discount. */
+  const applyPack = (key: number, packs: string, size: string, price: string, rate: string) => {
+    const net = basis === 'INCLUSIVE' ? splitInclusive(price, rate)?.net : price;
+    const pack = net ? packToLine(packs, size, net) : null;
+    if (!pack) return false;
+    setTypedCosts((current) => {
+      const rest = { ...current };
+      delete rest[key];
+      return rest;
+    });
+    setLines((current) =>
+      current.map((line) =>
+        line.key === key
+          ? {
+              ...line,
+              quantity: pack.quantity,
+              unitCost: pack.unitCost,
+              discountType: 'AMOUNT',
+              discountValue: pack.discount,
+            }
+          : line,
+      ),
+    );
+    return true;
   };
   const shownCost = (line: Line) =>
     basis === 'EXCLUSIVE'
@@ -555,6 +667,15 @@ function PurchaseFormBody({
                       <Trash2 />
                     </Button>
                   </div>
+                  {part && part.unit !== 'piece' ? (
+                    <PackHelper
+                      unit={part.unit}
+                      withVat={basis === 'INCLUSIVE'}
+                      apply={(packs, size, price) =>
+                        applyPack(line.key, packs, size, price, line.taxRate || '0')
+                      }
+                    />
+                  ) : null}
                 </li>
               );
             })}
