@@ -46,7 +46,8 @@ import {
 } from '@/components/inventory/receipt-settlement';
 import { PriceBasisToggle } from '@/components/forms/price-basis-toggle';
 import { fitInclusivePrice, inclusiveOf, splitInclusive, type PriceBasis } from '@/lib/vat-entry';
-import { packToLine } from '@/lib/inventory/pack';
+import { packToLine, packTotals } from '@/lib/inventory/pack';
+import { toast } from 'sonner';
 
 /** A part a purchase line can be for — with its stock, as the part picker shows it. */
 export type PurchasePart = PartOption;
@@ -363,9 +364,27 @@ function PurchaseFormBody({
   };
   /** A line worked out from packs: it replaces the line's quantity, cost and discount. */
   const applyPack = (key: number, packs: string, size: string, price: string, rate: string) => {
-    const net = basis === 'INCLUSIVE' ? splitInclusive(price, rate)?.net : price;
-    const pack = net ? packToLine(packs, size, net) : null;
+    const totals = packTotals(packs, size, price);
+    if (!totals) return false;
+    const net = basis === 'INCLUSIVE' ? splitInclusive(totals.total, rate)?.net : totals.total;
+    // The whole bill as one pack, so the VAT is split on its total, not per pack.
+    const pack = net ? packToLine('1', totals.quantity, net) : null;
     if (!pack) return false;
+    if (basis === 'INCLUSIVE') {
+      // VAT rounds to the fil, so a few totals can't be reached: say so.
+      const line = calculateLine({
+        quantity: pack.quantity,
+        unitPrice: pack.unitCost,
+        taxRate: rate,
+        discount: readDiscount('AMOUNT', pack.discount),
+      });
+      const came = line.lineTotalFils + line.taxFils;
+      if (came !== toFils(totals.total)) {
+        toast.warning(
+          `Comes to ${formatMoney(filsToString(came))}, not ${formatMoney(totals.total)}: VAT rounds to the fil. Use the round-off to match the bill.`,
+        );
+      }
+    }
     setTypedCosts((current) => {
       const rest = { ...current };
       delete rest[key];

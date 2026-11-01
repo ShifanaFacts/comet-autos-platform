@@ -14,12 +14,15 @@ import {
   toFils,
   toMilli,
 } from '@/lib/money';
+import { localDateString, parseCalendarDate } from '@/lib/format';
 import { pricePerUnit } from '@/lib/inventory/pack';
+import { OPEN_JOB_STATUSES } from '@/lib/workshop/check-in';
 import {
   getStockOnHand,
   lockPart,
   postMovement,
   resolveInventoryBranch,
+  withNetQuantities,
 } from '@/lib/inventory/stock';
 
 /*
@@ -30,7 +33,8 @@ import {
  * nets to a fil or so, and what was already used shows as a cost.
  *
  * Past documents keep the quantities they were written in. Refused while a
- * purchase is still to arrive, because its quantity would change meaning.
+ * purchase is to arrive, or the part is on an open job, a draft invoice or a
+ * quotation still in play, because their quantities would change meaning.
  */
 
 const QUANTITY = /^\d{1,7}(\.\d{1,3})?$/;
@@ -86,6 +90,60 @@ export async function convertPartUnit(user: AuthenticatedUser, partId: string, r
       if (open) {
         throw new DomainError(
           `${open.purchaseNumber} is still to arrive with this part. Receive or cancel it first.`,
+        );
+      }
+      const usages = await tx.partUsage.findMany({
+        where: {
+          organizationId: user.organizationId,
+          partId,
+          jobCard: { status: { in: OPEN_JOB_STATUSES } },
+        },
+        select: { id: true, quantity: true, jobCard: { select: { jobNumber: true } } },
+      });
+      const fitted = (await withNetQuantities(tx, user.organizationId, usages)).find(
+        (usage) => usage.netMilli > 0,
+      );
+      if (fitted) {
+        throw new DomainError(
+          `It is fitted on open job ${fitted.jobCard.jobNumber}. Finish that job first.`,
+        );
+      }
+      const draftInvoice = await tx.invoiceItem.findFirst({
+        where: {
+          organizationId: user.organizationId,
+          partId,
+          invoice: { status: 'DRAFT' },
+        },
+        select: { invoice: { select: { invoiceNumber: true } } },
+      });
+      if (draftInvoice) {
+        throw new DomainError(
+          `Draft invoice ${draftInvoice.invoice.invoiceNumber ?? ''} has this part. Issue or delete it first.`,
+        );
+      }
+      const today = parseCalendarDate(localDateString())!;
+      const quoted = await tx.estimateItem.findFirst({
+        where: {
+          organizationId: user.organizationId,
+          partId,
+          estimate: {
+            OR: [
+              // Still waiting for an answer, and not past its validity.
+              {
+                status: { in: ['DRAFT', 'SENT'] },
+                replacedAt: null,
+                OR: [{ validUntil: null }, { validUntil: { gte: today } }],
+              },
+              // Approved, with its job still open.
+              { status: 'APPROVED', isCurrent: true, jobCard: { status: { in: OPEN_JOB_STATUSES } } },
+            ],
+          },
+        },
+        select: { estimate: { select: { estimateNumber: true } } },
+      });
+      if (quoted) {
+        throw new DomainError(
+          `Quotation ${quoted.estimate.estimateNumber} has this part. Replace or finish it first.`,
         );
       }
       const stockByBranch = await tx.inventoryTransaction.groupBy({

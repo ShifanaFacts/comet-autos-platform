@@ -18,6 +18,22 @@ export function pricePerUnit(packPrice: string, size: string): string | null {
   }
 }
 
+/** The bill's total for `packs` at `packPrice` each, and the quantity it comes to. */
+export function packTotals(packs: string, size: string, packPrice: string) {
+  try {
+    const packsMilli = toMilli(packs);
+    const sizeMilli = toMilli(size);
+    const priceFils = toFils(packPrice);
+    if (packsMilli <= 0 || sizeMilli <= 0 || priceFils <= 0) return null;
+    return {
+      total: filsToString(Math.round((packsMilli * priceFils) / 1000)),
+      quantity: milliToString(Math.round((packsMilli * sizeMilli) / 1000)),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export interface PackLine {
   quantity: string;
   unitCost: string;
